@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,11 +14,11 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 08: RL with Config
+    # Tutorial 304: RL with Config
 
     Configure and run a full RL pipeline using the cookbook's RL abstractions with `RLDatasetBuilder`.
 
-    In tutorials 05-06 you wrote RL loops manually. The cookbook also provides `rl.train.Config` + `rl.train.main()` which handles:
+    In tutorials 301-302 you wrote RL loops manually. The cookbook also provides `rl.train.Config` + `rl.train.main()` which handles:
     - Rollout collection (sync or async)
     - Advantage computation and data assembly
     - Pipelined training steps
@@ -29,8 +29,6 @@ def _(mo):
 
 @app.cell
 def _():
-    import asyncio
-    import re
     from collections.abc import Sequence
 
     import chz
@@ -47,10 +45,8 @@ def _():
         RLDataset,
         RLDatasetBuilder,
         Sequence,
-        asyncio,
         chz,
         get_tokenizer,
-        re,
         renderers,
     )
 
@@ -66,7 +62,7 @@ def _(mo):
 
 
 @app.cell
-def _(ProblemEnv, renderers):
+def _(ProblemEnv):
     import random
 
     class ArithmeticEnv(ProblemEnv):
@@ -92,7 +88,7 @@ def _(ProblemEnv, renderers):
         def get_reference_answer(self):
             return self.answer
 
-    return (ArithmeticEnv, random)
+    return ArithmeticEnv, random
 
 
 @app.cell(hide_code=True)
@@ -114,10 +110,12 @@ def _(
     RLDatasetBuilder,
     Sequence,
     chz,
+    get_tokenizer,
     random,
     renderers,
-    get_tokenizer,
 ):
+    from functools import partial
+
     class ArithmeticDataset(RLDataset):
         """Generates batches of arithmetic problems."""
 
@@ -128,21 +126,22 @@ def _(
             self.group_size = group_size
             self.rng = random.Random(42)
 
-        def _make_env(self):
-            a = self.rng.randint(1, 50)
-            b = self.rng.randint(1, 50)
+        def _make_group_builder(self):
+            # Sample ONE problem per group. ProblemGroupBuilder makes
+            # `group_size` envs from this thunk, all the same problem -- GRPO
+            # centers advantages within a group, so a group must be one problem
+            # sampled group_size times, not a mix of different problems.
+            a = self.rng.randint(1, 300)
+            b = self.rng.randint(1, 300)
             op = self.rng.choice(["+", "*"])
-            return ArithmeticEnv(self.renderer, a, b, op)
+            return ProblemGroupBuilder(
+                env_thunk=partial(ArithmeticEnv, self.renderer, a, b, op),
+                num_envs=self.group_size,
+                dataset_name="arithmetic",
+            )
 
         def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
-            return [
-                ProblemGroupBuilder(
-                    env_thunk=self._make_env,
-                    num_envs=self.group_size,
-                    dataset_name="arithmetic",
-                )
-                for _ in range(self.batch_size)
-            ]
+            return [self._make_group_builder() for _ in range(self.batch_size)]
 
         def __len__(self) -> int:
             return self.num_batches
@@ -163,7 +162,7 @@ def _(
             )
             return train_ds, None
 
-    return (ArithmeticDataset, ArithmeticDatasetBuilder)
+    return (ArithmeticDatasetBuilder,)
 
 
 @app.cell(hide_code=True)
@@ -180,14 +179,15 @@ def _(mo):
 def _(ArithmeticDatasetBuilder):
     from tinker_cookbook.rl import train as rl_train
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     rl_config = rl_train.Config(
-        log_path="~/logs/tutorial-rl-config",
+        log_path="/tmp/tinker-tutorials/rl-config",
         model_name=MODEL_NAME,
+        recipe_name="tutorial_rl",
         dataset_builder=ArithmeticDatasetBuilder(
             model_name=MODEL_NAME,
-            renderer_name="qwen3",
+            renderer_name="qwen3_5_disable_thinking",
             batch_size=4,
             num_batches=20,
             group_size=4,
@@ -205,7 +205,7 @@ def _(ArithmeticDatasetBuilder):
     print(f"Learning rate: {rl_config.learning_rate}")
     print(f"Loss function: {rl_config.loss_fn}")
     print(f"Max tokens:    {rl_config.max_tokens}")
-    return MODEL_NAME, rl_config, rl_train
+    return rl_config, rl_train
 
 
 @app.cell
@@ -216,7 +216,7 @@ def _(mo):
 
 
 @app.cell
-def _(api_key, asyncio, mo, rl_config, rl_train):
+async def _(api_key, mo, rl_config, rl_train):
     import os
 
     mo.stop(
@@ -228,7 +228,7 @@ def _(api_key, asyncio, mo, rl_config, rl_train):
         os.environ["TINKER_API_KEY"] = api_key.value
 
     # Run the full RL pipeline
-    asyncio.run(rl_train.main(rl_config))
+    await rl_train.main(rl_config)
     return
 
 
@@ -238,8 +238,8 @@ def _(mo):
     ## Step 4 -- Inspect reward curves
 
     After training, check `log_path` for metrics (logged to console and optionally W&B). Key metrics to watch:
-    - `reward/mean` -- average reward across trajectories
-    - `reward/correct` -- fraction of correct answers
+    - `env/all/reward/total` -- average reward across trajectories
+    - `env/all/correct` -- fraction of correct answers
     - `optim/kl_sample_train_v1` -- KL divergence from the sampling policy
     """)
     return
@@ -249,7 +249,7 @@ def _(mo):
 def _():
     from pathlib import Path
 
-    log_dir = Path("~/logs/tutorial-rl-config").expanduser()
+    log_dir = Path("/tmp/tinker-tutorials/rl-config")
     if log_dir.exists():
         for f in sorted(log_dir.iterdir()):
             print(f"  {f.name}")
@@ -269,7 +269,7 @@ def _(mo):
     - Pipelined `forward_backward` + `optim_step`
     - Optional KL penalty, async mode, and streaming minibatches
 
-    For custom RL loops, use the lower-level abstractions from tutorials 04-06.
+    For custom RL loops, use the lower-level abstractions from tutorials 104, 301, and 302.
     """)
     return
 

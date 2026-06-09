@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 14: Prompt Distillation
+    # Tutorial 406: Prompt Distillation
 
     **Prompt distillation** (also called context distillation) transfers knowledge embedded in a system prompt into the model's weights. The idea:
 
@@ -59,44 +59,47 @@ def _(mo):
 
 @app.cell
 def _():
-    CLASSIFICATION_PROMPT = """You are a precise language classifier.
+    import textwrap
 
-Goal: Classify the language of the provided text into exactly one of these labels:
-ar (Arabic), de (German), el (Greek), en (English), es (Spanish), fr (French),
-hi (Hindi), ru (Russian), tr (Turkish), ur (Urdu), vi (Vietnamese),
-zh (Chinese - Simplified), ot (Other/Unknown).
+    CLASSIFICATION_PROMPT = textwrap.dedent("""\
+    You are a precise language classifier.
 
-Instructions:
-1) Preprocess carefully (without changing the intended meaning):
-   - Trim whitespace.
-   - Ignore URLs, emails, file paths, hashtags, user handles, and emojis.
-   - Ignore numbers, math expressions, and standalone punctuation.
-   - If there is code, IGNORE code syntax and focus ONLY on human language in comments and string literals.
-   - If after ignoring the above there are no alphabetic letters left, output 'ot'.
+    Goal: Classify the language of the provided text into exactly one of these labels:
+    ar (Arabic), de (German), el (Greek), en (English), es (Spanish), fr (French),
+    hi (Hindi), ru (Russian), tr (Turkish), ur (Urdu), vi (Vietnamese),
+    zh (Chinese - Simplified), ot (Other/Unknown).
 
-2) Script-based rules (highest priority):
-   - Devanagari script -> hi.
-   - Greek script -> el.
-   - Cyrillic script -> ru.
-   - Han characters -> zh.
-   - Arabic script -> ar vs ur (check for Urdu-specific letters).
+    Instructions:
+    1) Preprocess carefully (without changing the intended meaning):
+       - Trim whitespace.
+       - Ignore URLs, emails, file paths, hashtags, user handles, and emojis.
+       - Ignore numbers, math expressions, and standalone punctuation.
+       - If there is code, IGNORE code syntax and focus ONLY on human language in comments and string literals.
+       - If after ignoring the above there are no alphabetic letters left, output 'ot'.
 
-3) Latin-script heuristics:
-   - vi: Vietnamese-specific diacritics.
-   - tr: Turkish-specific letters and function words.
-   - de: umlauts or eszett and German function words.
-   - es: ñ, inverted punctuation, Spanish function words.
-   - fr: French diacritics and function words.
-   - en: default among Latin languages if strong evidence for others is absent.
+    2) Script-based rules (highest priority):
+       - Devanagari script -> hi.
+       - Greek script -> el.
+       - Cyrillic script -> ru.
+       - Han characters -> zh.
+       - Arabic script -> ar vs ur (check for Urdu-specific letters).
 
-4) When in doubt, choose 'ot' rather than guessing.
+    3) Latin-script heuristics:
+       - vi: Vietnamese-specific diacritics.
+       - tr: Turkish-specific letters and function words.
+       - de: umlauts or eszett and German function words.
+       - es: ñ, inverted punctuation, Spanish function words.
+       - fr: French diacritics and function words.
+       - en: default among Latin languages if strong evidence for others is absent.
 
-Output format:
-- Respond with EXACTLY one line: "Final Answer: xx"
-- Where xx is one of {ar, de, el, en, es, fr, hi, ru, tr, ur, vi, zh, ot} and nothing else.
+    4) When in doubt, choose 'ot' rather than guessing.
 
-Text to classify:
-{text}"""
+    Output format:
+    - Respond with EXACTLY one line: "Final Answer: xx"
+    - Where xx is one of {ar, de, el, en, es, fr, hi, ru, tr, ur, vi, zh, ot} and nothing else.
+
+    Text to classify:
+    {text}""")
 
     print(f"Classification prompt: {len(CLASSIFICATION_PROMPT)} characters")
     print(f"(This is ~{len(CLASSIFICATION_PROMPT.split())} words the teacher sees per request)")
@@ -149,7 +152,15 @@ def _(mo):
 
 @app.cell
 async def _(
-    CLASSIFICATION_PROMPT, SENTENCES, api_key, get_tokenizer, mo, re, renderers, tinker, types
+    CLASSIFICATION_PROMPT,
+    SENTENCES,
+    api_key,
+    get_tokenizer,
+    mo,
+    re,
+    renderers,
+    tinker,
+    types,
 ):
     import os
 
@@ -161,9 +172,9 @@ async def _(
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
     tokenizer = get_tokenizer(MODEL_NAME)
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     service_client = tinker.ServiceClient()
     sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
@@ -190,14 +201,7 @@ async def _(
 
     _correct = sum(1 for (_t, _e), _l in zip(SENTENCES, teacher_labels) if _l == _e)
     print(f"\nTeacher accuracy: {_correct}/{len(SENTENCES)}")
-
-    return (
-        MODEL_NAME,
-        renderer,
-        service_client,
-        teacher_labels,
-        tokenizer,
-    )
+    return MODEL_NAME, renderer, service_client, teacher_labels, tokenizer
 
 
 @app.cell(hide_code=True)
@@ -261,29 +265,45 @@ async def _(MODEL_NAME, service_client, student_data, tinker):
         _loss = _fwd_bwd_result.metrics["loss:sum"]
         await _optim_future.result_async()
         print(f"Step {_step:2d}: loss = {_loss:.4f}")
-
     return (training_client,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Step 5 -- Evaluate: student vs base model
+    ## Step 5 -- Evaluate generalization on held-out sentences
 
-    The key test: can the student classify languages **without** the 70-line system prompt? We compare the trained student against the base model (which has never seen the classification task).
+    We evaluate on 12 **new** sentences the student never trained on -- same 12 languages, different content. The student sees only the raw text (no system prompt); we compare against the true label.
     """)
     return
 
 
 @app.cell
-async def _(SENTENCES, re, renderer, tinker, tokenizer, training_client, types):
+async def _(re, renderer, tokenizer, training_client, types):
+    TEST_SENTENCES = [
+        ("The train to the city leaves every morning at seven o'clock.", "en"),
+        ("Demain, nous préparerons un gâteau au chocolat pour la fête.", "fr"),
+        ("¿Dónde está la estación de tren más cercana, señor?", "es"),
+        ("Können Sie mir bitte sagen, wo der Bahnhof ist?", "de"),
+        ("Yarın okula erken gideceğim çünkü sınavım var.", "tr"),
+        ("Hôm nay trời mưa nên tôi ở nhà đọc sách.", "vi"),
+        ("今天天气很好，我们一起去公园散步吧。", "zh"),
+        ("बच्चे बगीचे में क्रिकेट खेल रहे हैं।", "hi"),
+        ("Завтра утром я пойду на работу пораньше.", "ru"),
+        ("Μου αρέσει να διαβάζω βιβλία τα βράδια.", "el"),
+        ("في الصيف نسافر إلى البحر مع العائلة.", "ar"),
+        ("کل میں بازار جا کر کچھ پھل خریدوں گا۔", "ur"),
+    ]
+
     student_client = await training_client.save_weights_and_get_sampling_client_async()
 
+    # Text goes last: its display width varies (CJK double-width, RTL Arabic/Urdu,
+    # Hindi combining marks), so a fixed-width text column never aligns.
     _student_correct = 0
-    print(f"{'Text':<45s}  {'Expected':>8s}  {'Student':>8s}  {'Match':>5s}")
+    print(f"{'Expected':>8s}  {'Student':>8s}  {'Match':>5s}   Text")
     print("-" * 75)
 
-    for _text, _expected in SENTENCES:
+    for _text, _expected in TEST_SENTENCES:
         _student_messages = [{"role": "user", "content": _text}]
         _prompt = renderer.build_generation_prompt(_student_messages)
         _result = await student_client.sample_async(
@@ -296,9 +316,20 @@ async def _(SENTENCES, re, renderer, tinker, tokenizer, training_client, types):
         _label = _match.group(1) if _match else "??"
         _ok = _label == _expected
         _student_correct += int(_ok)
-        print(f"  {_text[:43]:<43s}  {_expected:>8s}  {_label:>8s}  {'OK' if _ok else 'MISS':>5s}")
+        print(f"{_expected:>8s}  {_label:>8s}  {'OK' if _ok else 'MISS':>5s}   {_text}")
 
-    print(f"\nStudent accuracy (no system prompt): {_student_correct}/{len(SENTENCES)}")
+    print(f"\nStudent accuracy (no system prompt): {_student_correct}/{len(TEST_SENTENCES)}")
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Two things stand out from the results:
+
+    - **It generalized.** High accuracy on sentences the student never trained on means it learned a mapping, text -> language code.
+    - **The student learns similar mistakes as the teacher's.** If the teacher called Turkish "en", so does the student. That's the limitation: *the student can only learn behaviors the teacher demonstrates*. It copies the teacher and can't exceed it.
+    """)
     return
 
 
@@ -311,7 +342,7 @@ def _(mo):
     - Classification tasks with detailed rule-based prompts (like this language classifier)
     - Baking safety guidelines into the model (no need to send them every call)
     - Enforcing output format (JSON, specific answer patterns) without format instructions
-    - Reducing inference cost by removing long system prompts (our prompt was ~200 words)
+    - Reducing inference cost by removing long system prompts (our prompt was only ~200 words)
 
     **Limitations:**
     - Works best when the system prompt encodes *rules* rather than *world knowledge*

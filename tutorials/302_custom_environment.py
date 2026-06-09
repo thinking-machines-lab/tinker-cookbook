@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,9 +14,9 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 06: Build a Custom RL Environment
+    # Tutorial 302: Build a Custom RL Environment
 
-    In tutorial 04, you learned the raw GRPO algorithm -- sampling completions, grading them, computing advantages, and training. In tutorial 05, you saw how the cookbook's standard abstractions (`ProblemEnv`, `ProblemGroupBuilder`, `RLDataset`, `compute_advantages`, `assemble_training_data`) handle the boilerplate so you can focus on the task-specific logic.
+    In tutorial 104, you learned the raw GRPO algorithm -- sampling completions, grading them, computing advantages, and training. In tutorial 301, you saw how the cookbook's standard abstractions (`ProblemEnv`, `ProblemGroupBuilder`, `RLDataset`, `compute_advantages`, `assemble_training_data`) handle the boilerplate so you can focus on the task-specific logic.
 
     Now you will implement your own custom task from scratch using those abstractions. The pattern is always the same:
 
@@ -227,6 +227,10 @@ async def _(FormatEnv, api_key, get_renderer, get_tokenizer, mo, tinker):
     MODEL_NAME = "Qwen/Qwen3.5-4B"
     service_client = tinker.ServiceClient()
     tokenizer = get_tokenizer(MODEL_NAME)
+    # Thinking renderer on purpose: FormatEnv's checks are lenient, so a
+    # non-thinking model satisfies them on every rollout -> constant group
+    # rewards -> GRPO gets no signal ("No usable groups, skipping"). The longer
+    # thinking responses vary enough to keep a usable learning signal.
     renderer = get_renderer("qwen3_5", tokenizer)
 
     # Create a test env and check the observation
@@ -331,7 +335,7 @@ def _(mo):
     mo.md(r"""
     ## Step 4 -- Setup and train
 
-    Create a LoRA training client and run the standard RL training loop. The cookbook provides three functions that replace all the manual datum construction from tutorial 04:
+    Create a LoRA training client and run the standard RL training loop. The cookbook provides three functions that replace all the manual datum construction from tutorial 104:
 
     - **`do_group_rollout_and_filter_constant_reward`** -- runs rollouts for a group, returns `TrajectoryGroup` (or `None` if all rewards are identical)
     - **`compute_advantages`** -- centers rewards within each group (GRPO)
@@ -374,7 +378,13 @@ async def _(
     training_client,
 ):
     def _remove_mask(datum: tinker.Datum) -> tinker.Datum:
-        """Remove the 'mask' key from loss_fn_inputs before sending to the server."""
+        """Drop the 'mask' key that assemble_training_data adds.
+
+        assemble_training_data emits target_tokens, logprobs, advantages, and a
+        per-token action mask. The built-in importance_sampling loss accepts only
+        the first three, so the extra 'mask' must be removed before sending. It's
+        redundant here anyway -- advantages are already 0 on non-action tokens.
+        """
         return tinker.Datum(
             model_input=datum.model_input,
             loss_fn_inputs={k: v for k, v in datum.loss_fn_inputs.items() if k != "mask"},
@@ -484,9 +494,7 @@ async def _(
     tinker,
     training_client,
 ):
-    eval_client = await training_client.save_weights_and_get_sampling_client_async(
-        name="format-env-final"
-    )
+    eval_client = await training_client.save_weights_and_get_sampling_client_async()
 
     for prompt_text, format_type in EVAL_PROBLEMS:
         messages = [{"role": "user", "content": prompt_text}]

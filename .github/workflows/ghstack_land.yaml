@@ -1,0 +1,188 @@
+name: ghstack land
+
+# Land a PR by commenting `/land` on it.
+#
+#   /land                  Land a ghstack stack bottom-up once every PR is
+#                          approved and CI is green (waits for in-flight CI).
+#   /land --force <reason> Skip CI. For a ghstack PR this lands the stack
+#                          anyway; for a regular PR it does an admin squash
+#                          merge. A reason is mandatory.
+#
+# Landing pushes to `main` (a protected branch) and must be able to trigger the
+# normal push CI, so the default `GITHUB_TOKEN` is not enough. Configure a
+# GitHub App with `contents: write` + `pull_requests: write` that is allowed to
+# bypass branch protection, and store its credentials as repo secrets:
+#   BOT_APP_ID           the App's id
+#   BOT_APP_PRIVATE_KEY  the App's private key (PEM)
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  ghstack_land:
+    # `issue_comment` runs in the base repo with access to secrets no matter who
+    # commented, so on a public repo the trigger must be gated to trusted users.
+    # `OWNER`/`MEMBER` means a member of the org that owns this repo
+    # (thinking-machines-lab); `COLLABORATOR` is intentionally excluded so that
+    # outside collaborators cannot land.
+    if: >
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/land') &&
+      contains(fromJSON('["OWNER", "MEMBER"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
+
+      - name: Acknowledge the comment
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ steps.app-token.outputs.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -d '{"content":"rocket"}'
+
+      - name: Parse --force flag
+        id: parse
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          COMMENT: ${{ github.event.comment.body }}
+        run: |
+          if [[ "$COMMENT" == *"--force"* ]]; then
+            # Everything after `/land --force` is the (mandatory) reason.
+            # Collapse to a single line first: newlines in the reason would
+            # otherwise inject extra `key=value` pairs into $GITHUB_OUTPUT.
+            REASON=$(printf '%s' "$COMMENT" \
+              | tr '\n\r' '  ' \
+              | sed -E 's/(^|[[:space:]])--force([[:space:]]|$)/ /g' \
+              | sed -E 's/^[[:space:]]*\/land[[:space:]]*//' \
+              | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+            if [[ -z "$REASON" ]]; then
+              echo "::error::--force requires a reason"
+              gh pr comment "${{ github.event.issue.html_url }}" \
+                --body "⚠️ Force landing failed: provide a reason, e.g. \`/land --force <reason>\`"
+              exit 1
+            fi
+            echo "force=true" >> "$GITHUB_OUTPUT"
+            echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+          else
+            echo "force=false" >> "$GITHUB_OUTPUT"
+            echo "reason=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get PR details
+        id: get-pr
+        run: |
+          PR_NUMBER=${{ github.event.issue.number }}
+          PR_DATA=$(curl -s \
+            -H "Authorization: token ${{ steps.app-token.outputs.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls/$PR_NUMBER")
+
+          PR_HEAD_REF=$(echo "$PR_DATA" | jq -r .head.ref)
+          PR_URL="${{ github.server_url }}/${{ github.repository }}/pull/$PR_NUMBER"
+
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "pr_branch=$PR_HEAD_REF" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+          # ghstack PRs use the gh/<user>/<n>/head branch convention.
+          if [[ "$PR_HEAD_REF" =~ ^gh/[^/]+/[0-9]+/head$ ]]; then
+            echo "is_ghstack=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_ghstack=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --- Regular (non-ghstack) PRs ---------------------------------------
+
+      - name: Reject /land on a regular PR without --force
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'false' && steps.parse.outputs.force == 'false' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh pr comment "${{ steps.get-pr.outputs.pr_url }}" \
+            --body "ℹ️ \`/land\` is only for ghstack PRs. For a regular PR, use the merge button or \`/land --force <reason>\` to admin-merge."
+          exit 1
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'false' && steps.parse.outputs.force == 'true' }}
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Force admin-merge regular PR
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'false' && steps.parse.outputs.force == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          FORCE_REASON: ${{ steps.parse.outputs.reason }}
+        run: |
+          gh pr comment "${{ steps.get-pr.outputs.pr_url }}" \
+            --body "⚠️ **Force landing** (admin merge) by @${{ github.event.comment.user.login }}: $FORCE_REASON"
+          if ! gh pr merge "${{ steps.get-pr.outputs.pr_number }}" --admin --squash; then
+            gh pr comment "${{ steps.get-pr.outputs.pr_url }}" \
+              --body "❌ Admin merge failed. See: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            exit 1
+          fi
+
+      # --- ghstack PRs ------------------------------------------------------
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'true' }}
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'true' }}
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'true' }}
+        uses: astral-sh/setup-uv@v6
+
+      - name: Require approvals and green CI
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'true' && steps.parse.outputs.force == 'false' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          # The branch name is attacker-influenced, so pass it via env and quote
+          # it below rather than interpolating into the run block directly.
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_BRANCH: ${{ steps.get-pr.outputs.pr_branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          uvx --with requests python .github/workflows/scripts/ghstack-perm-check.py \
+            "$PR_NUMBER" "$PR_BRANCH" "$REPO"
+
+      - name: Log force landing
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'true' && steps.parse.outputs.force == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          FORCE_REASON: ${{ steps.parse.outputs.reason }}
+        run: |
+          gh pr comment "${{ steps.get-pr.outputs.pr_url }}" \
+            --body "⚠️ **Force landing** by @${{ github.event.comment.user.login }}: $FORCE_REASON"
+
+      - name: Land it
+        if: ${{ steps.get-pr.outputs.is_ghstack == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --global user.email "bot@users.noreply.github.com"
+          git config --global user.name "ghstack bot"
+          cat <<EOF > ~/.ghstackrc
+          [ghstack]
+          github_url = github.com
+          github_oauth = $GITHUB_TOKEN
+          github_username = ghstack-bot
+          remote_name = origin
+          EOF
+          if ! uvx --with ghstack==0.11.0 ghstack land "${{ steps.get-pr.outputs.pr_url }}"; then
+            gh pr comment "${{ steps.get-pr.outputs.pr_url }}" \
+              --body "Failed to land via ghstack (likely a merge conflict). See: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            exit 1
+          fi
