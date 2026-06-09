@@ -16,7 +16,7 @@ def _(mo):
     mo.md(r"""
     # Tutorial 403: DPO and Preference Learning
 
-    Build preference data, train with DPO, and evaluate with a PreferenceModel.
+    Build preference data, render comparisons, and work through the DPO loss. The full pipeline, including training with `train_dpo.main` and evaluating with a `PreferenceModel`, is outlined in the Summary.
 
     **Direct Preference Optimization (DPO)** trains a model to prefer "chosen" over "rejected" responses without an explicit reward model. The key idea: the optimal policy under a KL-constrained reward maximization objective has a closed-form relationship to a preference model.
     """)
