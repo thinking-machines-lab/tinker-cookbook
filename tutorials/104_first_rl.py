@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 04: Reinforcement Learning with Verifiable Rewards
+    # Tutorial 104: Reinforcement Learning with Verifiable Rewards
 
     Supervised fine-tuning teaches a model from example outputs. Reinforcement learning (RL) teaches from *rewards* -- the model generates its own outputs, and a reward function scores them. The model learns to produce outputs that score higher.
 
@@ -66,7 +66,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    Create a LoRA training client and a renderer. We use Llama-3.1-8B (a base/pretrained model) since RL works well from a base model that has broad knowledge but hasn't been instruction-tuned.
+    Create a LoRA training client and a renderer. We use Qwen3.5-9B-Base (a base/pretrained model) since RL works well from a base model that has broad knowledge but hasn't been instruction-tuned.
     """)
     return
 
@@ -90,14 +90,14 @@ async def _(api_key, get_renderer, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    base_model = "meta-llama/Llama-3.1-8B"
+    base_model = "Qwen/Qwen3.5-9B-Base"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
         base_model=base_model, rank=32
     )
     tokenizer = training_client.get_tokenizer()
-    renderer = get_renderer("llama3", tokenizer)
+    renderer = get_renderer("role_colon", tokenizer)
 
     sampling_params = tinker.SamplingParams(
         max_tokens=256,
@@ -367,7 +367,7 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **Tutorial 05** (`301_cookbook_abstractions.py`): Adapt this pattern to your own task with a custom reward function
+    - **Tutorial 301** (`301_cookbook_abstractions.py`): Adapt this pattern to your own task with a custom reward function
     - **Production recipes**: See `tinker_cookbook/recipes/rl_loop.py` for a minimal script and `tinker_cookbook/recipes/math_rl/` for a full-featured GSM8K/MATH training setup
     - **Scaling up**: The [RL Hyperparameters](https://tinker-docs.thinkingmachines.ai/rl/rl-hyperparams) guide covers batch size, group size, learning rates, and async training for larger runs
     - **Custom environments**: The [RL Environments](https://tinker-docs.thinkingmachines.ai/rl/rl-envs) guide shows how to define multi-step environments using the `Env` / `EnvGroupBuilder` / `RLDataset` abstractions

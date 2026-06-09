@@ -16,7 +16,7 @@ from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 # Models that don't require special access / are commonly available in CI.
 # Each entry is (renderer_name, model_name).
 _TEXT_RENDERERS = [
-    ("role_colon", "meta-llama/Llama-3.1-8B-Instruct"),
+    ("role_colon", "Qwen/Qwen3.5-9B-Base"),
     ("llama3", "meta-llama/Llama-3.1-8B-Instruct"),
     ("qwen3", "Qwen/Qwen3-8B"),
     ("qwen3_disable_thinking", "Qwen/Qwen3-8B"),
@@ -115,7 +115,7 @@ class TestRendererPickle:
 
         register_renderer("test_custom_pickle", my_factory)
         try:
-            tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")
+            tokenizer = get_tokenizer("Qwen/Qwen3.5-9B-Base")
             renderer = get_renderer("test_custom_pickle", tokenizer)
 
             assert renderer._renderer_name == "test_custom_pickle"

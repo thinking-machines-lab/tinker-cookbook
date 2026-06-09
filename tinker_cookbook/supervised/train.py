@@ -130,7 +130,12 @@ class Config:
     # Checkpointing and evaluation (0 = disabled for *_every fields)
     evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
+    # Step-based periodic checkpoint cadence
     save_every: int = 20
+    # Token-based periodic checkpoint cadence
+    save_every_tokens: int = 0
+    # Wall-clock periodic checkpoint cadence in seconds
+    save_every_seconds: float = 0.0
     eval_every: int = 10
     infrequent_eval_every: int = 100
     # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
@@ -200,6 +205,8 @@ class SubmittedBatch:
     batch_idx: int
     eval_metrics: dict[str, float] | None = None
     infrequent_eval_metrics: dict[str, float] | None = None
+    # Sum of `datum.model_input.length` across this batch's data
+    num_tokens: int = 0
 
 
 async def run_evals(
@@ -284,9 +291,11 @@ async def main(config: Config):
     if resume_info:
         start_epoch = resume_info.epoch or 0
         start_batch = resume_info.batch
+        resumed_elapsed_tokens: int = int(resume_info.get("elapsed_tokens", 0))
     else:
         start_epoch = 0
         start_batch = 0
+        resumed_elapsed_tokens = 0
     # (start_epoch, start_batch) now represent the next batch to execute if resuming.
 
     ml_logger = ml_log.setup_logging(
@@ -352,12 +361,16 @@ async def main(config: Config):
         service_client=service_client,
         log_path=config.log_path,
         save_every=config.save_every,
+        save_every_tokens=config.save_every_tokens,
+        save_every_seconds=config.save_every_seconds,
         ttl_seconds=config.ttl_seconds,
         rolling_save_every=config.rolling_save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
         store=store,
         async_periodic_saves=config.async_periodic_saves,
     )
+    checkpoint_mgr.restore_last_saved_tokens(resumed_elapsed_tokens)
+    elapsed_tokens: int = resumed_elapsed_tokens
 
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
@@ -433,18 +446,26 @@ async def main(config: Config):
             batch_idx=batch_idx,
             eval_metrics=eval_metrics,
             infrequent_eval_metrics=infrequent_eval_metrics,
+            num_tokens=sum(datum.model_input.length for datum in data),
         )
 
     @trace.scope
     async def finish_batch(submitted: SubmittedBatch):
+        nonlocal elapsed_tokens
         trace.update_scope_context({"step": submitted.step})
 
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
+        elapsed_tokens += submitted.num_tokens
         await checkpoint_mgr.maybe_save_async(
             step=submitted.step,
-            loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
+            loop_state={
+                "epoch": submitted.epoch_idx,
+                "batch": submitted.batch_idx,
+                "elapsed_tokens": elapsed_tokens,
+            },
+            elapsed_tokens=elapsed_tokens,
         )
 
         async with trace.scope_span("step"):
@@ -460,7 +481,7 @@ async def main(config: Config):
 
         metrics.update(
             num_sequences=len(submitted.data),
-            num_tokens=sum(datum.model_input.length for datum in submitted.data),
+            num_tokens=submitted.num_tokens,
             num_loss_tokens=sum(
                 sum(datum.loss_fn_inputs["weights"].data) for datum in submitted.data
             ),
@@ -542,7 +563,11 @@ async def main(config: Config):
     )
     if did_train:
         await checkpoint_mgr.save_final_async(
-            loop_state={"epoch": config.num_epochs, "batch": 0},
+            loop_state={
+                "epoch": config.num_epochs,
+                "batch": 0,
+                "elapsed_tokens": elapsed_tokens,
+            },
         )
     else:
         logger.info("Training was already complete; nothing to do")

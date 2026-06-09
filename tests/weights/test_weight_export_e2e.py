@@ -147,8 +147,8 @@ def _verify_fp8_output(output: Path) -> None:
 class TestDenseQwen3:
     """Train → download → merge / adapter export for dense Qwen3."""
 
-    MODEL = "Qwen/Qwen3-4B-Instruct-2507"
-    RENDERER = "qwen3_instruct"
+    MODEL = "Qwen/Qwen3-8B"
+    RENDERER = "qwen3"
 
     @pytest.fixture(scope="class")
     def adapter_dir(self, tmp_path_factory):
@@ -188,16 +188,16 @@ class TestDenseQwen3:
 
 
 # ---------------------------------------------------------------------------
-# MoE model tests (Qwen3.5)
+# MoE model tests (Qwen3.6)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.integration
 @pytest.mark.timeout(900)
-class TestMoEQwen35:
-    """Train → download → merge / adapter export for MoE Qwen3.5."""
+class TestMoEQwen36:
+    """Train → download → merge / adapter export for MoE Qwen3.6."""
 
-    MODEL = "Qwen/Qwen3.5-35B-A3B"
+    MODEL = "Qwen/Qwen3.6-35B-A3B"
     RENDERER = "qwen3_5"
 
     @pytest.fixture(scope="class")
