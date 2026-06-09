@@ -207,8 +207,8 @@ def _(mo):
     ## Next steps
 
     - **[Tutorial 102: First SFT](./102_first_sft.py)** -- Train a model with supervised fine-tuning
-    - **[Getting Started Guide](https://docs.thinkingmachines.ai/training-sampling)** -- Full walkthrough of training and sampling
-    - **[Available Models](https://docs.thinkingmachines.ai/model-lineup)** -- All supported models and their characteristics
+    - **[Getting Started Guide](https://tinker-docs.thinkingmachines.ai/tinker/quickstart/)** -- Full walkthrough of training and sampling
+    - **[Available Models](https://tinker-docs.thinkingmachines.ai/tinker/models/)** -- All supported models and their characteristics
     """)
     return
 

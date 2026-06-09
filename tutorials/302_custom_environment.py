@@ -544,7 +544,7 @@ def _(mo):
     - **Multi-step environments**: Implement `Env` directly for tasks where the agent takes multiple actions (tool use, search, games). See `tinker_cookbook/recipes/code_rl/` for an example with sandbox execution.
     - **Production recipes**: `tinker_cookbook/recipes/math_rl/` and `tinker_cookbook/recipes/code_rl/` show full-featured training setups with dataset loading, grading, and configuration.
     - **Custom group rewards**: Override `EnvGroupBuilder.compute_group_rewards()` for pairwise or multi-agent reward functions.
-    - **Full docs**: [RL Environments](../docs/rl/rl-envs.mdx) covers the complete Env lifecycle, builder patterns, and advanced features.
+    - **Full docs**: [RL Environments](https://tinker-docs.thinkingmachines.ai/cookbook/rl/) covers the complete Env lifecycle, builder patterns, and advanced features.
     """)
     return
 
