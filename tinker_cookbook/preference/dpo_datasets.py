@@ -34,8 +34,8 @@ class DPODatasetBuilderFromComparisons(ChatDatasetBuilder):
         builder = DPODatasetBuilderFromComparisons(
             comparison_builder=my_comparison_builder,
             common_config=ChatDatasetBuilderCommonConfig(
-                model_name_for_tokenizer="meta-llama/Llama-3.1-8B-Instruct",
-                renderer_name="llama3",
+                model_name_for_tokenizer="Qwen/Qwen3.5-9B",
+                renderer_name="qwen3_5_disable_thinking",
                 max_length=2048,
                 batch_size=8,
             ),
