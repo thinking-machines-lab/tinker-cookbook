@@ -125,6 +125,7 @@ def _get_hidden_size(model_name: str) -> int:
         "openai/gpt-oss-120b": 2880,
         "openai/gpt-oss-20b": 2880,
         # NVIDIA Nemotron
+        "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": 8192,
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 4096,
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 2688,
     }
@@ -202,6 +203,11 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
         "attn": 1_675_264,
         "unembed": 135_168,
     },
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": {
+        "mlp": 254_529_536,
+        "attn": 4_134_912,
+        "unembed": 139_264,
+    },
     "openai/gpt-oss-120b": {"mlp": 40_124_160, "attn": 746_496, "unembed": 203_968},
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
 }
@@ -275,6 +281,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "moonshotai/Kimi-K2.6",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+        "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
     ):
         raise NotImplementedError(
             f"Learning rate formula for {model_name} is not yet calibrated. "
