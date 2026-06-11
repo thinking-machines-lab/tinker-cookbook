@@ -13,7 +13,7 @@ import modal
 APP_NAME = "tinker-modal-inference"
 MINUTES = 60
 
-# PREPARE writes an artifact here, SERVE reads it — the only shared state.
+# PREPARE writes an artifact here, SERVE reads it. The only shared state.
 ARTIFACTS_PATH = "/artifacts"
 # A path the images never populate, so the Volume never mounts over a non-empty
 # dir (Modal's model-weights guide pattern).

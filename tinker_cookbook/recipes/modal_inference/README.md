@@ -2,7 +2,7 @@
 
 Turn a `tinker://` LoRA checkpoint into an OpenAI-compatible endpoint on
 [Modal](https://modal.com). `prepare.py` downloads the checkpoint and writes a
-servable artifact — a PEFT adapter or a merged model — to a Volume; `serve.py`
+servable artifact (a PEFT adapter or a merged model) to a Volume; `serve.py`
 runs it behind an [SGLang](https://github.com/sgl-project/sglang) endpoint that
 scales to zero.
 
@@ -54,5 +54,5 @@ Add a row to `MODEL_REGISTRY` in `common.py`:
 ModelConfig("org/Model", gpu="H100:2", tp=2, lora_serving=True)
 ```
 
-Set `lora_serving=False` for models the pinned SGLang can't LoRA-serve — they
-get merged automatically.
+Set `lora_serving=False` for models the pinned SGLang can't LoRA-serve, and
+they get merged automatically.

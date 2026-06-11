@@ -41,7 +41,7 @@ MODE_OVERRIDE = os.environ.get("MODE") or None
 CONFIG = model_config(MODEL)
 MODE = resolve_mode(CONFIG, MODE_OVERRIDE)
 
-# These env vars are read at import — which also happens inside the container,
+# These env vars are read at import, which also happens inside the container,
 # where the local shell env isn't present. Bake the selection into the image so
 # the remote import sees the same values.
 serve_image = sglang_image.env(
