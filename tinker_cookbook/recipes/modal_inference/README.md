@@ -3,8 +3,7 @@
 Turn a `tinker://` LoRA checkpoint into an OpenAI-compatible endpoint on
 [Modal](https://modal.com). `prepare.py` downloads the checkpoint and writes a
 servable artifact (a PEFT adapter or a merged model) to a Volume; `serve.py`
-runs it behind an [SGLang](https://github.com/sgl-project/sglang) endpoint that
-scales to zero.
+runs it behind an [SGLang](https://github.com/sgl-project/sglang) endpoint.
 
 ## Setup
 

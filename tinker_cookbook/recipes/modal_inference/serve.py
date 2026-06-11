@@ -1,8 +1,4 @@
-"""SERVE: an OpenAI-compatible SGLang endpoint for a prepared artifact.
-
-Adapted from Modal's public low-latency SGLang example; the one change is
-serving a Tinker fine-tune from the tinker-artifacts Volume (a merged dir, or a
-base model with a PEFT adapter attached).
+"""SERVE: an OpenAI-compatible SGLang endpoint for a prepared artifact
 
     FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal deploy serve.py   # persistent
     FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal run    serve.py   # smoke test
@@ -41,9 +37,6 @@ MODE_OVERRIDE = os.environ.get("MODE") or None
 CONFIG = model_config(MODEL)
 MODE = resolve_mode(CONFIG, MODE_OVERRIDE)
 
-# These env vars are read at import, which also happens inside the container,
-# where the local shell env isn't present. Bake the selection into the image so
-# the remote import sees the same values.
 serve_image = sglang_image.env(
     {"FINETUNE": FINETUNE, "MODEL": MODEL} | ({"MODE": MODE_OVERRIDE} if MODE_OVERRIDE else {})
 )
@@ -56,7 +49,7 @@ with serve_image.imports():
 
 def launch_argv() -> tuple[str, ...]:
     path = artifact_dir(FINETUNE)
-    if MODE == "adapter":  # serve base model, attach the adapter
+    if MODE == "adapter":  # serve base model + attach the adapter
         return sglang_command(
             model_path=CONFIG.base_model, served_name=FINETUNE,
             tp=CONFIG.tp, port=PORT, lora=(FINETUNE, path),
@@ -98,7 +91,7 @@ def warmup(rounds: int = 3) -> None:
     gpu=CONFIG.gpu,
     volumes={ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
     secrets=[hf_secret],
-    scaledown_window=10 * MINUTES,  # scale to zero when idle
+    scaledown_window=10 * MINUTES,
     startup_timeout=20 * MINUTES,
 )
 @modal.experimental.http_server(port=PORT, proxy_regions=[PROXY_REGION], exit_grace_period=15)
@@ -123,7 +116,7 @@ async def test(prompt: str = "What is Modal?", timeout: int = 10 * MINUTES) -> N
     import aiohttp
 
     url = (await Server._experimental_get_flash_urls.aio())[0]
-    headers = {"Modal-Session-ID": "0"}  # sticky routing for KV-cache reuse
+    headers = {"Modal-Session-ID": "0"}
     body = {"model": FINETUNE, "messages": [{"role": "user", "content": prompt}], "stream": True}
     deadline = time.time() + timeout
 
@@ -145,7 +138,7 @@ async def test(prompt: str = "What is Modal?", timeout: int = 10 * MINUTES) -> N
                     print()
                     return
             except aiohttp.ClientResponseError as exc:
-                if exc.status == 503:  # cold start, no live replica yet
+                if exc.status == 503: 
                     await asyncio.sleep(1)
                     continue
                 raise

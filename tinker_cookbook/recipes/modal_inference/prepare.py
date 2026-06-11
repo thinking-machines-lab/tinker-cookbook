@@ -28,11 +28,11 @@ from .common import (
 )
 
 tinker_secret = modal.Secret.from_name("tinker")  # TINKER_API_KEY
-hf_secret = modal.Secret.from_name("huggingface")  # HF_TOKEN, for gated bases
+hf_secret = modal.Secret.from_name("huggingface")  # HF_TOKEN for gated base models/faster downloads
 
 
 def _builder(weights, mode: str) -> Callable[..., None]:
-    # Both share the (base_model, adapter_path, output_path) signature.
+    # Both share the (base_model, adapter_path, output_path) signature
     return weights.build_lora_adapter if mode == "adapter" else weights.build_hf_model
 
 

@@ -13,12 +13,9 @@ import modal
 APP_NAME = "tinker-modal-inference"
 MINUTES = 60
 
-# PREPARE writes an artifact here, SERVE reads it. The only shared state.
+# PREPARE writes an artifact here, SERVE reads it
 ARTIFACTS_PATH = "/artifacts"
-# A path the images never populate, so the Volume never mounts over a non-empty
-# dir (Modal's model-weights guide pattern).
 HF_CACHE_PATH = "/cache/huggingface"
-
 artifacts = modal.Volume.from_name("tinker-artifacts", create_if_missing=True)
 hf_cache = modal.Volume.from_name("huggingface-cache", create_if_missing=True)
 
@@ -29,7 +26,7 @@ class ModelConfig(NamedTuple):
     base_model: str
     gpu: str
     tp: int
-    lora_serving: bool  # can the pinned SGLang LoRA-serve this arch?
+    lora_serving: bool  # can the pinned SGLang LoRA serve this model family?
 
     @property
     def default_mode(self) -> Mode:
@@ -42,7 +39,7 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
     for cfg in (
         ModelConfig("Qwen/Qwen3-8B", gpu="H100:1", tp=1, lora_serving=True),
         ModelConfig("Qwen/Qwen3.6-35B-A3B", gpu="H100:2", tp=2, lora_serving=True),
-        # lora_serving=False forces merge mode, e.g. Kimi/DeepSeek.
+        # lora_serving=False forces merge mode for any model not supported
     )
 }
 
@@ -106,7 +103,7 @@ prepare_image = (
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1", "HF_HUB_CACHE": HF_CACHE_PATH})
 )
 
-# Pinned SGLang image, matching Modal's public low-latency example.
+# Pinned SGLang image
 SGLANG_TAG = "lmsysorg/sglang:v0.5.12.post1-cu130"
 sglang_image = (
     modal.Image.from_registry(SGLANG_TAG)
