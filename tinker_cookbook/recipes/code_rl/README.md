@@ -6,7 +6,7 @@ Competitive programming problems are a common testbed for RL with LLMs. The rece
 
 ### Sandboxing
 
-Sandboxing is essential for safely executing generated code during training and evaluation. Two sandbox backends are supported:
+Sandboxing is essential for safely executing generated code during training and evaluation. Three sandbox backends are supported:
 
 #### SandboxFusion (Default)
 
@@ -46,6 +46,25 @@ python -m tinker_cookbook.recipes.code_rl.train \
 Optional environment variables for Modal:
 - `MODAL_POOL_SIZE`: Number of concurrent sandboxes (default: 32)
 - `MODAL_CREATION_RATE_LIMIT`: Max sandboxes created per second (default: 4)
+
+#### Daytona (Alternative)
+
+[Daytona](https://www.daytona.io) provides cloud-based sandboxed execution without local Docker setup. To use Daytona:
+
+1. Install the daytona extra and set your API key:
+```bash
+uv pip install 'tinker-cookbook[daytona] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+export DAYTONA_API_KEY="***"
+```
+
+2. Set the sandbox backend in your training command:
+```bash
+python -m tinker_cookbook.recipes.code_rl.train \
+    sandbox_backend=daytona \
+    ...
+```
+
+Optional: set `DAYTONA_SNAPSHOT` to a pre-created Daytona snapshot name to skip image builds entirely. Not required — Daytona caches image builds across sandboxes automatically.
 
 ### Example command
 
