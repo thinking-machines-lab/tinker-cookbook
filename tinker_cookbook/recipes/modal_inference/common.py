@@ -33,7 +33,7 @@ class ModelConfig(NamedTuple):
         return "adapter" if self.lora_serving else "merge"
 
 
-# The only model-dependent surface: support a new model by adding a row.
+# Adding support for a model we have tested
 MODEL_REGISTRY: dict[str, ModelConfig] = {
     cfg.base_model: cfg
     for cfg in (
