@@ -15,8 +15,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from tinker_cookbook.stores._base import BaseStore
 from tinker_cookbook.stores._incremental import IncrementalReader
-from tinker_cookbook.stores.storage import Storage, storage_join
+from tinker_cookbook.stores.storage import Storage
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +40,23 @@ _UNSET = _Unset()
 
 @dataclass
 class IterationInfo:
-    """Metadata about a single training iteration directory."""
+    """Metadata about a single training iteration directory.
+
+    Populated by :meth:`TrainingRunStore.list_iterations` by scanning
+    the contents of each ``iteration_NNNNNN/`` directory.
+    """
 
     iteration: int
+    """Iteration number (from directory name ``iteration_NNNNNN``)."""
     has_train_rollouts: bool = False
+    """Whether ``train_rollout_summaries.jsonl`` exists."""
     has_train_logtree: bool = False
+    """Whether ``train_logtree.json`` exists."""
     eval_labels: list[str] = field(default_factory=list)
+    """Eval labels found (e.g., ``['gsm8k']`` from ``eval_gsm8k_rollout_summaries.jsonl``)."""
 
 
-class TrainingRunStore:
+class TrainingRunStore(BaseStore):
     """Typed read/write access to one training run's data.
 
     All file I/O goes through the ``Storage`` protocol — no direct
@@ -56,13 +65,15 @@ class TrainingRunStore:
     """
 
     def __init__(self, storage: Storage, prefix: str = "") -> None:
-        self.storage = storage
-        self.prefix = prefix
+        super().__init__(storage, prefix)
         # Lazy — created on first access to keep pickle-safe
         self._metrics: IncrementalReader | None = None
         self._timing: IncrementalReader | None = None
         self._config: Any = _UNSET
+        self._checkpoints: Any = _UNSET
+        self._checkpoints_size: int = -1  # File size at last read, for invalidation
         self._rollout_cache: dict[str, list[dict[str, Any]]] = {}
+        self._rollout_cache_sizes: dict[str, int] = {}  # File sizes for invalidation
 
     def url(self, path: str = "") -> str:
         """Return a human-readable URI for a path within this run.
@@ -73,43 +84,9 @@ class TrainingRunStore:
         """
         return self.storage.url(self._path(path))
 
-    def _path(self, *parts: str) -> str:
-        return storage_join(self.prefix, *parts)
-
     @staticmethod
     def _iter_dir(iteration: int) -> str:
         return f"iteration_{iteration:06d}"
-
-    # ── JSON/JSONL helpers ────────────────────────────────────────────
-
-    def _read_json(self, *parts: str) -> dict[str, Any] | None:
-        try:
-            data = self.storage.read(self._path(*parts))
-            return json.loads(data)
-        except FileNotFoundError:
-            return None
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Failed to read JSON %s: %s", self._path(*parts), e)
-            return None
-
-    def _read_jsonl(self, *parts: str) -> list[dict[str, Any]]:
-        try:
-            data = self.storage.read(self._path(*parts))
-        except FileNotFoundError:
-            return []
-        except OSError as e:
-            logger.warning("Failed to read JSONL %s: %s", self._path(*parts), e)
-            return []
-
-        records: list[dict[str, Any]] = []
-        for line in data.decode("utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    logger.warning("Skipping malformed line in %s", self._path(*parts))
-        return records
 
     def _read_jsonl_typed(
         self, from_dict: Callable[[dict[str, Any]], Any], *parts: str
@@ -149,6 +126,14 @@ class TrainingRunStore:
         """Read only metrics added since last call."""
         return self._get_metrics().read()
 
+    def metric_count(self) -> int:
+        """Number of metric records read so far."""
+        return self._get_metrics().total_read
+
+    def latest_metric(self) -> dict[str, Any] | None:
+        """Return the last metric record, or ``None`` if empty."""
+        return self._get_metrics().latest
+
     def metric_keys(self) -> set[str]:
         """All metric keys seen so far (excluding 'step')."""
         return self._get_metrics().known_keys
@@ -162,6 +147,8 @@ class TrainingRunStore:
     def read_rollouts(self, iteration: int, base_name: str = "train") -> list[dict[str, Any]]:
         """Read rollout summaries for an iteration as raw dicts.
 
+        Cached per (iteration, base_name), invalidated when file size changes.
+
         Args:
             iteration: Training iteration number.
             base_name: Prefix for the JSONL file (e.g. ``"train"``,
@@ -171,10 +158,17 @@ class TrainingRunStore:
         filename = self._rollout_filename(base_name)
         cache_key = f"{iteration}/{filename}"
         if cache_key in self._rollout_cache:
-            return self._rollout_cache[cache_key]
+            # Invalidate if file size changed (e.g., external writer added rollouts)
+            stat = self.storage.stat(self._path(self._iter_dir(iteration), filename))
+            current_size = stat.size if stat else 0
+            if current_size == self._rollout_cache_sizes.get(cache_key, -1):
+                return self._rollout_cache[cache_key]
 
+        path = self._path(self._iter_dir(iteration), filename)
+        stat = self.storage.stat(path)
         records = self._read_jsonl(self._iter_dir(iteration), filename)
         self._rollout_cache[cache_key] = records
+        self._rollout_cache_sizes[cache_key] = stat.size if stat else 0
         return records
 
     def read_single_rollout(
@@ -190,11 +184,27 @@ class TrainingRunStore:
                 return r
         return None
 
+    def read_rollouts_by_group(
+        self, iteration: int, group_idx: int, base_name: str = "train"
+    ) -> list[dict[str, Any]]:
+        """Return all rollouts for a specific group index."""
+        return [
+            r for r in self.read_rollouts(iteration, base_name) if r.get("group_idx") == group_idx
+        ]
+
     # ── Checkpoints (typed) ───────────────────────────────────────────
 
     def read_checkpoints(self) -> list[dict[str, Any]]:
-        """Read checkpoints.jsonl."""
-        return self._read_jsonl("checkpoints.jsonl")
+        """Read checkpoints.jsonl (cached, invalidated when file size changes)."""
+        if self._checkpoints is not _UNSET:
+            stat = self.storage.stat(self._path("checkpoints.jsonl"))
+            current_size = stat.size if stat else 0
+            if current_size == self._checkpoints_size:
+                return self._checkpoints
+        stat = self.storage.stat(self._path("checkpoints.jsonl"))
+        self._checkpoints_size = stat.size if stat else 0
+        self._checkpoints = self._read_jsonl("checkpoints.jsonl")
+        return self._checkpoints
 
     def read_checkpoint_records(self) -> list[Any]:
         """Read checkpoints.jsonl as ``CheckpointRecord`` objects."""
@@ -214,6 +224,142 @@ class TrainingRunStore:
         reader = self._get_timing()
         reader.read()
         return reader.records
+
+    def flatten_timing_spans(
+        self,
+        *,
+        step: int | None = None,
+        step_start: int | None = None,
+        step_end: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Extract flat spans from timing records, optionally filtered by step range."""
+        spans: list[dict[str, Any]] = []
+        for record in self.read_timing():
+            s = record.get("step", 0)
+            if step is not None and s != step:
+                continue
+            if step_start is not None and s < step_start:
+                continue
+            if step_end is not None and s > step_end:
+                continue
+            if "spans" in record:
+                for span in record["spans"]:
+                    spans.append({"step": s, **span})
+            else:
+                spans.append(record)
+        return spans
+
+    def build_timing_tree(self, step: int) -> dict[str, Any]:
+        """Build a hierarchical span tree for a specific step.
+
+        Groups spans by ``group_idx`` attribute and nests children within
+        parents based on wall-time containment.
+        """
+        spans = self.flatten_timing_spans(step=step)
+        if not spans:
+            return {"step": step, "root": None}
+        sorted_spans = sorted(spans, key=lambda s: (s.get("wall_start", 0), -s.get("duration", 0)))
+        nodes: list[dict[str, Any]] = [
+            {
+                "name": s.get("name", "?"),
+                "duration": s.get("duration", 0),
+                "wall_start": s.get("wall_start", 0),
+                "wall_end": s.get("wall_end", 0),
+                "attributes": s.get("attributes", {}),
+                "children": [],
+            }
+            for s in sorted_spans
+        ]
+        eps = 0.01
+
+        grouped_spans: dict[int, list[dict[str, Any]]] = {}
+        ungrouped: list[dict[str, Any]] = []
+        for node in nodes:
+            gidx = node.get("attributes", {}).get("group_idx")
+            if gidx is not None:
+                grouped_spans.setdefault(gidx, []).append(node)
+            else:
+                ungrouped.append(node)
+
+        ungrouped.sort(key=lambda s: (s.get("wall_start", 0), -s.get("duration", 0)))
+        root_children: list[dict[str, Any]] = []
+        stack: list[dict[str, Any]] = []
+        for node in ungrouped:
+            while stack and stack[-1]["wall_end"] + eps < node["wall_start"]:
+                stack.pop()
+            if stack and node["wall_end"] <= stack[-1]["wall_end"] + eps:
+                stack[-1]["children"].append(node)
+            else:
+                while stack and node["wall_end"] > stack[-1]["wall_end"] + eps:
+                    stack.pop()
+                if stack:
+                    stack[-1]["children"].append(node)
+                else:
+                    root_children.append(node)
+            stack.append(node)
+
+        if grouped_spans:
+            all_grouped = [s for spans in grouped_spans.values() for s in spans]
+            group_start = min(s["wall_start"] for s in all_grouped)
+            group_end = max(s["wall_end"] for s in all_grouped)
+
+            def find_parent(
+                children: list[dict[str, Any]],
+            ) -> dict[str, Any] | None:
+                for child in children:
+                    if (
+                        child["wall_start"] <= group_start + eps
+                        and child["wall_end"] >= group_end - eps
+                    ):
+                        deeper = find_parent(child.get("children", []))
+                        return deeper if deeper else child
+                return None
+
+            parent = find_parent(root_children)
+            target = parent["children"] if parent else root_children
+
+            for gidx in sorted(grouped_spans.keys()):
+                gspans = sorted(
+                    grouped_spans[gidx],
+                    key=lambda s: (s["wall_start"], -s["duration"]),
+                )
+                group_node: dict[str, Any] = {
+                    "name": f"group {gidx}",
+                    "duration": max(s["wall_end"] for s in gspans)
+                    - min(s["wall_start"] for s in gspans),
+                    "wall_start": min(s["wall_start"] for s in gspans),
+                    "wall_end": max(s["wall_end"] for s in gspans),
+                    "attributes": {"group_idx": gidx},
+                    "children": [],
+                }
+                gstack: list[dict[str, Any]] = []
+                for node in gspans:
+                    while gstack and gstack[-1]["wall_end"] + eps < node["wall_start"]:
+                        gstack.pop()
+                    if gstack and node["wall_end"] <= gstack[-1]["wall_end"] + eps:
+                        gstack[-1]["children"].append(node)
+                    else:
+                        group_node["children"].append(node)
+                    gstack.append(node)
+                target.append(group_node)
+
+            target.sort(key=lambda s: s.get("wall_start", 0))
+
+        all_starts = [n["wall_start"] for n in nodes]
+        all_ends = [n["wall_end"] for n in nodes]
+        total = max(all_ends) - min(all_starts) if all_starts else 0
+        return {
+            "step": step,
+            "total_duration": total,
+            "root": {
+                "name": "iteration",
+                "duration": total,
+                "wall_start": min(all_starts) if all_starts else 0,
+                "wall_end": max(all_ends) if all_ends else 0,
+                "attributes": {},
+                "children": root_children,
+            },
+        }
 
     # ── Logtree ───────────────────────────────────────────────────────
 
@@ -250,12 +396,6 @@ class TrainingRunStore:
 
     # ── Writes ────────────────────────────────────────────────────────
 
-    def _write_json(self, data: dict[str, Any], *parts: str) -> None:
-        self.storage.write(self._path(*parts), json.dumps(data, indent=2).encode("utf-8"))
-
-    def _append_jsonl(self, record: dict[str, Any], *parts: str) -> None:
-        self.storage.append(self._path(*parts), (json.dumps(record) + "\n").encode("utf-8"))
-
     def write_config(self, config: dict[str, Any]) -> None:
         """Write config.json (overwrites if exists, updates cache)."""
         self._write_json(config, "config.json")
@@ -288,6 +428,7 @@ class TrainingRunStore:
         Must contain at least a ``"name"`` key.
         """
         self._append_jsonl(record, "checkpoints.jsonl")
+        self._checkpoints = _UNSET  # Invalidate cache
 
     def write_rollouts(
         self,
