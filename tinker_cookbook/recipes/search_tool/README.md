@@ -36,9 +36,9 @@ With the default hyperparameters, you can expect performance like:
 |---|---|---|---|---|
 | Qwen3-4B-Instruct-2507 | 51.8 | 70.2 | 52.0 | 47.7 |
 
-> **Rerun needed:** these numbers were measured on the now-retired `Qwen3-4B-Instruct-2507`. Rerun with `Qwen/Qwen3.5-4B` + `qwen3_5_disable_thinking` before treating them as current.
+> **Rerun needed:** these numbers were measured on the now-retired `Qwen3-4B-Instruct-2507` and have not been refreshed with a full run. A 30-step verification run with `Qwen/Qwen3.5-4B` + `qwen3_5_disable_thinking` showed healthy learning (train reward 0.39 → 0.60; NQ 0.27 → 0.47, HotpotQA 0.47 → 0.70), but full-length results may differ.
 
-A successful run generally learns multi-turn search within 10-25 steps, which can be monitored by checking if `env/all/turns_per_episode` has increased over 2 turns.
+A successful run shows `env/all/reward/total` climbing within the first ~20 steps. `env/all/turns_per_episode` above 2 indicates the model is actually using the search tool; weaker starting models learn this within 10-25 steps, while `Qwen3.5-4B` already issues multi-turn searches from step 0 (~3 turns per episode), so expect the learning to show up in reward rather than turn count.
 
 **Note:** The `max_trajectory_tokens` parameter (default: 32,768) limits the total context length for multi-turn interactions. If your searches require longer contexts, you can adjust it with `max_trajectory_tokens=<value>`.
 

@@ -47,6 +47,8 @@ The **collapse** at step 80 happens because a small asymmetry gets amplified —
 
 The model **recovers** around step 115, but then settles into a **degenerate equilibrium**: both sides draw in self-play (reward ≈ 0), but the strategy is actually worse than the base model (test reward goes negative). The collapse breaks the learned strategy, and the recovery converges to a different, weaker fixed point. This is a known challenge with self-play RL.
 
+> **Note:** the reward tables above were measured on the now-retired `Qwen3-4B-Instruct-2507`. A 25-step verification run with `Qwen/Qwen3.5-4B` reproduced the early-phase shape (invalid moves eliminated within ~10 steps, test reward positive by step 5), but the full 256-step dynamics have not been re-measured.
+
 The default of 80 steps avoids the collapse while capturing the performance plateau. Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
 
 ### CLI options
