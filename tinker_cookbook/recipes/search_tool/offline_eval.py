@@ -45,6 +45,11 @@ class CLIConfig:
     )
     tinker_checkpoint_url: str = chz.field(doc="Tinker checkpoint URL (required)")
     max_tokens: int = chz.field(default=1024, doc="Maximum number of tokens to generate")
+    max_trajectory_tokens: int = chz.field(
+        default=32 * 1024,
+        doc="Token budget for the full multi-turn trajectory, matching train.py; "
+        "episodes that would exceed it end instead of overflowing the model's context window",
+    )
 
 
 class EvaluationResult(TypedDict):
@@ -86,6 +91,7 @@ async def evaluate_single_item(
     chroma_tool: ChromaTool,
     policy: TinkerTokenCompleter,
     renderer: Renderer,
+    max_trajectory_tokens: int | None = None,
 ) -> EvaluationResult:
     tool_schemas = [chroma_tool.search.to_spec()]
     initial_messages = renderer.create_conversation_prefix_with_tools(
@@ -99,6 +105,7 @@ async def evaluate_single_item(
         initial_messages=initial_messages,
         reward_fn=TextAnswerReward(gold_answers=item["answer"], format_coef=0.1),
         max_turns=5,
+        max_trajectory_tokens=max_trajectory_tokens,
     )
     async with rollout_semaphore:
         trajectory = await do_single_rollout(policy, env)
@@ -142,7 +149,10 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     )
 
     # Run evaluations in parallel using asyncio.gather
-    tasks = [evaluate_single_item(item, chroma_tool, policy, renderer) for item in data]
+    tasks = [
+        evaluate_single_item(item, chroma_tool, policy, renderer, config.max_trajectory_tokens)
+        for item in data
+    ]
 
     print(f"Evaluating {len(tasks)} items")
     results = await asyncio.gather(*tasks)
