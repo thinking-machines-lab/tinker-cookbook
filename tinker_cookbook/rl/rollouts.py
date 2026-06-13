@@ -200,6 +200,7 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
     return Trajectory(transitions=transitions, final_ob=ob)
 
 
+# NOTE: this function is monkeypatched by verifiers (recipes/verifiers_rl/train.py)
 @logtree.scope_header_decorator("Group Rollout")
 async def do_group_rollout(
     env_group_builder: EnvGroupBuilder,

@@ -17,7 +17,7 @@ from tinker_cookbook.recipes.verifiers_rl.verifiers_env import (
     VerifiersRLDatasetBuilder,
     convert_states_to_trajectory_group,
 )
-from tinker_cookbook.rl import train
+from tinker_cookbook.rl import rollouts, train
 from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
@@ -76,9 +76,17 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
     local_tokenizer: Tokenizer | None = None
 
     async def custom_do_group_rollout(
-        builder: EnvGroupBuilder, policy: TokenCompleter
+        builder: EnvGroupBuilder,
+        policy: TokenCompleter,
+        strategy: rollouts.RolloutStrategy | None = None,
     ) -> TrajectoryGroup:
         nonlocal shared_client, shared_renderer, local_tokenizer
+
+        if strategy is not None and not isinstance(strategy, rollouts.FailFast):
+            logger.warning(
+                "custom_do_group_rollout (verifiers) received unsupported strategy=%s",
+                type(strategy).__name__,
+            )
 
         # initialize tokenizer and renderer lazily
         if local_tokenizer is None:
@@ -115,8 +123,9 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
 
         return convert_states_to_trajectory_group(states)
 
-    # override do_group_rollout function inside rl.train
-    train.do_group_rollout = custom_do_group_rollout
+    # override do_group_rollout function inside rl.rollouts
+    assert hasattr(rollouts, "do_group_rollout"), "verifiers monkeypatch site missing"
+    rollouts.do_group_rollout = custom_do_group_rollout
 
     dataset_builder = VerifiersRLDatasetBuilder(
         vf_env_id=cli_config.vf_env_id,
