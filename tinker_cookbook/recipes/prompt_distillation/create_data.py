@@ -92,9 +92,9 @@ def setup_clients():
         user_metadata=recipe_user_metadata("dataset_prompt_distillation"),
     )
     print("Creating sampling client")
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3-30B-A3B")
-    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
+    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5", tokenizer)
 
     return sampling_client, tokenizer, renderer
 

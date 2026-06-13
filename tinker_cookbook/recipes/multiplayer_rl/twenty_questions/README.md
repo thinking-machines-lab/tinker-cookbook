@@ -4,7 +4,7 @@
 python -m tinker_cookbook.recipes.multiplayer_rl.twenty_questions.train
 ```
 
-The `test/env/all/reward/total` should increase from ~10% to ~20% after 20 steps.
+The `test/env/all/reward/total` should increase from ~6% to ~16% after 20 steps.
 
 ### Background: Twenty Questions
 
