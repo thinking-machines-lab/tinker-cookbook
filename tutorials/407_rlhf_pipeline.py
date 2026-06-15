@@ -28,6 +28,8 @@ def _(mo):
     ```
 
     Each stage builds on the previous one. The SFT policy initializes the RL agent, and the preference model provides the reward signal.
+
+    **Expected runtime: ~1.5 hours end-to-end** -- about 20 minutes for Stages 1-2 (SFT + preference model) and ~1 hour for Stage 3 (RL, capped at 40 steps). This is the longest tutorial in the series, so leave it running and check back. Raising `max_steps` in the Stage 3 config trains longer (the win rate plateaus around 98% after ~200 steps; a full epoch over HHH is ~630 steps, ~15 hours).
     """)
     return
 
@@ -262,7 +264,9 @@ def _(mo):
     - **Group size**: 4 completions per prompt
     - **Tournament**: `ALL_PAIRS_BOTH_WAYS` -- every pair is evaluated in both orderings
 
-    Expected: `test/win_rate` increases from ~40% to ~70% in 100 steps.
+    Expected: `test/win_rate` climbs from ~45% to ~75-80% in 40 steps.
+
+    Most of the learning happens early: in a full run the win rate reaches ~93% by step 60 and plateaus around 98% after ~200 steps, so we cap training at `max_steps=40` (~1 hour) to capture the steep part of the curve. A full epoch over the HHH prompts is ~630 steps (~15 hours); raise `max_steps` (or set it to `None`) to train longer.
     """)
     return
 
@@ -347,9 +351,13 @@ async def _(
         wandb_name="rlhf-tutorial-rl",
         lora_rank=LORA_RANK,
         save_every=100,
-        eval_every=20,
+        eval_every=10,
         num_groups_to_log=4,
-        max_steps=None,
+        # Most of the win-rate gain lands in the first 40 steps (~1 hour); a
+        # full epoch is ~630 steps (~15 hours) and plateaus around 98%. A final
+        # checkpoint is saved at the end of training either way. Raise this
+        # (or set to None) to train longer.
+        max_steps=40,
     )
 
     await rl_train.main(rl_config)
@@ -427,7 +435,7 @@ def _(mo):
     |-------|------|---------|------------|
     | SFT | Initialize policy on instructions | no_robots | NLL: 1.99 -> 1.92 |
     | Preference Model | Learn human preferences | HHH (Anthropic) | NLL: 7 -> 0.55 |
-    | RL | Optimize policy against PM | HHH prompts | Win rate: 40% -> 70% |
+    | RL | Optimize policy against PM | HHH prompts | Win rate: ~45% -> ~78% |
 
     Key takeaways:
     - **SFT** gives the model basic instruction-following ability
