@@ -20,7 +20,7 @@ Type aliases
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import chz
 import tinker
@@ -33,7 +33,7 @@ Action: TypeAlias = list[int]
 Observation: TypeAlias = tinker.ModelInput
 Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
-Logs: TypeAlias = dict[str, str | int | float]
+Logs: TypeAlias = dict[str, str | int | float | list[Any] | dict[str, Any]]
 
 
 @dataclass

@@ -1,0 +1,6 @@
+/* Minimal reset — App.css has the full dashboard styles */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+/* Prevent white flash on route transitions */
+html, body, #root { min-height: 100vh; background: #1a1816; }
+[data-theme="light"] body, [data-theme="light"] #root { background: #f8f7f4; }
+a { text-decoration: none; }
