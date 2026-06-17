@@ -3,13 +3,13 @@ Multi-teacher on-policy distillation example.
 
 This script demonstrates on-policy distillation with multiple datasets and
 different teacher models for each dataset. It uses:
-- DeepMath dataset with Qwen3-32B as teacher
-- Tulu3 dataset with Qwen3-235B-A22B-Instruct-2507 as teacher
-- Qwen3-8B as student model
-- qwen3_instruct renderer
+- DeepMath dataset with Qwen3.6-27B as teacher
+- Tulu3 dataset with Qwen3.5-397B-A17B as teacher
+- Qwen3.5-9B as student model
 
 Example usage:
     python -m tinker_cookbook.recipes.distillation.on_policy_multi_teacher \
+        model_name=Qwen/Qwen3.5-9B \
         learning_rate=1e-4 \
         deepmath_groups_per_batch=256 \
         tulu3_groups_per_batch=256 \
@@ -42,15 +42,15 @@ class CLIConfig:
     """Command-line configuration for multi-teacher on-policy distillation."""
 
     # Model configuration
-    model_name: str = "Qwen/Qwen3-8B"  # Student model
+    model_name: str = "Qwen/Qwen3.5-9B"  # Student model
     lora_rank: int = 128
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None  # Student checkpoint
 
     # Teacher configurations
-    deepmath_teacher_model: str = "Qwen/Qwen3-32B"
+    deepmath_teacher_model: str = "Qwen/Qwen3.6-27B"
     deepmath_teacher_checkpoint: str | None = None
-    tulu3_teacher_model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+    tulu3_teacher_model: str = "Qwen/Qwen3.5-397B-A17B"
     tulu3_teacher_checkpoint: str | None = None
 
     # Dataset configuration
@@ -163,6 +163,7 @@ async def cli_main(cli_config: CLIConfig):
 
     # Create full config with both datasets
     config = train_on_policy.Config(
+        recipe_name="recipe_distillation_on_policy_multi_teacher",
         learning_rate=cli_config.learning_rate,
         dataset_configs=[deepmath_dataset_config, tulu3_dataset_config],
         model_name=cli_config.model_name,

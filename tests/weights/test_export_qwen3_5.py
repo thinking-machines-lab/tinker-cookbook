@@ -1,4 +1,8 @@
-"""E2e export tests for Qwen3.5 family: dense + MoE with split QKV fusion."""
+"""E2e export tests for Qwen3.5 family: dense + MoE with split QKV fusion.
+
+Qwen3.5 and Qwen3.6 share the same architecture and qwen3_5 renderer, so the MoE
+cases use Qwen3.6-35B-A3B while the dense cases use Qwen3.5-4B.
+"""
 
 import json
 import tempfile
@@ -234,7 +238,7 @@ class TestQwen35DenseSplitQkv:
 
 
 def _make_tiny_qwen3_5_moe_config() -> PretrainedConfig:
-    config = AutoConfig.from_pretrained("Qwen/Qwen3.5-35B-A3B", trust_remote_code=True)
+    config = AutoConfig.from_pretrained("Qwen/Qwen3.6-35B-A3B", trust_remote_code=True)
     tc = config.text_config
     tc.num_hidden_layers = 1
     tc.layer_types = ["linear_attention"]
@@ -289,7 +293,7 @@ class TestQwen35MoeSplitQkvAndExperts:
             save_model_to_disk(
                 config,
                 model_path,
-                tokenizer_name="Qwen/Qwen3.5-35B-A3B",
+                tokenizer_name="Qwen/Qwen3.6-35B-A3B",
                 is_vision=True,
             )
 
@@ -369,7 +373,7 @@ class TestQwen35MoeSplitQkvAndExperts:
             save_model_to_disk(
                 config,
                 model_path,
-                tokenizer_name="Qwen/Qwen3.5-35B-A3B",
+                tokenizer_name="Qwen/Qwen3.6-35B-A3B",
                 is_vision=True,
             )
 
@@ -436,7 +440,7 @@ class TestQwen35MoeFP8Export:
             save_model_to_disk(
                 config,
                 model_path,
-                tokenizer_name="Qwen/Qwen3.5-35B-A3B",
+                tokenizer_name="Qwen/Qwen3.6-35B-A3B",
                 is_vision=True,
             )
 

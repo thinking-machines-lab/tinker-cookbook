@@ -93,7 +93,7 @@ async def make_envs(self) -> Sequence[Env]:
 
 ## Examples
 
-For examples of using the tool-use library, see the the following:
+For examples of using the tool-use library, see the following:
 
 - [code_rl recipe](../recipes/code_rl/) - Code generation with python execution tool
 - [search_tool recipe](../recipes/search_tool/) - Multi-hop QA with search tool

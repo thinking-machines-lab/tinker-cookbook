@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 02: Your First Supervised Fine-Tuning Run
+    # Tutorial 102: Your First Supervised Fine-Tuning Run
 
     In this tutorial, you will fine-tune a language model using supervised learning (SFT). By the end, you will have:
 
@@ -212,8 +212,8 @@ def _(TrainOnWhat, conversation_to_datum, get_renderer, tokenizer):
             {
                 "role": "assistant",
                 "content": (
-                    "Tinker supports a range of open models including Qwen3, Qwen3.5, Llama 3.1, "
-                    "Llama 3.3, DeepSeek V3, and more. Most training uses LoRA (Low-Rank Adaptation) "
+                    "Tinker supports a range of open models including Qwen3.5, Qwen3.6, "
+                    "Kimi K2.6, NVIDIA Nemotron 3, and DeepSeek V3.1. Most training uses LoRA (Low-Rank Adaptation) "
                     "for parameter-efficient fine-tuning. You create a LoRA training client by calling "
                     "service_client.create_lora_training_client(base_model=model_name, rank=32). "
                     "Check service_client.get_server_capabilities() for the full list of available models."
@@ -243,7 +243,7 @@ def _(TrainOnWhat, conversation_to_datum, get_renderer, tokenizer):
     ]
 
     print(f"Built {len(training_data)} training examples")
-    return SYSTEM_PROMPT, renderer, training_data
+    return SYSTEM_PROMPT, conversations, renderer, training_data
 
 
 @app.cell(hide_code=True)
@@ -316,11 +316,15 @@ def _(mo):
 
 
 @app.cell
-async def _(SYSTEM_PROMPT, get_text_content, renderer, tinker, training_client):
+async def _(
+    SYSTEM_PROMPT,
+    get_text_content,
+    renderer,
+    tinker,
+    training_client,
+):
     # Save weights and create a sampling client in one step
-    sampling_client = await training_client.save_weights_and_get_sampling_client_async(
-        name="tinker-tinker-sft"
-    )
+    sampling_client = await training_client.save_weights_and_get_sampling_client_async()
     stop_sequences = renderer.get_stop_sequences()
     params = tinker.SamplingParams(max_tokens=200, temperature=0.7, stop=stop_sequences)
     _test_questions = [
@@ -349,28 +353,34 @@ async def _(SYSTEM_PROMPT, get_text_content, renderer, tinker, training_client):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Scaling up: fine-tuning Kimi K2.5 with the same code
+    ## Scaling up: fine-tuning Kimi K2.6 with the same code
 
-    Everything we just did on Qwen3.5-4B (4 billion parameters) works identically on much larger models. Let's fine-tune **Kimi K2.5** -- a frontier-class model -- using the exact same training data and loop. With Tinker, you don't need to own the GPUs; you just change the model name.
+    Everything we just did on Qwen3.5-4B (4 billion parameters) works identically on much larger models. Let's fine-tune **Kimi K2.6** -- a frontier-class model -- using the exact same training data and loop. With Tinker, you don't need to own the GPUs; you just change the model name.
     """)
     return
 
 
 @app.cell
-async def _(conversations, conversation_to_datum, get_renderer, service_client, TrainOnWhat):
+async def _(
+    TrainOnWhat,
+    conversation_to_datum,
+    conversations,
+    get_renderer,
+    service_client,
+):
     import contextlib
     import io
 
-    BIG_MODEL = "moonshotai/Kimi-K2.5"
+    BIG_MODEL = "moonshotai/Kimi-K2.6"
 
-    # Create a LoRA training client for Kimi K2.5 -- same API, bigger model
+    # Create a LoRA training client for Kimi K2.6 -- same API, bigger model
     big_training_client = await service_client.create_lora_training_client_async(
         base_model=BIG_MODEL, rank=16
     )
     big_tokenizer = big_training_client.get_tokenizer()
 
-    # Use the disable-thinking renderer so Kimi K2.5 responds directly without <think> blocks
-    big_renderer = get_renderer("kimi_k25_disable_thinking", big_tokenizer)
+    # Use the disable-thinking renderer so Kimi K2.6 responds directly without <think> blocks
+    big_renderer = get_renderer("kimi_k26_disable_thinking", big_tokenizer)
 
     # Build the same training data with the new renderer (suppress noisy tokenizer debug output)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -380,11 +390,26 @@ async def _(conversations, conversation_to_datum, get_renderer, service_client, 
             )
             for conv in conversations
         ]
-    return BIG_MODEL, big_training_client, big_training_data, big_renderer
+    return BIG_MODEL, big_renderer, big_training_client, big_training_data
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    Note that individual steps will now take longer since this model is significantly larger.
+    """)
+    return
 
 
 @app.cell
-async def _(BIG_MODEL, big_training_client, big_training_data, np, time, tinker):
+async def _(
+    BIG_MODEL,
+    big_training_client,
+    big_training_data,
+    np,
+    time,
+    tinker,
+):
     print(f"Model: {BIG_MODEL}")
     print(f"Training data: {len(big_training_data)} examples (same Tinker Tinker conversations)\n")
     big_losses = []
@@ -421,7 +446,7 @@ def _(big_losses, losses, plt):
         marker="s",
         linewidth=2,
         color="#dc2626",
-        label="Kimi K2.5",
+        label="Kimi K2.6",
     )
     _ax.set_xlabel("Training step")
     _ax.set_ylabel("Loss (cross-entropy)")
@@ -441,10 +466,8 @@ async def _(
     get_text_content,
     tinker,
 ):
-    # Sample from the fine-tuned Kimi K2.5
-    big_sampling_client = await big_training_client.save_weights_and_get_sampling_client_async(
-        name="tinker-tinker-kimi"
-    )
+    # Sample from the fine-tuned Kimi K2.6
+    big_sampling_client = await big_training_client.save_weights_and_get_sampling_client_async()
     big_stop = big_renderer.get_stop_sequences()
     big_params = tinker.SamplingParams(max_tokens=200, temperature=0.7, stop=big_stop)
     _test_questions = ["Who are you?", "What is Tinker?"]
@@ -473,7 +496,7 @@ def _(mo):
 
     - **Efficient sampling** shows how to run many inference requests concurrently for maximum throughput. See `tutorials/103_async_patterns.py`.
     - **Real training loops** iterate over a full dataset with proper batching and evaluation. See `tinker_cookbook/recipes/sl_loop.py`.
-    - **Renderers** handle chat templates, vision inputs, and per-token weight assignment. See the [Rendering docs](https://tinker-docs.thinkingmachines.ai/rendering).
+    - **Renderers** handle chat templates, vision inputs, and per-token weight assignment. See the [Rendering docs](https://tinker-docs.thinkingmachines.ai/tutorials/core-concepts/rendering/).
     """)
     return
 

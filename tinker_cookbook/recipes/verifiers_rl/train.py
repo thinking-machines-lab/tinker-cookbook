@@ -130,6 +130,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         learning_rate=cli_config.learning_rate,
         dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
+        recipe_name="recipe_verifiers_rl",
         max_tokens=cli_config.max_tokens,
         temperature=cli_config.temperature,
         lora_rank=cli_config.lora_rank,

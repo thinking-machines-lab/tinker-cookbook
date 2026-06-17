@@ -1,7 +1,8 @@
-"""GPU e2e tests for Qwen3.5 MoE models.
+"""GPU e2e tests for Qwen3.5 and Qwen3.6 MoE models.
 
+(Note that Qwen3.5 and Qwen3.6 share the same architecture and use the same qwen3_5 renderer.)
 Covers: shard merge, PEFT adapter export, FP8 experts quantized merge.
-Model: Qwen/Qwen3.5-35B-A3B (MoE with fused concatenated gate_up_proj).
+Model: Qwen/Qwen3.6-35B-A3B (MoE with fused concatenated gate_up_proj).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from tests.weights.gpu.conftest import (
 )
 from tinker_cookbook.weights import build_hf_model, build_lora_adapter
 
-MODEL = "Qwen/Qwen3.5-35B-A3B"
+MODEL = "Qwen/Qwen3.6-35B-A3B"
 RENDERER = "qwen3_5"
 
 

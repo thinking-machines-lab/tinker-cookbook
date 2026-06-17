@@ -130,6 +130,7 @@ def run_experiment(experiment_config: ExperimentConfig):
     config = train.Config(
         log_path=experiment_path,
         model_name=experiment_config.model_name,
+        recipe_name="recipe_vlm_classifier_sweep",
         renderer_name=experiment_config.renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=evaluator_builders,

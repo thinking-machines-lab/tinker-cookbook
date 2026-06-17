@@ -143,15 +143,15 @@ We welcome PR contributions after our private beta is over. If you have any feed
 ## Citation
 If you use Tinker for your research, please cite it as:
 ```
-Thinking Machines Lab, 2025. Tinker. https://thinkingmachines.ai/tinker/.
+Thinking Machines Lab, 2026. Tinker. https://thinkingmachines.ai/tinker/.
 ```
 
 Or use this BibTeX citation:
 ```
-@misc{tml2025tinker,
+@misc{tml2026tinker,
   author = {Thinking Machines Lab},
   title = {Tinker},
-  year = {2025},
+  year = {2026},
   url = {https://thinkingmachines.ai/tinker/},
 }
 ```

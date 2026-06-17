@@ -15,6 +15,7 @@ from tinker_cookbook.supervised.common import compute_mean_nll
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -24,7 +25,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 class Config:
     base_url: str | None = None
     log_path: str = "/tmp/tinker-examples/sl-loop"
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     batch_size: int = 128
     learning_rate: float = 1e-4
     max_length: int = 32768
@@ -67,7 +68,10 @@ def main(config: Config):
     logger.info(f"Train batches: {n_train_batches}")
 
     # Setup training client
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata("recipe_sl_loop"),
+    )
 
     # Check for resuming
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)

@@ -57,6 +57,7 @@ def cli_main(cli_config: CLIConfig):
 
     config = train.Config(
         model_name=model_name,
+        recipe_name="recipe_preference_shorter",
         renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=dataset_builder,

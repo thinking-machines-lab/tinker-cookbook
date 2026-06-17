@@ -28,6 +28,7 @@ from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
 from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -37,7 +38,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 class Config:
     base_url: str | None = None
     log_path: str = "/tmp/tinker-examples/rl-loop"
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     batch_size: int = 128
     group_size: int = 16
     learning_rate: float = 4e-5
@@ -94,7 +95,10 @@ def main(config: Config):
     n_train_batches = len(train_dataset) // config.batch_size
 
     # Setup training client
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata("recipe_rl_loop"),
+    )
 
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     if resume_info:

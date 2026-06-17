@@ -17,14 +17,19 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # Qwen3 models use JSON tool calls with OpenAI-style tool wrapper in tool declarations.
 QWEN3_MODELS = [
-    ("Qwen/Qwen3-30B-A3B", "qwen3"),
+    ("Qwen/Qwen3-8B", "qwen3"),
     ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
 ]
 
 # Qwen3.5 models use XML tool calls and raw function specs in tool declarations.
+# Qwen3.6 reuses the `qwen3_5` renderer (same tokenizer, special tokens, and chat
+# template — see model_info.py), so we parametrize over both families to confirm
+# the renderer-vs-HF parity holds for each.
 QWEN3_5_MODELS = [
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5"),
-    ("Qwen/Qwen3.5-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.5-4B", "qwen3_5"),
+    ("Qwen/Qwen3.5-4B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
 ]
 
 ALL_QWEN_MODELS = QWEN3_MODELS + QWEN3_5_MODELS
@@ -34,7 +39,10 @@ def _hf_tools_for_model(
     model_name: str, tools_toolspec: list[ToolSpec]
 ) -> Sequence[Mapping[str, object]]:
     """Build the tools payload matching each model family's HF chat-template contract."""
-    if "Qwen3.5" in model_name:
+    # Qwen3.5 and Qwen3.6 share the same `qwen3_5`-family chat template, which is a
+    # pass-through for whatever tool dict it's handed. The cookbook renderer emits the
+    # raw function spec, so the HF reference must receive the same raw shape to match.
+    if "Qwen3.5" in model_name or "Qwen3.6" in model_name:
         return list(tools_toolspec)
     return [{"type": "function", "function": tool} for tool in tools_toolspec]
 

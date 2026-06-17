@@ -16,7 +16,7 @@ Usage:
 
     # GSM8K, larger model
     python -m tinker_cookbook.recipes.true_thinking_score.analyze \
-        dataset=gsm8k model_name=Qwen/Qwen3.5-27B n_problems=50
+        dataset=gsm8k model_name=Qwen/Qwen3.6-27B n_problems=50
 
     # Full MATH-500
     python -m tinker_cookbook.recipes.true_thinking_score.analyze \
@@ -41,6 +41,7 @@ from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
 from tinker_cookbook.recipes.true_thinking_score.tts import (
     generate_cot_and_compute_tts,
 )
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -166,7 +167,9 @@ async def cli_main(config: CLIConfig) -> None:
     problems = _load_problems(config.dataset, config.n_problems, config.seed)
     logger.info(f"Loaded {len(problems)} problems")
 
-    service_client = tinker.ServiceClient()
+    service_client = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("analyze_true_thinking_score"),
+    )
 
     # Process problems concurrently with a semaphore to limit parallelism
     sem = asyncio.Semaphore(config.concurrency)

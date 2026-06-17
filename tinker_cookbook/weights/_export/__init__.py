@@ -62,7 +62,7 @@ def build_hf_model(
     or any HuggingFace-compatible inference framework.
 
     Args:
-        base_model: HuggingFace model name (e.g. ``"Qwen/Qwen3.5-35B-A3B"``)
+        base_model: HuggingFace model name (e.g. ``"Qwen/Qwen3.6-35B-A3B"``)
             or local path to a saved HuggingFace model.
         adapter_path: Local path to the Tinker adapter directory. Must contain
             ``adapter_model.safetensors`` and ``adapter_config.json``.

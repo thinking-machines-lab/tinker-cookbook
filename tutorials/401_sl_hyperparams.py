@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 09: SL Hyperparameters
+    # Tutorial 401: SL Hyperparameters
 
     Finding the right learning rate and LoRA rank for SFT. The cookbook provides a `sweep` module that automates grid search over these parameters.
 
@@ -40,6 +40,8 @@ def _(mo):
     ## Running a sweep
 
     The `sweep.run()` function takes a recipe's `main` function and config, then runs all combinations of the specified hyperparameters. Each run gets its own log directory, and results are collected into a DataFrame.
+
+    *Note: This notebook shows the sweep API and a pre-computed results table — it doesn't launch a live sweep, since that runs every configuration as a full SFT job. Use the CLI below (or sweep.run()) if you want to actually run one.*
     """)
     return
 
@@ -225,7 +227,7 @@ def _(mo):
 def _():
     from tinker_cookbook.hyperparam_utils import get_lora_param_count
 
-    _model = "Qwen/Qwen3-4B-Instruct-2507"
+    _model = "Qwen/Qwen3.5-4B"
     _ranks = [8, 32, 128]
 
     print(f"Model: {_model}")

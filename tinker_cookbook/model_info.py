@@ -29,6 +29,11 @@ _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 _KIMI_K26 = ("kimi_k26", "kimi_k26_disable_thinking", "kimi_k26_preserve_thinking")
 _NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking")
 _NEMOTRON3_SUPER = _NEMOTRON3 + ("nemotron3_low_thinking",)
+_NEMOTRON3_ULTRA = (
+    "nemotron3_ultra",
+    "nemotron3_ultra_disable_thinking",
+    "nemotron3_ultra_medium_thinking",
+)
 
 
 @dataclass
@@ -178,6 +183,9 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
         ),
         "NVIDIA-Nemotron-3-Super-120B-A12B-BF16": ModelAttributes(
             org, "3", "120B-A12B", True, _NEMOTRON3_SUPER
+        ),
+        "NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": ModelAttributes(
+            org, "3", "550B-A55B", True, _NEMOTRON3_ULTRA
         ),
     }
 

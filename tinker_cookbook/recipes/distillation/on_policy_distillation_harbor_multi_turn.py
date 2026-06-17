@@ -9,8 +9,8 @@ Environment responses are masked out; only student-generated tokens contribute.
 
 Example usage:
     python -m tinker_cookbook.recipes.distillation.on_policy_distillation_harbor_multi_turn \
-        model_name=moonshotai/Kimi-K2-Thinking \
-        teacher_model=moonshotai/Kimi-K2-Thinking \
+        model_name=moonshotai/Kimi-K2.6 \
+        teacher_model=moonshotai/Kimi-K2.6 \
         max_turns=10 \
         group_size=4 \
         groups_per_batch=8 \
@@ -57,13 +57,13 @@ class CLIConfig:
     """Command-line configuration for multi-turn harbor distillation."""
 
     # Student model
-    model_name: str = "moonshotai/Kimi-K2-Thinking"
+    model_name: str = "moonshotai/Kimi-K2.6"
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
 
     # Teacher model
-    teacher_model: str = "moonshotai/Kimi-K2-Thinking"
+    teacher_model: str = "moonshotai/Kimi-K2.6"
     teacher_checkpoint: str | None = None
 
     # Harbor environment
@@ -161,6 +161,7 @@ async def cli_main(cli_config: CLIConfig, tasks: list[HarborTask]):
         learning_rate=cli_config.learning_rate,
         dataset_configs=[dataset_config],
         model_name=cli_config.model_name,
+        recipe_name="recipe_distillation_on_policy_harbor_multi_turn",
         renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,

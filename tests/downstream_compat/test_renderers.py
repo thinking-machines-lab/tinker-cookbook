@@ -185,6 +185,9 @@ EXPECTED_RENDERER_NAMES = [
     "nemotron3",
     "nemotron3_low_thinking",
     "nemotron3_disable_thinking",
+    "nemotron3_ultra",
+    "nemotron3_ultra_disable_thinking",
+    "nemotron3_ultra_medium_thinking",
 ]
 
 
