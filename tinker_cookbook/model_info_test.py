@@ -5,6 +5,7 @@ import pytest
 from tinker_cookbook.model_info import (
     get_model_attributes,
     get_recommended_renderer_name,
+    get_recommended_renderer_names,
     warn_if_renderer_not_recommended,
 )
 
@@ -28,25 +29,52 @@ class TestQwen3_6:
         assert attrs.is_vl is True
 
 
+class TestNemotron3:
+    def test_ultra_uses_nemotron3_ultra_renderer(self):
+        assert (
+            get_recommended_renderer_name("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16")
+            == "nemotron3_ultra"
+        )
+
+    def test_ultra_peft_suffix_uses_nemotron3_ultra_renderer(self):
+        assert (
+            get_recommended_renderer_name(
+                "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16:peft:262144"
+            )
+            == "nemotron3_ultra"
+        )
+
+    def test_ultra_attributes(self):
+        attrs = get_model_attributes("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16")
+        assert attrs.organization == "nvidia"
+        assert attrs.version_str == "3"
+        assert attrs.size_str == "550B-A55B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16") == [
+            "nemotron3_ultra",
+            "nemotron3_ultra_disable_thinking",
+            "nemotron3_ultra_medium_thinking",
+        ]
+
+
 class TestWarnIfRendererNotRecommended:
     def test_no_warning_when_renderer_is_none(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):
-            warn_if_renderer_not_recommended("Qwen/Qwen3-4B-Instruct-2507", None)
+            warn_if_renderer_not_recommended("Qwen/Qwen3.5-4B", None)
         assert caplog.text == ""
 
     def test_no_warning_when_renderer_is_recommended(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):
-            warn_if_renderer_not_recommended("Qwen/Qwen3-4B-Instruct-2507", "qwen3_instruct")
+            warn_if_renderer_not_recommended("Qwen/Qwen3.5-4B", "qwen3_5")
         assert caplog.text == ""
 
     def test_warning_when_renderer_not_recommended(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):
-            warn_if_renderer_not_recommended(
-                "Qwen/Qwen3-4B-Instruct-2507", "qwen3_disable_thinking"
-            )
+            warn_if_renderer_not_recommended("Qwen/Qwen3.5-4B", "qwen3_disable_thinking")
         assert "not recommended" in caplog.text
         assert "qwen3_disable_thinking" in caplog.text
-        assert "qwen3_instruct" in caplog.text
+        assert "qwen3_5" in caplog.text
 
     def test_no_warning_for_unknown_model(self, caplog: pytest.LogCaptureFixture):
         with caplog.at_level(logging.WARNING):

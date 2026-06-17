@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial: Rendering
+    # Tutorial 201: Rendering
 
     Rendering converts a list of messages into a token sequence that a model can consume. While similar to HuggingFace chat templates, Tinker's rendering system handles the full training lifecycle: supervised learning, reinforcement learning, and deployment.
 
@@ -34,7 +34,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We need a tokenizer (to map between text and token IDs) and a renderer (to apply the model's chat format).
+    We need a tokenizer (to map between text and token IDs) and a renderer (to apply the model's chat format). Note for this example that both Qwen3.5 and Qwen3.6 models use the same `qwen3_5` renderer.
     """)
     return
 
@@ -43,8 +43,8 @@ def _(mo):
 def _():
     from tinker_cookbook import renderers, tokenizer_utils
 
-    tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5", tokenizer)
     renderer  # noqa: B018
     return renderer, renderers, tokenizer, tokenizer_utils
 
@@ -94,13 +94,15 @@ def _(messages, renderer, tokenizer):
     print()
     print("Decoded tokens:")
     print(tokenizer.decode(prompt.to_ints()))
-    return (prompt,)
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     The output is a `ModelInput` object containing the tokenized chat template. Notice how each message is wrapped in special tokens like `<|im_start|>` and `<|im_end|>`, and the final `<|im_start|>assistant` is left open for the model to fill in.
+
+    Because `qwen3_5` is a thinking renderer, the prompt also ends with an open `<think>` tag that primes the model to reason before answering. If you'd prefer non-thinking mode instead, the `qwen3_5_disable_thinking` variant inserts a closed `<think></think>` so the model replies directly.
     """)
     return
 
@@ -120,11 +122,11 @@ def _(renderer, tokenizer):
     stop_sequences = renderer.get_stop_sequences()
     print(f"Stop sequences: {stop_sequences}")
 
-    # For Qwen3, this is the <|im_end|> token
+    # For Qwen3.5/3.6, this is the <|im_end|> token
     for tok in stop_sequences:
         if isinstance(tok, int):
             print(f"  Token {tok} decodes to: {tokenizer.decode([tok])!r}")
-    return (stop_sequences,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -144,14 +146,19 @@ def _(mo):
 
 
 @app.cell
-def _(renderer):
-    # Simulate some sampled tokens (in practice these come from the model)
-    fake_tokens = [45, 7741, 34651, 31410, 614, 4911, 76665, 13, 151645]
-
+def _(renderer, tokenizer):
+    # Simulate what the model emits during sampling: the assistant's reply text
+    # followed by the <|im_end|> stop token. (In practice these come from the
+    # sampler -- here we build them by hand so the example is reproducible.)
+    fake_tokens = tokenizer.encode(
+        "They have efficient DNA repair and cancer-resistant cells.<|im_end|>"
+    )
     parsed_message, termination = renderer.parse_response(fake_tokens)
+
+    print(f"Fake tokens: {fake_tokens}")
     print(f"Parsed message: {parsed_message}")
     print(f"Termination: {termination} (is_clean={termination.is_clean})")
-    return fake_tokens, parsed_message, termination
+    return
 
 
 @app.cell(hide_code=True)
@@ -166,7 +173,7 @@ def _(mo):
     from tinker.types import SamplingParams
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3-30B-A3B")
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
 
     prompt = renderer.build_generation_prompt(messages[:-1])
     stop_sequences = renderer.get_stop_sequences()
@@ -202,7 +209,7 @@ def _(messages, renderer, tokenizer):
     for i, (tok_id, w) in enumerate(zip(token_ids, weights.tolist())):
         label = "COMPLETION" if w > 0 else "prompt"
         print(f"  [{i:3d}] {label:10s}  {tokenizer.decode([tok_id])!r}")
-    return model_input, token_ids, weights
+    return
 
 
 @app.cell(hide_code=True)
@@ -244,7 +251,7 @@ def _(messages, renderer, renderers):
     # Compare with default (last assistant message only)
     _, weights_last = renderer.build_supervised_example(messages)
     print(f"Tokens with weight > 0 (default): {(weights_last > 0).sum().item()}")
-    return weights_all, weights_last
+    return
 
 
 @app.cell(hide_code=True)
@@ -256,13 +263,13 @@ def _(mo):
 
     | Name | Model family | Notes |
     |---|---|---|
-    | `qwen3` | Qwen3 | Thinking enabled (default) |
-    | `qwen3_disable_thinking` | Qwen3 | Thinking disabled |
-    | `llama3` | Llama 3 | Omits the HF preamble |
+    | `qwen3_5` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled (default) |
+    | `qwen3_5_disable_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking disabled |
     | `deepseekv3` | DeepSeek V3 | Non-thinking mode (default) |
     | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
     | `nemotron3` | NVIDIA Nemotron 3 | Thinking enabled |
-    | `kimi_k2` | Kimi K2 | Thinking format |
+    | `kimi_k26` | Kimi K2.6 | Thinking enabled (default) |
+    | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 
     Each renderer produces the correct special tokens for its model family. The default renderers match HuggingFace's `apply_chat_template` output, so models trained with Tinker work with the OpenAI-compatible endpoint.
     """)
@@ -272,15 +279,20 @@ def _(mo):
 @app.cell
 def _(renderers, tokenizer_utils):
     # Example: switching between renderers
-    # Each model family needs its own tokenizer
-    qwen_tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3-30B-A3B")
-    qwen_renderer = renderers.get_renderer("qwen3", qwen_tokenizer)
+    # Each model family needs its own tokenizer + matching renderer
+    _test_messages = [{"role": "user", "content": "Hello!"}]
 
-    test_messages = [{"role": "user", "content": "Hello!"}]
-    prompt_tokens = qwen_renderer.build_generation_prompt(test_messages)
-    print("Qwen3 prompt:")
-    print(qwen_tokenizer.decode(prompt_tokens.to_ints()))
-    return prompt_tokens, qwen_renderer, qwen_tokenizer, test_messages
+    for _model_name, _renderer_name in [
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("moonshotai/Kimi-K2.6", "kimi_k26"),
+    ]:
+        _tokenizer = tokenizer_utils.get_tokenizer(_model_name)
+        _renderer = renderers.get_renderer(_renderer_name, _tokenizer)
+        _prompt_tokens = _renderer.build_generation_prompt(_test_messages)
+        print(f"--- {_model_name} ({_renderer_name}) ---")
+        print(_tokenizer.decode(_prompt_tokens.to_ints()))
+        print()
+    return
 
 
 @app.cell(hide_code=True)
@@ -288,13 +300,13 @@ def _(mo):
     mo.md(r"""
     ## Vision inputs with `ImagePart`
 
-    For vision-language models (like Qwen3-VL), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
+    For vision-language models (Qwen3.5 and Qwen3.6 models are all vision-capable), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
     """)
     return
 
 
 @app.cell
-def _(renderers):
+def _():
     from tinker_cookbook.renderers import ImagePart, Message, TextPart
 
     # A multimodal message with an image and text
@@ -310,25 +322,22 @@ def _(renderers):
     # Text-only messages still work as plain strings
     text_message = Message(role="user", content="Describe this in one word.")
     print("Text message:", text_message)
-    return ImagePart, Message, TextPart, multimodal_message, text_message
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    To use vision renderers, you also need an image processor:
+    The Qwen3.5 and Qwen3.6 models are natively vision-capable -- the same `qwen3_5` renderer you set up above also handles images. You just additionally load an image processor and pass it in:
 
     ```python
     from tinker_cookbook.image_processing_utils import get_image_processor
 
-    model_name = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    tokenizer = tokenizer_utils.get_tokenizer(model_name)
-    image_processor = get_image_processor(model_name)
-
-    renderer = renderers.get_renderer("qwen3_vl_instruct", tokenizer, image_processor=image_processor)
+    image_processor = get_image_processor("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5", tokenizer, image_processor=image_processor)
     ```
 
-    The VL renderers handle vision special tokens (`<|vision_start|>`, `<|vision_end|>`) and image preprocessing automatically.
+    With an image processor attached, the renderer handles the vision special tokens (`<|vision_start|>`, `<|vision_end|>`) and image preprocessing automatically.
     """)
     return
 
@@ -345,15 +354,13 @@ def _(mo):
 
 @app.cell
 def _(renderers):
-    from tinker_cookbook.renderers.base import Renderer
-
     # Define a factory function that creates your renderer
     def my_renderer_factory(tokenizer, image_processor=None):
         # In practice, you would return a custom Renderer subclass here.
-        # For demonstration, we just return the Qwen3 renderer.
-        from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
+        # For demonstration, we just return the Qwen3.5 renderer.
+        from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 
-        return Qwen3Renderer(tokenizer)
+        return Qwen3_5Renderer(tokenizer)
 
     # Register it under a namespaced name
     renderers.register_renderer("MyOrg/custom_format", my_renderer_factory)
@@ -363,7 +370,7 @@ def _(renderers):
 
     # Clean up
     renderers.unregister_renderer("MyOrg/custom_format")
-    return Renderer, my_renderer_factory
+    return
 
 
 @app.cell(hide_code=True)

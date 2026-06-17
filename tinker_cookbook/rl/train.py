@@ -64,6 +64,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
 
 logger = logging.getLogger(__name__)
@@ -429,6 +430,10 @@ class Config:
     dataset_builder: RLDatasetBuilder
     # Model name (base weights) to train.
     model_name: str
+    # Slug identifying the recipe driving this run (e.g. "recipe_math_rl").
+    # Attached as user_metadata on the ServiceClient so all downstream
+    # training/sampling calls inherit it.
+    recipe_name: str
     # Maximum number of generated tokens per rollout trajectory.
     max_tokens: int
     # Directory for checkpoints, logs, and traces.
@@ -1835,7 +1840,8 @@ async def main(
         config = Config(
             learning_rate=1e-5,
             dataset_builder=my_dataset_builder,
-            model_name="meta-llama/Llama-3.1-8B-Instruct",
+            model_name="Qwen/Qwen3.5-9B",
+            renderer_name="qwen3_5_disable_thinking",
             max_tokens=2048,
             log_path="./logs/my_rl_run",
         )
@@ -1872,7 +1878,10 @@ async def main(
     else:
         start_batch = 0
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata(config.recipe_name),
+    )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link

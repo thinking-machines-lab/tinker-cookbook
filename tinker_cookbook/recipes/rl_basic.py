@@ -9,7 +9,7 @@ from tinker_cookbook.rl import train
 
 
 def build_config_blueprint() -> chz.Blueprint[train.Config]:
-    model_name = "meta-llama/Llama-3.1-8B"
+    model_name = "Qwen/Qwen3.5-9B-Base"
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     builder = Gsm8kDatasetBuilder(
         batch_size=128,
@@ -21,6 +21,7 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
     return chz.Blueprint(train.Config).apply(
         {
             "model_name": model_name,
+            "recipe_name": "recipe_rl_basic",
             "renderer_name": renderer_name,
             "log_path": "/tmp/tinker-examples/rl_basic",
             "dataset_builder": builder,

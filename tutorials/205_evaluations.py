@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -111,14 +111,14 @@ async def _(TensorData, api_key, get_renderer, mo, tinker, torch):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
         base_model=MODEL_NAME, rank=16
     )
     tokenizer = training_client.get_tokenizer()
-    renderer = get_renderer("qwen3_instruct", tokenizer)
+    renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     # Prepare held-out SFT data for the NLL evaluator
     eval_examples = [
@@ -144,15 +144,7 @@ async def _(TensorData, api_key, get_renderer, mo, tinker, torch):
         )
 
     print(f"Prepared {len(eval_datums)} evaluation datums")
-    return (
-        MODEL_NAME,
-        eval_datums,
-        eval_examples,
-        renderer,
-        service_client,
-        tokenizer,
-        training_client,
-    )
+    return eval_datums, renderer, tokenizer, training_client
 
 
 @app.cell(hide_code=True)
@@ -166,7 +158,7 @@ def _(mo):
 
 
 @app.cell
-def _(TrainingClientEvaluator, tinker, torch):
+def _(TrainingClientEvaluator, tinker):
     class NLLEvaluator(TrainingClientEvaluator):
         """Compute mean NLL on held-out data using forward passes."""
 
@@ -183,8 +175,8 @@ def _(TrainingClientEvaluator, tinker, torch):
             total_nll = 0.0
             total_tokens = 0
             for datum, output in zip(self.eval_data, result.loss_fn_outputs):
-                logprobs = torch.tensor(output["logprobs"])
-                weights = torch.tensor(datum.loss_fn_inputs["weights"])
+                logprobs = output["logprobs"].to_torch()
+                weights = datum.loss_fn_inputs["weights"].to_torch()
                 total_nll += -(logprobs * weights).sum().item()
                 total_tokens += weights.sum().item()
 
@@ -200,7 +192,7 @@ async def _(NLLEvaluator, eval_datums, training_client):
     nll_evaluator = NLLEvaluator(eval_datums, name="held_out")
     nll_metrics = await nll_evaluator(training_client)
     print(f"NLL evaluation: {nll_metrics}")
-    return nll_evaluator, nll_metrics
+    return
 
 
 @app.cell(hide_code=True)
@@ -253,7 +245,7 @@ def _(SamplingClientEvaluator, get_text_content, tinker):
 
 
 @app.cell
-async def _(AccuracyEvaluator, renderer, service_client, tokenizer, training_client):
+async def _(AccuracyEvaluator, renderer, tokenizer, training_client):
     # Create a sampling client from current weights
     sampling_client = await training_client.save_weights_and_get_sampling_client_async()
 
@@ -267,7 +259,7 @@ async def _(AccuracyEvaluator, renderer, service_client, tokenizer, training_cli
     accuracy_evaluator = AccuracyEvaluator(test_qa, renderer, tokenizer)
     acc_metrics = await accuracy_evaluator(sampling_client)
     print(f"Accuracy evaluation: {acc_metrics}")
-    return acc_metrics, accuracy_evaluator, sampling_client, test_qa
+    return
 
 
 @app.cell(hide_code=True)
@@ -298,8 +290,8 @@ def _(mo):
         return AccuracyEvaluator(test_qa, renderer, tokenizer)
 
     config = train.Config(
-        log_path="~/logs/sft-with-evals",
-        model_name="Qwen/Qwen3-4B-Instruct-2507",
+        log_path="/tmp/tinker-tutorials/sft-with-evals",
+        model_name="Qwen/Qwen3.5-4B",
         dataset_builder=my_dataset_builder,
         learning_rate=1e-4,
 
@@ -327,8 +319,8 @@ def _(mo):
     from tinker_cookbook.rl import train
 
     config = train.Config(
-        log_path="~/logs/rl-with-evals",
-        model_name="meta-llama/Llama-3.1-8B",
+        log_path="/tmp/tinker-tutorials/rl-with-evals",
+        model_name="Qwen/Qwen3.5-9B-Base",
         dataset_builder=my_rl_dataset_builder,
 
         evaluator_builders=[make_accuracy_evaluator],
@@ -364,7 +356,7 @@ def _(mo):
     mo.md(r"""
     ## Inspect AI integration
 
-    For standardized benchmarks (MMLU, GSM8K, HumanEval, etc.), the cookbook integrates with [Inspect AI](https://inspect.ai). The `InspectEvaluator` wraps any Inspect task as a `SamplingClientEvaluator`:
+    For standardized benchmarks (MMLU, GSM8K, HumanEval, etc.), the cookbook integrates with [Inspect AI](https://inspect.aisi.org.uk/). The `InspectEvaluator` wraps any Inspect task as a `SamplingClientEvaluator`:
 
     ```python
     from tinker_cookbook.eval.run_inspect_evals import Config

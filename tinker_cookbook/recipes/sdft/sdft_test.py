@@ -31,8 +31,8 @@ from tinker_cookbook.recipes.sdft.eval import (
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
-RENDERER_NAME = "qwen3_instruct"
+MODEL_NAME = "Qwen/Qwen3.5-4B"
+RENDERER_NAME = "qwen3_5"
 
 
 @pytest.fixture
@@ -574,6 +574,7 @@ class TestReverseKLCustomLoss:
         """reverse=True requires topk>0; otherwise fail loudly up-front."""
         cfg = Config(
             model_name="Qwen/Qwen3-8B",
+            recipe_name="test_sdft_reverse_topk_zero",
             log_path=str(tmp_path),
             topk=0,
             reverse=True,

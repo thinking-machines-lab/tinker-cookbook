@@ -18,7 +18,7 @@ class CLIConfig:
     """Command-line configuration for DeepCoder RL training."""
 
     # Model configuration
-    model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    model_name: str = "Qwen/Qwen3.5-9B"
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
@@ -99,6 +99,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         learning_rate=cli_config.learning_rate,
         dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
+        recipe_name="recipe_code_rl",
         renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,

@@ -8,7 +8,8 @@ are used - only KL penalty provides supervision.
 Example usage:
     # For reasoning tasks (DeepMath)
     python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
-        model_name=Qwen/Qwen3-8B-Base \
+        model_name=Qwen/Qwen3.5-9B-Base \
+        teacher_model=Qwen/Qwen3.5-9B \
         dataset=deepmath \
         learning_rate=1e-4 \
         groups_per_batch=1024 \
@@ -17,7 +18,8 @@ Example usage:
 
     # For chat tasks (Tulu3)
     python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
-        model_name=Qwen/Qwen3-8B-Base \
+        model_name=Qwen/Qwen3.5-9B-Base \
+        teacher_model=Qwen/Qwen3.5-9B \
         dataset=tulu3 \
         learning_rate=1e-4 \
         groups_per_batch=1024 \
@@ -50,13 +52,13 @@ class CLIConfig:
     """Command-line configuration for on-policy distillation."""
 
     # Model configuration
-    model_name: str = "Qwen/Qwen3-8B-Base"  # Student model
+    model_name: str = "Qwen/Qwen3.5-9B-Base"  # Student model
     lora_rank: int = 128
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None  # Student checkpoint
 
     # Teacher configuration
-    teacher_model: str = "Qwen/Qwen3-8B"
+    teacher_model: str = "Qwen/Qwen3.5-9B"
     teacher_checkpoint: str | None = None
 
     # Dataset configuration
@@ -150,6 +152,7 @@ async def cli_main(cli_config: CLIConfig):
 
     # Create full config
     config = train_on_policy.Config(
+        recipe_name="recipe_distillation_on_policy",
         learning_rate=cli_config.learning_rate,
         dataset_configs=[dataset_config],
         model_name=cli_config.model_name,

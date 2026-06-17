@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 14: Full RLHF Pipeline
+    # Tutorial 407: Full RLHF Pipeline
 
     Train a model through the complete 3-stage RLHF pipeline:
 
@@ -28,6 +28,8 @@ def _(mo):
     ```
 
     Each stage builds on the previous one. The SFT policy initializes the RL agent, and the preference model provides the reward signal.
+
+    **Expected runtime: ~1.5 hours end-to-end** -- about 20 minutes for Stages 1-2 (SFT + preference model) and ~1 hour for Stage 3 (RL, capped at 40 steps). This is the longest tutorial in the series, so leave it running and check back. Raising `max_steps` in the Stage 3 config trains longer (the win rate plateaus around 98% after ~200 steps; a full epoch over HHH is ~630 steps, ~15 hours).
     """)
     return
 
@@ -37,14 +39,13 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We use Llama 3.2 3B as the base model. All three stages use LoRA for parameter-efficient training.
+    We use `Qwen3.5-9B-Base` as the base model. All three stages use LoRA for parameter-efficient training.
     """)
     return
 
 
 @app.cell
 def _():
-    import asyncio
     import warnings
 
     warnings.filterwarnings("ignore", message="IProgress not found")
@@ -52,29 +53,26 @@ def _():
     import tinker
 
     from tinker_cookbook import checkpoint_utils, model_info
-    from tinker_cookbook.supervised.types import TrainOnWhat
+    from tinker_cookbook.renderers import TrainOnWhat
 
-    BASE_MODEL = "meta-llama/Llama-3.2-3B"
+    BASE_MODEL = "Qwen/Qwen3.5-9B-Base"
     LORA_RANK = 64
     MAX_LENGTH = 16384
     BATCH_SIZE = 256
-    LOG_ROOT = "/tmp/tinker-examples/rlhf-tutorial"
+    LOG_ROOT = "/tmp/tinker-tutorials/rlhf"
 
     renderer_name = model_info.get_recommended_renderer_name(BASE_MODEL)
     print(f"Base model:  {BASE_MODEL}")
     print(f"Renderer:    {renderer_name}")
     print(f"LoRA rank:   {LORA_RANK}")
-
     return (
         BASE_MODEL,
         BATCH_SIZE,
-        LORA_RANK,
         LOG_ROOT,
+        LORA_RANK,
         MAX_LENGTH,
         TrainOnWhat,
-        asyncio,
         checkpoint_utils,
-        model_info,
         renderer_name,
         tinker,
     )
@@ -105,7 +103,7 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     BASE_MODEL,
     BATCH_SIZE,
     LOG_ROOT,
@@ -113,7 +111,6 @@ def _(
     MAX_LENGTH,
     TrainOnWhat,
     api_key,
-    asyncio,
     mo,
     renderer_name,
 ):
@@ -146,6 +143,7 @@ def _(
     sft_config = supervised_train.Config(
         log_path=sft_log_path,
         model_name=BASE_MODEL,
+        recipe_name="tutorial_rlhf_sft",
         renderer_name=renderer_name,
         dataset_builder=sft_dataset_builder,
         evaluator_builders=[],
@@ -160,16 +158,9 @@ def _(
         max_steps=None,
     )
 
-    asyncio.run(supervised_train.main(sft_config))
+    await supervised_train.main(sft_config)
     print("Stage 1 (SFT) complete.")
-
-    return (
-        NoRobotsBuilder,
-        sft_config,
-        sft_dataset_builder,
-        sft_log_path,
-        supervised_train,
-    )
+    return sft_log_path, supervised_train
 
 
 @app.cell(hide_code=True)
@@ -196,13 +187,12 @@ def _(mo):
 
 
 @app.cell
-def _(
+async def _(
     BASE_MODEL,
     BATCH_SIZE,
     LOG_ROOT,
     LORA_RANK,
     MAX_LENGTH,
-    asyncio,
     renderer_name,
     supervised_train,
 ):
@@ -234,6 +224,7 @@ def _(
     rm_config = supervised_train.Config(
         log_path=rm_log_path,
         model_name=BASE_MODEL,
+        recipe_name="tutorial_rlhf_rm",
         renderer_name=renderer_name,
         dataset_builder=rm_dataset_builder,
         evaluator_builders=[],
@@ -248,15 +239,9 @@ def _(
         max_steps=None,
     )
 
-    asyncio.run(supervised_train.main(rm_config))
+    await supervised_train.main(rm_config)
     print("Stage 2 (Preference Model) complete.")
-
-    return (
-        HHHComparisonBuilder,
-        comparison_builder,
-        rm_config,
-        rm_log_path,
-    )
+    return HHHComparisonBuilder, rm_log_path
 
 
 @app.cell(hide_code=True)
@@ -279,21 +264,21 @@ def _(mo):
     - **Group size**: 4 completions per prompt
     - **Tournament**: `ALL_PAIRS_BOTH_WAYS` -- every pair is evaluated in both orderings
 
-    Expected: `test/win_rate` increases from ~40% to ~70% in 100 steps.
+    Expected: `test/win_rate` climbs from ~45% to ~75-80% in 40 steps.
+
+    Most of the learning happens early: in a full run the win rate reaches ~93% by step 60 and plateaus around 98% after ~200 steps, so we cap training at `max_steps=40` (~1 hour) to capture the steep part of the curve. A full epoch over the HHH prompts is ~630 steps (~15 hours); raise `max_steps` (or set it to `None`) to train longer.
     """)
     return
 
 
 @app.cell
-def _(
+async def _(
     BASE_MODEL,
     BATCH_SIZE,
     HHHComparisonBuilder,
     LOG_ROOT,
     LORA_RANK,
-    asyncio,
     checkpoint_utils,
-    model_info,
     renderer_name,
     rm_log_path,
     sft_log_path,
@@ -354,6 +339,7 @@ def _(
     rl_log_path = f"{LOG_ROOT}/rl"
     rl_config = rl_train.Config(
         model_name=BASE_MODEL,
+        recipe_name="tutorial_rlhf_rl",
         renderer_name=renderer_name,
         dataset_builder=rl_dataset_builder,
         load_checkpoint_path=sft_ckpt.state_path,
@@ -365,15 +351,18 @@ def _(
         wandb_name="rlhf-tutorial-rl",
         lora_rank=LORA_RANK,
         save_every=100,
-        eval_every=20,
+        eval_every=10,
         num_groups_to_log=4,
-        max_steps=None,
+        # Most of the win-rate gain lands in the first 40 steps (~1 hour); a
+        # full epoch is ~630 steps (~15 hours) and plateaus around 98%. A final
+        # checkpoint is saved at the end of training either way. Raise this
+        # (or set to None) to train longer.
+        max_steps=40,
     )
 
-    asyncio.run(rl_train.main(rl_config))
+    await rl_train.main(rl_config)
     print("Stage 3 (RL) complete.")
-
-    return (rl_config, rl_log_path)
+    return (rl_log_path,)
 
 
 @app.cell(hide_code=True)
@@ -387,13 +376,10 @@ def _(mo):
 
 
 @app.cell
-async def _(
-    BASE_MODEL,
-    checkpoint_utils,
-    rl_log_path,
-    tinker,
-):
+async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
     from tinker import types
+
+    from tinker_cookbook import renderers
 
     # Create sampling clients for both models
     service = tinker.ServiceClient()
@@ -405,18 +391,23 @@ async def _(
     rl_ckpt = checkpoint_utils.get_last_checkpoint(rl_log_path)
     assert rl_ckpt is not None
     rlhf_sampler = await service.create_sampling_client_async(
+        model_path=rl_ckpt.sampler_path,
         base_model=BASE_MODEL,
-        load_path=rl_ckpt.sampler_path,
     )
 
     tokenizer_eval = base_sampler.get_tokenizer()
+    renderer_eval = renderers.get_renderer(renderer_name, tokenizer_eval)
 
     # Sample from both models on the same prompt
     test_prompt = (
         "What is the most important thing to consider when learning a new programming language?"
     )
-    prompt_tokens = types.ModelInput.from_ints(tokenizer_eval.encode(test_prompt))
-    params = types.SamplingParams(max_tokens=200, temperature=0.7, stop=["\n\n"])
+    prompt_tokens = renderer_eval.build_generation_prompt(
+        [{"role": "user", "content": test_prompt}]
+    )
+    params = types.SamplingParams(
+        max_tokens=200, temperature=0.7, stop=renderer_eval.get_stop_sequences()
+    )
 
     base_result = await base_sampler.sample_async(
         prompt=prompt_tokens, sampling_params=params, num_samples=1
@@ -430,7 +421,6 @@ async def _(
     print()
     print("=== RLHF Model ===")
     print(test_prompt + tokenizer_eval.decode(rlhf_result.sequences[0].tokens))
-
     return
 
 
@@ -445,7 +435,7 @@ def _(mo):
     |-------|------|---------|------------|
     | SFT | Initialize policy on instructions | no_robots | NLL: 1.99 -> 1.92 |
     | Preference Model | Learn human preferences | HHH (Anthropic) | NLL: 7 -> 0.55 |
-    | RL | Optimize policy against PM | HHH prompts | Win rate: 40% -> 70% |
+    | RL | Optimize policy against PM | HHH prompts | Win rate: ~45% -> ~78% |
 
     Key takeaways:
     - **SFT** gives the model basic instruction-following ability

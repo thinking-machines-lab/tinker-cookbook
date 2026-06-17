@@ -34,6 +34,7 @@ from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.tool_use import build_agent_tool_env
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.ml_log import dump_config
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 class EvalConfig:
     """Configuration for Harbor evaluation."""
 
-    model_name: str = "moonshotai/Kimi-K2-Thinking"
+    model_name: str = "moonshotai/Kimi-K2.6"
     output_path: str = "tinker_cookbook/recipes/harbor_rl/scripts/results"
     max_turns: int = 10
     max_tokens: int = 2048
@@ -194,7 +195,10 @@ async def run_eval(
 
     lock = asyncio.Lock()
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata("eval_harbor_rl"),
+    )
     if config.checkpoint_url:
         sampling_client = service_client.create_sampling_client(
             model_path=config.checkpoint_url,

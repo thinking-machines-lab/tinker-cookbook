@@ -11,13 +11,13 @@ You can easily chat with any sampler checkpoint saved using **Tinker** by runnin
 ```bash
 python -m tinker_cookbook.chat_app.tinker_chat_cli \
     model_path=tinker://<unique_id>/sampler_weights/final \
-    base_model=meta-llama/Llama-3.1-8B
+    base_model=Qwen/Qwen3.5-9B-Base
 ```
 
 ### Arguments
 
 * **model_path**: Path to the trained Tinker sampler checkpoint. Example: `tinker://<unique_id>/sampler_weights/final`. Note that the Tinker chat CLI will not work with training weights which look like `tinker://<unique_id>/weights/final`. Make sure the checkpoint contains `sampler_weights`.
-* **base_model**: Hugging Face base model to use for inference. Example: `meta-llama/Llama-3.1-8B`
+* **base_model**: Hugging Face base model to use for inference. Example: `Qwen/Qwen3.5-9B-Base`
 
 ---
 
@@ -39,7 +39,7 @@ Example:
 ```bash
 python -m tinker_cookbook.chat_app.tinker_chat_cli \
     model_path=tinker://<unique_id>/sampler_weights/final \
-    base_model=meta-llama/Llama-3.1-8B \
+    base_model=Qwen/Qwen3.5-9B-Base \
     max_tokens=256 \
     temperature=0.8 \
     top_p=0.95

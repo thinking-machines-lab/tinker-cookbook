@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,9 +14,9 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 05: The Cookbook's RL Abstractions
+    # Tutorial 301: The Cookbook's RL Abstractions
 
-    In tutorial 04, we wrote a GRPO training loop from scratch: sample completions, grade them, compute advantages, build datums, train. That works, but every new task would repeat the same boilerplate.
+    In tutorial 104, we wrote a GRPO training loop from scratch: sample completions, grade them, compute advantages, build datums, train. That works, but every new task would repeat the same boilerplate.
 
     The cookbook provides standard types that separate concerns:
     - **`Env`** -- task logic (prompts and rewards)
@@ -24,7 +24,7 @@ def _(mo):
     - **`RLDataset`** -- iterating over problems
     - **`compute_advantages`** / **`assemble_training_data`** -- reusable data processing
 
-    This tutorial shows how the same GSM8K task from tutorial 04 maps onto these types.
+    This tutorial shows how the same GSM8K task from tutorial 104 maps onto these types.
     """)
     return
 
@@ -147,8 +147,11 @@ async def _(get_tokenizer, renderers):
 @app.cell
 async def _(env, tokenizer):
     # Simulate calling step() with a correct answer (as token IDs)
-    # In real training, the action comes from the model's sampled tokens.
-    # Here we just encode a string to show the interface.
+    # In real training the action is the model's sampled tokens, which end with
+    # the renderer's stop token. This hand-encoded string omits it, so the
+    # response grades as not well-formed -> format reward 0, i.e., reward 0.9
+    # (correct answer) rather than the full 1.0. A real rollout would include
+    # the stop token and score 1.0.
     fake_response = "The answer is \\boxed{5}"
     fake_action = tokenizer.encode(fake_response)
 
@@ -166,7 +169,7 @@ def _(mo):
     mo.md(r"""
     ## EnvGroupBuilder -- creating groups for GRPO
 
-    In tutorial 04, we sampled `group_size` completions per problem manually. `EnvGroupBuilder` formalizes this pattern:
+    In tutorial 104, we sampled `group_size` completions per problem manually. `EnvGroupBuilder` formalizes this pattern:
     - **`make_envs()`** -- returns a list of fresh `Env` instances (one per rollout in the group)
     - **`compute_group_rewards()`** -- optional group-level reward (default 0.0, added on top of per-step rewards)
     - **`cleanup()`** -- release resources after rollouts complete
@@ -180,7 +183,8 @@ def _(mo):
 async def _(MathEnv, ProblemGroupBuilder, partial, renderer):
     GROUP_SIZE = 4
     _group_builder = ProblemGroupBuilder(
-        env_thunk=partial(MathEnv, "What is 2 + 3?", "5", renderer), num_envs=GROUP_SIZE
+        env_thunk=partial(MathEnv, "What is 2 + 3?", "5", renderer),
+        num_envs=GROUP_SIZE,
     )
     # ProblemGroupBuilder takes an env factory (a callable that returns a fresh ProblemEnv)
     # and the number of envs to create per group.
@@ -277,12 +281,12 @@ def _(mo):
     mo.md(r"""
     ## Data processing -- advantages and datums
 
-    In tutorial 04, we manually centered rewards and built `Datum` objects with padded logprobs and advantages. The cookbook provides two functions that replace all of that:
+    In tutorial 104, we manually centered rewards and built `Datum` objects with padded logprobs and advantages. The cookbook provides two functions that replace all of that:
 
-    - **`compute_advantages()`** -- centers rewards within each group (same GRPO logic as tutorial 04)
+    - **`compute_advantages()`** -- centers rewards within each group (same GRPO logic as tutorial 104)
     - **`assemble_training_data()`** -- converts `TrajectoryGroup`s + advantages into `Datum` objects ready for `forward_backward`
 
-    This also handles multi-step trajectories correctly, which the manual approach in tutorial 04 did not.
+    This also handles multi-step trajectories correctly, which the manual approach in tutorial 104 did not.
     """)
     return
 
@@ -442,7 +446,13 @@ async def _(
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-08)
 
     def _remove_mask(datum: tinker.Datum) -> tinker.Datum:
-        """Remove the 'mask' key from loss_fn_inputs before sending to the server."""
+        """Drop the 'mask' key that assemble_training_data adds.
+
+        assemble_training_data emits target_tokens, logprobs, advantages, and a
+        per-token action mask. The built-in importance_sampling loss accepts only
+        the first three, so the extra 'mask' must be removed before sending. It's
+        redundant here anyway -- advantages are already 0 on non-action tokens.
+        """
         return tinker.Datum(
             model_input=datum.model_input,
             loss_fn_inputs={k: v for k, v in datum.loss_fn_inputs.items() if k != "mask"},
@@ -476,11 +486,11 @@ async def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Comparing tutorial 04 vs tutorial 05
+    ## Comparing tutorial 104 vs tutorial 301
 
     Here is what changed between the raw loop and the abstraction-based loop:
 
-    | Concern | Tutorial 04 (raw) | Tutorial 05 (abstractions) |
+    | Concern | Tutorial 104 (raw) | Tutorial 301 (abstractions) |
     |---|---|---|
     | Task definition | Inline reward function | `ProblemEnv` subclass |
     | Grouping rollouts | Manual `num_samples` loop | `ProblemGroupBuilder` + `do_group_rollout` |
@@ -498,7 +508,7 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    - **Tutorial 06**: Build your own custom `Env` for a new task from scratch.
+    - **Tutorial 302**: Build your own custom `Env` for a new task from scratch.
     - **Production recipes**: See `tinker_cookbook/recipes/math_rl/` and `tinker_cookbook/recipes/code_rl/` for full examples with logging, checkpointing, and evaluation.
     - **Standard training loop**: `tinker_cookbook/rl/train.py` is the production training loop that handles all of the above plus KL penalties, async training, and metric logging.
     - **Docs**: See [RL Environments](https://tinker-docs.thinkingmachines.ai/cookbook/rl/) for the complete environment guide.

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -74,7 +74,7 @@ async def _(TensorData, api_key, mo, tinker, torch):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
@@ -102,7 +102,7 @@ async def _(TensorData, api_key, mo, tinker, torch):
     optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
     await optim_future.result_async()
     print("Training step complete")
-    return MODEL_NAME, datum, service_client, tokenizer, training_client
+    return service_client, tokenizer, training_client
 
 
 @app.cell(hide_code=True)
@@ -125,15 +125,15 @@ def _(mo):
 @app.cell
 async def _(training_client):
     # Save weights for inference (sampler checkpoint)
-    sampler_result = await training_client.save_weights_for_sampler_async("tutorial-sampler")
-    sampler_path = sampler_result.path
+    sampler_future = training_client.save_weights_for_sampler("tutorial-sampler")
+    sampler_path = (await sampler_future.result_async()).path
     print(f"Sampler weights saved to: {sampler_path}")
 
     # Save full state for resuming training
-    state_result = await training_client.save_state_async("tutorial-state")
-    state_path = state_result.path
+    state_future = training_client.save_state("tutorial-state")
+    state_path = (await state_future.result_async()).path
     print(f"Training state saved to:  {state_path}")
-    return sampler_path, sampler_result, state_path, state_result
+    return sampler_path, state_path
 
 
 @app.cell(hide_code=True)
@@ -141,7 +141,7 @@ def _(mo):
     mo.md(r"""
     ### TTL on checkpoints
 
-    You can set a time-to-live when saving. Checkpoints expire and are deleted after the TTL. This is useful for intermediate checkpoints during training.
+    You can set a time-to-live when saving. Checkpoints expire and are deleted after the TTL is reached. This is useful for intermediate checkpoints during training.
     """)
     return
 
@@ -149,11 +149,12 @@ def _(mo):
 @app.cell
 async def _(training_client):
     # Save with a 1-hour TTL
-    ephemeral_result = await training_client.save_weights_for_sampler_async(
+    ephemeral_future = training_client.save_weights_for_sampler(
         "tutorial-ephemeral", ttl_seconds=3600
     )
-    print(f"Ephemeral checkpoint (1h TTL): {ephemeral_result.path}")
-    return (ephemeral_result,)
+    ephemeral_path = (await ephemeral_future.result_async()).path
+    print(f"Ephemeral checkpoint (1h TTL): {ephemeral_path}")
+    return
 
 
 @app.cell(hide_code=True)
@@ -177,7 +178,7 @@ async def _(service_client, state_path):
     # to restore the full optimizer state (Adam momentum, etc).
     info = await resumed_client.get_info_async()
     print(f"Model ID: {info.model_id}")
-    return info, resumed_client
+    return
 
 
 @app.cell(hide_code=True)
@@ -202,11 +203,12 @@ async def _(sampler_path, service_client, tinker, tokenizer):
     result = await fine_tuned_sampler.sample_async(
         prompt=prompt,
         sampling_params=tinker.SamplingParams(max_tokens=50, temperature=0.5, stop=["\n"]),
-        num_samples=1,
+        num_samples=3,
     )
 
-    print(prompt_text + tokenizer.decode(result.sequences[0].tokens))
-    return fine_tuned_sampler, prompt, prompt_ids, prompt_text, result
+    for sequence in result.sequences:
+        print(prompt_text + tokenizer.decode(sequence.tokens))
+    return
 
 
 @app.cell(hide_code=True)
@@ -225,10 +227,10 @@ async def _(service_client, training_client):
 
     # Get the run ID from the training client's model_id
     _info = await training_client.get_info_async()
+    model_id = _info.model_id
     # model_id format: "<run_id>:train:<seq>"
-    run_id = _info.model_id.split(":")[0]
-    print(f"Training run: {run_id}")
-    return rest_client, run_id
+    print(f"Model ID: {model_id}")
+    return model_id, rest_client
 
 
 @app.cell(hide_code=True)
@@ -242,23 +244,23 @@ def _(mo):
 
 
 @app.cell
-def _(rest_client, run_id):
+async def _(model_id, rest_client):
     # List checkpoints for this training run
-    checkpoints_response = rest_client.list_checkpoints(run_id).result()
+    checkpoints_response = await rest_client.list_checkpoints_async(model_id)
     print(f"Found {len(checkpoints_response.checkpoints)} checkpoints:")
     for cp in checkpoints_response.checkpoints:
         print(f"  [{cp.checkpoint_type}] {cp.checkpoint_id}")
-    return checkpoints_response, cp
+    return
 
 
 @app.cell
-def _(rest_client):
+async def _(rest_client):
     # List all your checkpoints across training runs
-    all_checkpoints = rest_client.list_user_checkpoints(limit=5).result()
+    all_checkpoints = await rest_client.list_user_checkpoints_async(limit=5)
     print(f"Recent checkpoints across all runs ({len(all_checkpoints.checkpoints)}):")
     for _cp in all_checkpoints.checkpoints:
         print(f"  {_cp.tinker_path} ({_cp.checkpoint_type})")
-    return (all_checkpoints,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -272,15 +274,15 @@ def _(mo):
 
 
 @app.cell
-def _(rest_client, sampler_path):
+async def _(rest_client, sampler_path):
     # Set a 7-day TTL on the sampler checkpoint
-    rest_client.set_checkpoint_ttl_from_tinker_path(
+    await rest_client.set_checkpoint_ttl_from_tinker_path_async(
         sampler_path, ttl_seconds=7 * 24 * 3600
-    ).result()
+    )
     print(f"Set 7-day TTL on {sampler_path}")
 
     # Remove TTL (keep indefinitely)
-    rest_client.set_checkpoint_ttl_from_tinker_path(sampler_path, ttl_seconds=None).result()
+    await rest_client.set_checkpoint_ttl_from_tinker_path_async(sampler_path, ttl_seconds=None)
     print(f"Removed TTL on {sampler_path}")
     return
 
@@ -296,13 +298,13 @@ def _(mo):
 
 
 @app.cell
-def _(rest_client, sampler_path):
+async def _(rest_client, sampler_path):
     # Publish the checkpoint
-    rest_client.publish_checkpoint_from_tinker_path(sampler_path).result()
+    await rest_client.publish_checkpoint_from_tinker_path_async(sampler_path)
     print(f"Published: {sampler_path}")
 
     # Unpublish it
-    rest_client.unpublish_checkpoint_from_tinker_path(sampler_path).result()
+    await rest_client.unpublish_checkpoint_from_tinker_path_async(sampler_path)
     print(f"Unpublished: {sampler_path}")
     return
 
@@ -318,16 +320,19 @@ def _(mo):
 
 
 @app.cell
-def _(sampler_path):
+async def _(sampler_path):
+    import asyncio
+
     from tinker_cookbook import weights
 
     # Download the sampler checkpoint to a local directory
-    adapter_dir = weights.download(
+    adapter_dir = await asyncio.to_thread(
+        weights.download,
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-tutorial-adapter",
+        output_dir="/tmp/tinker-tutorials/weights-adapter",
     )
     print(f"Downloaded adapter to: {adapter_dir}")
-    return adapter_dir, weights
+    return
 
 
 @app.cell(hide_code=True)

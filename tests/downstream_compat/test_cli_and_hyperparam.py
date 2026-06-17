@@ -333,6 +333,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 1_675_264,
         (False, False, True): 135_168,
     },
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": {
+        (True, True, True): 258_803_712,
+        (True, True, False): 258_664_448,
+        (True, False, True): 254_668_800,
+        (True, False, False): 254_529_536,
+        (False, True, True): 4_274_176,
+        (False, True, False): 4_134_912,
+        (False, False, True): 139_264,
+    },
     "openai/gpt-oss-120b": {
         (True, True, True): 41_074_624,
         (True, True, False): 40_870_656,
