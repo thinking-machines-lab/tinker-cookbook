@@ -160,7 +160,7 @@ class TestStepLogs:
         assert result.logs["tool_result_1"] == "42"
 
     def test_logs_no_tool_calls(self):
-        """When there are no tool calls, only assistant_content is logged."""
+        """When there are no tool calls, only assistant_content and conversation_history are logged."""
         env = AgentToolMessageEnv(
             tools=[],
             initial_messages=[{"role": "user", "content": "hi"}],
@@ -171,7 +171,8 @@ class TestStepLogs:
 
         result = asyncio.run(env.step({"role": "assistant", "content": "Just text."}))
 
-        assert result.logs == {"assistant_content": "Just text."}
+        assert result.logs["assistant_content"] == "Just text."
+        assert "conversation_history" in result.logs
         assert "tool_call_0" not in result.logs
         assert "tool_result_0" not in result.logs
 
