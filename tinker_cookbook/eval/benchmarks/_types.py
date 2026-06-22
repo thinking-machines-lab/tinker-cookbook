@@ -150,6 +150,16 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "context_window": 262144,
         "timeout_seconds": 1800,
     },
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16:peft:262144": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
     # GPT-OSS — Reasoning, 32K context
     "openai/gpt-oss-120b": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     "openai/gpt-oss-120b:peft:131072": {

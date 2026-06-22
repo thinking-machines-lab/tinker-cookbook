@@ -92,6 +92,7 @@ ALREADY_DONE: dict[str, ModelSweepConfig] = {
 # All new models to sweep, grouped by tier.
 NEW_MODELS: list[ModelSweepConfig] = [
     # --- Large ---
+    _cfg("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16", "large", "MoE Hybrid"),
     _cfg("Qwen/Qwen3.5-397B-A17B", "large", "MoE Hybrid+Vision"),
     _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid", renderer_name="deepseekv3_thinking"),
     _cfg("moonshotai/Kimi-K2.6", "large", "MoE Reasoning+Vision"),
