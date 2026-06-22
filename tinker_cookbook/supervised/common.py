@@ -168,6 +168,15 @@ def datum_from_model_input_weights(
                 model_input_chunks.pop()
                 total_length -= last.length
 
+    # Empty text chunks can appear when a renderer emits a header for an empty
+    # assistant message. They have no targets/weights, but a trailing empty
+    # chunk would prevent the right-shift below from dropping the last real token.
+    model_input_chunks = [
+        chunk
+        for chunk in model_input_chunks
+        if not (isinstance(chunk, tinker.types.EncodedTextChunk) and chunk.length == 0)
+    ]
+
     # Remove trailing images (no text to predict after them)
     while model_input_chunks and isinstance(
         model_input_chunks[-1], (tinker.types.ImageChunk, tinker.types.ImageAssetPointerChunk)
