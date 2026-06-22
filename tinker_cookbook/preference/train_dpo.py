@@ -14,6 +14,7 @@ import torch.nn.functional as F
 
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
+from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
@@ -321,7 +322,8 @@ def do_update(
         )
 
         # Evaluation
-        if config.eval_every > 0 and step % config.eval_every == 0:
+        is_final_step = step == total_steps - 1
+        if config.eval_every > 0 and (step % config.eval_every == 0 or is_final_step):
             with trace.scope_span_sync("evals"):
                 eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
             metrics.update(eval_metrics)
@@ -451,6 +453,8 @@ def do_update(
 
     # Log timing metrics from trace_iteration window
     metrics.update(window.get_timing_metrics())
+    if "time/total" in metrics:
+        metrics["batch_time"] = metrics["time/total"]
     window.save_timing(step, store=ml_logger.store)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
         iter_dir = iteration_dir(log_path, step)
@@ -528,6 +532,8 @@ def main(config: Config):
         total_steps = min(total_steps, config.max_steps)
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
+    if maybe_test_dataset is not None:
+        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
     logger.info(
         f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
