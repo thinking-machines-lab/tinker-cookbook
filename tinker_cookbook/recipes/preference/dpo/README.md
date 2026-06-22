@@ -13,22 +13,15 @@ python -m tinker_cookbook.recipes.preference.dpo.train \
     dpo_beta=0.1
 ```
 
-After 50 steps, you should expect training metrics like:
-```
-                   Step 50
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃ Metric                         ┃ Value     ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ accuracy                       │ 0.568627  │
-│ batch_time                     │ 27.953704 │
-│ chosen_reward                  │ 0.053621  │
-│ dpo_loss                       │ 0.683825  │
-│ learning_rate                  │ 0.000009  │
-│ margin                         │ 0.002147  │
-│ num_pairs                      │ 255       │
-│ num_tokens                     │ 112638    │
-│ progress                       │ 0.081210  │
-│ rejected_reward                │ 0.032152  │
-│ test/nll                       │ 1.871778  │
-└────────────────────────────────┴───────────┘
-```
+After 50 training steps, you should expect final training metrics like:
+
+| Metric | Value |
+| --- | ---: |
+| accuracy | 0.551181 |
+| chosen_reward | 0.005246 |
+| dpo_loss | 0.690139 |
+| learning_rate | 2e-7 |
+| margin | 0.006933 |
+| num_pairs | 254 |
+| num_tokens | 106677 |
+| rejected_reward | -0.001687 |
