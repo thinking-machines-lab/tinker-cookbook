@@ -144,22 +144,20 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
         kwargs["trust_remote_code"] = True
         kwargs["revision"] = "b5aabbfb20227ed42becbf5541dbffd213942c58"
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name, **kwargs)
-
     # Kimi models require the custom TikTokenTokenizer which overrides apply_chat_template
     # to format tool declarations as TypeScript. On some platforms (x86_64 + transformers
-    # >=5.5), AutoTokenizer resolves to TokenizersBackend instead. Bypass AutoTokenizer
-    # and directly load the custom class in that case.
-    if (
-        model_name.startswith("moonshotai/Kimi-K2")
-        and "apply_chat_template" not in type(tokenizer).__dict__
-    ):
-        from transformers.dynamic_module_utils import get_class_from_dynamic_module
+    # 5.4.0-5.5.3), AutoTokenizer resolves to TokenizersBackend instead or raises
+    # during backend construction. Bypass AutoTokenizer and directly load the class.
+    if model_name.startswith("moonshotai/Kimi-K2"):
+        return _get_kimi_tokenizer(model_name, revision=kwargs.get("revision"))
 
-        revision = kwargs.get("revision")
-        cls = get_class_from_dynamic_module(
-            "tokenization_kimi.TikTokenTokenizer", model_name, revision=revision
-        )
-        tokenizer = cls.from_pretrained(model_name, revision=revision)
+    return AutoTokenizer.from_pretrained(model_name, **kwargs)
 
-    return tokenizer
+
+def _get_kimi_tokenizer(model_name: str, revision: str | None) -> Tokenizer:
+    from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+    cls = get_class_from_dynamic_module(
+        "tokenization_kimi.TikTokenTokenizer", model_name, revision=revision
+    )
+    return cls.from_pretrained(model_name, revision=revision)

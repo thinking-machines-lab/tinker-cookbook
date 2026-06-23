@@ -11,32 +11,37 @@ def _clear_cache() -> None:
     _get_hf_tokenizer.cache_clear()
 
 
+@pytest.mark.parametrize(
+    ("model_name", "revision"),
+    [
+        ("moonshotai/Kimi-K2-Thinking", "a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55"),
+        ("moonshotai/Kimi-K2.5", "2426b45b6af0da48d0dcce71bbce6225e5c73adc"),
+        ("moonshotai/Kimi-K2.6", "b5aabbfb20227ed42becbf5541dbffd213942c58"),
+    ],
+)
+@patch("transformers.dynamic_module_utils.get_class_from_dynamic_module")
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_kimi_k2_thinking_trusts_remote_code_without_env(
-    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
+def test_kimi_tokenizers_bypass_auto_tokenizer(
+    mock_auto: MagicMock,
+    mock_get_class: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    model_name: str,
+    revision: str,
 ) -> None:
-    """Hardcoded Kimi models should pass trust_remote_code=True without the env var."""
+    """Hardcoded Kimi models should load TikTokenTokenizer directly."""
     monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
-    _get_hf_tokenizer("moonshotai/Kimi-K2-Thinking")
-    mock_auto.from_pretrained.assert_called_once_with(
-        "moonshotai/Kimi-K2-Thinking",
-        trust_remote_code=True,
-        revision="a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55",
-    )
+    mock_tokenizer = object()
+    mock_tokenizer_cls = MagicMock()
+    mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
+    mock_get_class.return_value = mock_tokenizer_cls
 
+    assert _get_hf_tokenizer(model_name) is mock_tokenizer
 
-@patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
-def test_kimi_k25_trusts_remote_code_without_env(
-    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Hardcoded Kimi K2.5 should pass trust_remote_code=True without the env var."""
-    monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
-    _get_hf_tokenizer("moonshotai/Kimi-K2.5")
-    mock_auto.from_pretrained.assert_called_once_with(
-        "moonshotai/Kimi-K2.5",
-        trust_remote_code=True,
-        revision="2426b45b6af0da48d0dcce71bbce6225e5c73adc",
+    mock_auto.from_pretrained.assert_not_called()
+    mock_get_class.assert_called_once_with(
+        "tokenization_kimi.TikTokenTokenizer", model_name, revision=revision
     )
+    mock_tokenizer_cls.from_pretrained.assert_called_once_with(model_name, revision=revision)
 
 
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
