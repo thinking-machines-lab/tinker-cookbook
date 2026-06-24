@@ -285,8 +285,6 @@ Treat these scores as reference points for a specific configuration, not definit
 Reference scores on **[Qwen3.5-35B-A3B](https://huggingface.co/Qwen/Qwen3.5-35B-A3B)** with `max_tokens=32768`, `temperature=0.6`.
 Official scores from the model card (which may use different settings).
 
-> **Rerun needed:** these reference scores were measured on the now-retired `Qwen3.5-35B-A3B`. Rerun with `Qwen/Qwen3.6-35B-A3B` before treating them as current.
-
 **Stable benchmarks:**
 
 | Benchmark | Our Score | Official | Match? | Settings |
@@ -344,8 +342,6 @@ for a reference bash-only implementation that achieves 74%+ with frontier models
 
 Model: ``Qwen/Qwen3.5-35B-A3B``. Renderer: ``qwen3_5``.
 Official scores from the [Qwen3.5-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.5-35B-A3B).
-
-> **Rerun needed:** `Qwen3.5-35B-A3B` retires 2026-06-12. Rerun with `Qwen/Qwen3.6-35B-A3B` before treating these numbers as current.
 
 | Benchmark | Raw | Completed | Official | Match? |
 |-----------|-----|-----------|----------|--------|
