@@ -32,6 +32,7 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## Table of Contents
 
+- [Current Model Reruns (June 2026)](#current-model-reruns-june-2026)
 - [Qwen/Qwen3-235B-A22B-Instruct-2507](#qwen/qwen3-235b-a22b-instruct-2507)
 - [Qwen/Qwen3-30B-A3B](#qwen/qwen3-30b-a3b)
 - [Qwen/Qwen3-30B-A3B-Base](#qwen/qwen3-30b-a3b-base)
@@ -59,6 +60,228 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 - [nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16](#nvidia/nvidia-nemotron-3-super-120b-a12b-bf16)
 - [openai/gpt-oss-120b](#openai/gpt-oss-120b)
 - [openai/gpt-oss-20b](#openai/gpt-oss-20b)
+
+---
+
+## Current Model Reruns (June 2026)
+
+These reruns use the same SFT sweep setup as the historical report above: `tulu3`, batch size 128, 780 training steps, LoRA adapters, and `test/nll` on the held-out split. Long-context `:peft:` variants were excluded.
+
+**Summary:**
+
+| Model | Best LR | Best LoRA Rank | Test NLL | Runs | Diverged |
+|-------|--------:|---------------:|---------:|-----:|---------:|
+| `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16` | 3e-04 | 4 | 0.5936 | 15 | 3 |
+| `moonshotai/Kimi-K2.6` | 3e-04 | 2 | 0.5578 | 15 | 3 |
+| `deepseek-ai/DeepSeek-V3.1` | 3e-04 | 4 | 0.6020 | 15 | 3 |
+| `Qwen/Qwen3.6-35B-A3B` | 3e-04 | 16 | 0.6710 | 20 | 5 |
+| `Qwen/Qwen3.6-27B` | 3e-04 | 64 | 0.6541 | 20 | 4 |
+| `Qwen/Qwen3.5-35B-A3B-Base` | 3e-04 | 64 | 0.6388 | 20 | 4 |
+| `Qwen/Qwen3.5-9B-Base` | 3e-04 | 64 | 0.6758 | 20 | 4 |
+| `Qwen/Qwen3.5-9B` | 3e-04 | 64 | 0.7166 | 20 | 4 |
+
+**Detailed results:**
+
+### nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 1 | 0.6090 | 0.6195 |
+| 1e-04 | 1 | 0.5986 | 0.6106 |
+| 3e-04 | 1 | 0.5994 | 0.6145 |
+| 1e-03 | 1 | 0.6340 | 0.6464 |
+| 4e-05 | 2 | 0.6107 | 0.6220 |
+| 1e-04 | 2 | 0.5989 | 0.6121 |
+| 3e-04 | 2 | 0.5947 | 0.6093 |
+| 1e-03 | 2 | 0.6282 | 0.6403 |
+| 4e-05 | 4 | 0.6115 | 0.6215 |
+| 1e-04 | 4 | 0.5990 | 0.6122 |
+| 3e-04 | 4 | 0.5936 | 0.6065 |
+| 1e-03 | 4 | 0.6186 | 0.6316 |
+
+**Best config:** rank=4, lr=3e-04, test_nll=0.5936
+
+> **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
+
+---
+
+### moonshotai/Kimi-K2.6
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 1 | 0.5653 | 0.5692 |
+| 1e-04 | 1 | 0.5609 | 0.5622 |
+| 3e-04 | 1 | 0.5595 | 0.5680 |
+| 1e-03 | 1 | 0.5880 | 0.5946 |
+| 4e-05 | 2 | 0.5653 | 0.5695 |
+| 1e-04 | 2 | 0.5594 | 0.5623 |
+| 3e-04 | 2 | 0.5578 | 0.5616 |
+| 1e-03 | 2 | 0.5834 | 0.5883 |
+| 4e-05 | 4 | 0.5651 | 0.5680 |
+| 1e-04 | 4 | 0.5597 | 0.5630 |
+| 3e-04 | 4 | 0.5579 | 0.5615 |
+| 1e-03 | 4 | 0.5749 | 0.5910 |
+
+**Best config:** rank=2, lr=3e-04, test_nll=0.5578
+
+> **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
+
+---
+
+### deepseek-ai/DeepSeek-V3.1
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 1 | 0.6156 | 0.6184 |
+| 1e-04 | 1 | 0.6076 | 0.6141 |
+| 3e-04 | 1 | 0.6087 | 0.6057 |
+| 1e-03 | 1 | 0.6540 | 0.6507 |
+| 4e-05 | 2 | 0.6154 | 0.6181 |
+| 1e-04 | 2 | 0.6065 | 0.6100 |
+| 3e-04 | 2 | 0.6045 | 0.6094 |
+| 1e-03 | 2 | 0.6434 | 0.6633 |
+| 4e-05 | 4 | 0.6161 | 0.6187 |
+| 1e-04 | 4 | 0.6079 | 0.6118 |
+| 3e-04 | 4 | 0.6020 | 0.6060 |
+| 1e-03 | 4 | 0.6600 | 0.6679 |
+
+**Best config:** rank=4, lr=3e-04, test_nll=0.6020
+
+> **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
+
+---
+
+### Qwen/Qwen3.6-35B-A3B
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 1 | 0.6921 | 0.6757 |
+| 1e-04 | 1 | 0.6849 | 0.6743 |
+| 3e-04 | 1 | 0.6931 | 0.6747 |
+| 4e-05 | 4 | 0.6917 | 0.6759 |
+| 1e-04 | 4 | 0.6793 | 0.6663 |
+| 3e-04 | 4 | 0.6790 | 0.6642 |
+| 1e-03 | 4 | 0.7179 | 0.7022 |
+| 4e-05 | 16 | 0.6912 | 0.6774 |
+| 1e-04 | 16 | 0.6795 | 0.6687 |
+| 3e-04 | 16 | 0.6710 | 0.6621 |
+| 1e-03 | 16 | 0.6917 | 0.6853 |
+| 4e-05 | 64 | 0.6911 | 0.6774 |
+| 1e-04 | 64 | 0.6783 | 0.6678 |
+| 3e-04 | 64 | 0.6714 | 0.6610 |
+| 1e-03 | 64 | 0.6829 | 0.6805 |
+
+**Best config:** rank=16, lr=3e-04, test_nll=0.6710
+
+> **Note:** 5 run(s) diverged (test_nll > 2.0) at lr={1e-03, 3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
+
+---
+
+### Qwen/Qwen3.6-27B
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 1 | 0.6747 | 0.6698 |
+| 1e-04 | 1 | 0.6675 | 0.6622 |
+| 3e-04 | 1 | 0.6635 | 0.6598 |
+| 1e-03 | 1 | 0.7159 | 0.7063 |
+| 4e-05 | 4 | 0.6746 | 0.6712 |
+| 1e-04 | 4 | 0.6642 | 0.6596 |
+| 3e-04 | 4 | 0.6585 | 0.6578 |
+| 1e-03 | 4 | 0.6994 | 0.7032 |
+| 4e-05 | 16 | 0.6741 | 0.6698 |
+| 1e-04 | 16 | 0.6628 | 0.6589 |
+| 3e-04 | 16 | 0.6557 | 0.6537 |
+| 1e-03 | 16 | 0.6813 | 0.6836 |
+| 4e-05 | 64 | 0.6741 | 0.6712 |
+| 1e-04 | 64 | 0.6635 | 0.6625 |
+| 3e-04 | 64 | 0.6541 | 0.6517 |
+| 1e-03 | 64 | 0.6738 | 0.6702 |
+
+**Best config:** rank=64, lr=3e-04, test_nll=0.6541
+
+> **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
+
+---
+
+### Qwen/Qwen3.5-35B-A3B-Base
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 1 | 0.6565 | 0.6460 |
+| 1e-04 | 1 | 0.6518 | 0.6438 |
+| 3e-04 | 1 | 0.6562 | 0.6469 |
+| 1e-03 | 1 | 0.6839 | 0.6737 |
+| 4e-05 | 4 | 0.6560 | 0.6478 |
+| 1e-04 | 4 | 0.6479 | 0.6383 |
+| 3e-04 | 4 | 0.6439 | 0.6392 |
+| 1e-03 | 4 | 0.6712 | 0.6599 |
+| 4e-05 | 16 | 0.6561 | 0.6480 |
+| 1e-04 | 16 | 0.6461 | 0.6380 |
+| 3e-04 | 16 | 0.6398 | 0.6346 |
+| 1e-03 | 16 | 0.6530 | 0.6554 |
+| 4e-05 | 64 | 0.6565 | 0.6471 |
+| 1e-04 | 64 | 0.6475 | 0.6385 |
+| 3e-04 | 64 | 0.6388 | 0.6316 |
+| 1e-03 | 64 | 0.6469 | 0.6479 |
+
+**Best config:** rank=64, lr=3e-04, test_nll=0.6388
+
+> **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
+
+---
+
+### Qwen/Qwen3.5-9B-Base
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 4 | 0.7012 | 0.6902 |
+| 1e-04 | 4 | 0.6904 | 0.6790 |
+| 3e-04 | 4 | 0.6804 | 0.6780 |
+| 1e-03 | 4 | 0.7145 | 0.7109 |
+| 4e-05 | 16 | 0.7006 | 0.6899 |
+| 1e-04 | 16 | 0.6892 | 0.6786 |
+| 3e-04 | 16 | 0.6774 | 0.6740 |
+| 1e-03 | 16 | 0.6966 | 0.6934 |
+| 4e-05 | 64 | 0.7010 | 0.6901 |
+| 1e-04 | 64 | 0.6894 | 0.6796 |
+| 3e-04 | 64 | 0.6758 | 0.6720 |
+| 1e-03 | 64 | 0.6892 | 0.6872 |
+| 4e-05 | 128 | 0.7011 | 0.6897 |
+| 1e-04 | 128 | 0.6896 | 0.6783 |
+| 3e-04 | 128 | 0.6758 | 0.6728 |
+| 1e-03 | 128 | 0.6864 | 0.6856 |
+
+**Best config:** rank=64, lr=3e-04, test_nll=0.6758
+
+> **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
+
+---
+
+### Qwen/Qwen3.5-9B
+
+| LR | LoRA Rank | Test NLL | Train NLL |
+|---:|----------:|---------:|----------:|
+| 4e-05 | 4 | 0.7444 | 0.7313 |
+| 1e-04 | 4 | 0.7307 | 0.7182 |
+| 3e-04 | 4 | 0.7231 | 0.7161 |
+| 1e-03 | 4 | 0.7658 | 0.7589 |
+| 4e-05 | 16 | 0.7436 | 0.7338 |
+| 1e-04 | 16 | 0.7297 | 0.7176 |
+| 3e-04 | 16 | 0.7178 | 0.7134 |
+| 1e-03 | 16 | 0.7476 | 0.7352 |
+| 4e-05 | 64 | 0.7449 | 0.7345 |
+| 1e-04 | 64 | 0.7287 | 0.7183 |
+| 3e-04 | 64 | 0.7166 | 0.7139 |
+| 1e-03 | 64 | 0.7333 | 0.7211 |
+| 4e-05 | 128 | 0.7447 | 0.7331 |
+| 1e-04 | 128 | 0.7295 | 0.7173 |
+| 3e-04 | 128 | 0.7172 | 0.7083 |
+| 1e-03 | 128 | 0.7345 | 0.7261 |
+
+**Best config:** rank=64, lr=3e-04, test_nll=0.7166
+
+> **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
 ---
 
