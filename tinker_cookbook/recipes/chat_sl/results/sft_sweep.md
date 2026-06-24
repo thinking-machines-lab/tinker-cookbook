@@ -17,14 +17,20 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 **Aggressive learning rates still diverge.** The excluded rows are all `test_nll > 2.0`, mostly at `3e-03`; `Qwen/Qwen3.6-35B-A3B` also diverged for rank 1 at `1e-03`.
 
-**Historical supported-model results are retained separately.** Deprecated and replaced model tables were removed; the remaining historical sections are for models still present in the supported model list and not rerun in this pass.
+**Historical supported-model results are retained after the June 2026 reruns.** Deprecated and replaced model tables were removed; the remaining historical sections are for models still present in the supported model list and not rerun in this pass.
 
 ---
 
 ## Table of Contents
 
-- [Current Model Reruns (June 2026)](#current-model-reruns-june-2026)
-- [Historical Supported Model Results](#historical-supported-model-results)
+- [nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16](#nvidia/nvidia-nemotron-3-ultra-550b-a55b-bf16)
+- [moonshotai/Kimi-K2.6](#moonshotai/kimi-k2.6)
+- [deepseek-ai/DeepSeek-V3.1](#deepseek-ai/deepseek-v3.1)
+- [Qwen/Qwen3.6-35B-A3B](#qwen/qwen3.6-35b-a3b)
+- [Qwen/Qwen3.6-27B](#qwen/qwen3.6-27b)
+- [Qwen/Qwen3.5-35B-A3B-Base](#qwen/qwen3.5-35b-a3b-base)
+- [Qwen/Qwen3.5-9B-Base](#qwen/qwen3.5-9b-base)
+- [Qwen/Qwen3.5-9B](#qwen/qwen3.5-9b)
 - [Qwen/Qwen3-8B](#qwen/qwen3-8b)
 - [Qwen/Qwen3.5-397B-A17B](#qwen/qwen3.5-397b-a17b)
 - [Qwen/Qwen3.5-4B](#qwen/qwen3.5-4b)
@@ -35,9 +41,7 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ---
 
-## Current Model Reruns (June 2026)
-
-These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch size 128, 780 training steps, LoRA adapters, and `test/nll` on the held-out split. Long-context `:peft:` variants were excluded.
+**June 2026 rerun summary:** these reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch size 128, 780 training steps, LoRA adapters, and `test/nll` on the held-out split. Long-context `:peft:` variants were excluded.
 
 **Summary:**
 
@@ -52,9 +56,9 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 | `Qwen/Qwen3.5-9B-Base` | 3e-04 | 64 | 0.6758 | 20 | 4 |
 | `Qwen/Qwen3.5-9B` | 3e-04 | 64 | 0.7166 | 20 | 4 |
 
-**Detailed results:**
+---
 
-### nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
+## nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -77,7 +81,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-### moonshotai/Kimi-K2.6
+## moonshotai/Kimi-K2.6
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -100,7 +104,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-### deepseek-ai/DeepSeek-V3.1
+## deepseek-ai/DeepSeek-V3.1
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -123,7 +127,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-### Qwen/Qwen3.6-35B-A3B
+## Qwen/Qwen3.6-35B-A3B
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -149,7 +153,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-### Qwen/Qwen3.6-27B
+## Qwen/Qwen3.6-27B
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -176,7 +180,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-### Qwen/Qwen3.5-35B-A3B-Base
+## Qwen/Qwen3.5-35B-A3B-Base
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -203,7 +207,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-### Qwen/Qwen3.5-9B-Base
+## Qwen/Qwen3.5-9B-Base
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -230,7 +234,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-### Qwen/Qwen3.5-9B
+## Qwen/Qwen3.5-9B
 
 | LR | LoRA Rank | Test NLL | Train NLL |
 |---:|----------:|---------:|----------:|
@@ -257,11 +261,7 @@ These reruns use the same SFT sweep setup as the earlier results: `tulu3`, batch
 
 ---
 
-## Historical Supported Model Results
-
-These earlier sweep results are retained for supported non-long-context models that were not rerun in the June 2026 replacement sweep.
-
-### Qwen/Qwen3-8B
+## Qwen/Qwen3-8B
 
 **Configuration:**
 - Model: `Qwen/Qwen3-8B`
@@ -321,7 +321,7 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 ---
 
-### Qwen/Qwen3.5-397B-A17B
+## Qwen/Qwen3.5-397B-A17B
 
 **Configuration:**
 - Model: `Qwen/Qwen3.5-397B-A17B`
@@ -377,7 +377,7 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 ---
 
-### Qwen/Qwen3.5-4B
+## Qwen/Qwen3.5-4B
 
 **Configuration:**
 - Model: `Qwen/Qwen3.5-4B`
@@ -437,7 +437,7 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 ---
 
-### nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+## nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
 
 **Configuration:**
 - Model: `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16`
@@ -494,7 +494,7 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 ---
 
-### nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+## nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
 
 **Configuration:**
 - Model: `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16`
@@ -543,7 +543,7 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 ---
 
-### openai/gpt-oss-120b
+## openai/gpt-oss-120b
 
 **Configuration:**
 - Model: `openai/gpt-oss-120b`
@@ -596,7 +596,7 @@ uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
 
 ---
 
-### openai/gpt-oss-20b
+## openai/gpt-oss-20b
 
 **Configuration:**
 - Model: `openai/gpt-oss-20b`
