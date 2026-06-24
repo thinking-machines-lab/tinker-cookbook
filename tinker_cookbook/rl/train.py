@@ -52,7 +52,6 @@ from tinker_cookbook.rl.rollout_strategy import (
 )
 from tinker_cookbook.rl.rollouts import (
     RolloutErrorCounter,
-    do_group_rollout,  # noqa: F401 — re-exported for verifiers monkey-patching
     do_group_rollout_and_filter_constant_reward,
     set_rollout_executor,
 )
