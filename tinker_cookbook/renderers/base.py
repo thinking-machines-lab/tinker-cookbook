@@ -17,20 +17,34 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import (
     Any,
-    Literal,
-    NotRequired,
     Protocol,
-    TypedDict,
     Union,
 )
 
-import pydantic
 import tinker
 import torch
 from PIL import Image
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.tokenizer_utils import Tokenizer
+
+# Message/tool types now live in the torch-free tinker_cookbook.tool_types module
+# so they can be imported without pulling in tinker/torch. Imported here (and
+# re-exported) to preserve the existing `from tinker_cookbook.renderers import
+# ToolCall` API.
+from tinker_cookbook.tool_types import (  # noqa: F401  (re-exported for back-compat)
+    Content,
+    ContentPart,
+    ImagePart,
+    Message,
+    Role,
+    StrictBase,
+    TextPart,
+    ThinkingPart,
+    ToolCall,
+    ToolSpec,
+    UnparsedToolCall,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,116 +83,6 @@ class ParseTermination(StrEnum):
     def is_stop_sequence(self) -> bool:
         """True only for the renderer's expected stop signal — strict format-reward gate."""
         return self == ParseTermination.STOP_SEQUENCE
-
-
-# Tool types are based on kosong (https://github.com/MoonshotAI/kosong).
-
-
-class StrictBase(pydantic.BaseModel):
-    """
-    Pydantic base class that's immutable and doesn't silently ignore extra fields.
-    """
-
-    model_config = pydantic.ConfigDict(frozen=True, extra="forbid")
-
-    def __str__(self) -> str:
-        return repr(self)
-
-
-class ToolCall(StrictBase):
-    """
-    Structured tool invocation following OpenAI/kosong format.
-
-    This represents a request to invoke a tool/function. The structure follows
-    the OpenAI function calling format for compatibility with various LLM APIs.
-
-    Example:
-        tool_call = ToolCall(
-            function=ToolCall.FunctionBody(
-                name="search",
-                arguments='{"query_list": ["python async", "pydantic validation"]}'
-            ),
-            id="call_abc123"
-        )
-    """
-
-    class FunctionBody(pydantic.BaseModel):
-        """
-        Tool call function body containing the tool name and arguments.
-
-        The arguments field must be a valid JSON string that will be parsed
-        by the tool implementation.
-        """
-
-        name: str
-        """The name of the tool to be called."""
-        arguments: str
-        """Arguments of the tool call in JSON string format."""
-
-    type: Literal["function"] = "function"
-    """Tool call type, must be 'function' for compatibility."""
-
-    id: str | None = None
-    """Optional unique identifier for tracking this specific tool call."""
-
-    function: FunctionBody
-    """The function body containing tool name and arguments."""
-
-
-class UnparsedToolCall(StrictBase):
-    """
-    Represents a tool call that failed to parse from model output.
-
-    When a model generates text that looks like a tool call but cannot be
-    parsed (e.g., invalid JSON), this class captures the raw text and error
-    for debugging and optional re-rendering.
-
-    Example:
-        unparsed = UnparsedToolCall(
-            raw_text='<tool_call>{"name": "search", invalid json}</tool_call>',
-            error="Invalid JSON: Expecting property name"
-        )
-    """
-
-    raw_text: str
-    """The original text from the model that failed to parse."""
-
-    error: str
-    """Description of what went wrong during parsing."""
-
-
-class TextPart(TypedDict):
-    """A chunk of text content in a message, usually meant to be visible to the user
-    (unlike ThinkingPart, which is internal reasoning)."""
-
-    type: Literal["text"]
-    text: str
-
-
-class ImagePart(TypedDict):
-    """A chunk of image content in a message.
-
-    The image can be a URL string, a data URI string, or a PIL Image object.
-
-    Attributes:
-        type: Must be ``"image"``.
-        image: The image data as a URL/data-URI string or a ``PIL.Image.Image``.
-    """
-
-    type: Literal["image"]
-    image: str | Image.Image
-
-
-class ThinkingPart(TypedDict):
-    """Model's internal reasoning (chain-of-thought) as a content part."""
-
-    type: Literal["thinking"]
-    thinking: str  # The thinking/reasoning content
-
-
-# Container for a part of a multimodal message content.
-# Tool calls live exclusively in message["tool_calls"] / message["unparsed_tool_calls"].
-ContentPart = TextPart | ImagePart | ThinkingPart
 
 
 # Streaming types to enable incremental parsing of model output for real-time display.
@@ -610,56 +514,6 @@ class ReasoningStreamingParser(StreamingParser):
         self._in_thinking = False
 
 
-# NOTE: we use a broad type definition for the role to be flexible
-# Common roles are "user", "assistant", "system", "tool"
-Role = str
-
-# Content is a string or a list of parts
-Content = str | list[ContentPart]
-
-
-class Message(TypedDict):
-    """
-    Container for a single turn in a multi-turn conversation.
-
-    Args:
-
-    role: Role
-        String that denotes the source of the message, typically system, user, assistant, and tool.
-    content: Content
-        Content of the message, can be a string, or a list of ContentPart.
-        When content is a list, it can contain TextPart, ImagePart, and ThinkingPart elements.
-        ThinkingPart represents the model's internal reasoning (chain-of-thought).
-    tool_calls: NotRequired[list[ToolCall]]
-        Optional sequence of successfully parsed tool calls generated by the model.
-    unparsed_tool_calls: NotRequired[list[UnparsedToolCall]]
-        Optional sequence of tool calls that failed to parse (e.g., invalid JSON).
-        The raw text is preserved for debugging or re-rendering.
-    trainable: NotRequired[bool]
-        Optional indicator whether this message should contribute to the training loss.
-    tool_call_id: NotRequired[str]
-        For tool result messages (role="tool"): ID correlating this result to a specific
-        tool call. Used by renderers whose wire format references calls by ID (e.g., Kimi K2
-        renders "## Return of {tool_call_id}"). The value should match ToolCall.id from the
-        assistant's tool_calls. Not all formats use IDs - GptOss/Harmony does not.
-    name: NotRequired[str]
-        For tool result messages (role="tool"): The function name that was called.
-        Required by GptOss (renders "<|start|>functions.{name}..."), optional for others.
-        When constructing tool results, include both name and tool_call_id when available
-        since different renderers require different fields.
-
-    """
-
-    role: Role
-    content: Content
-
-    tool_calls: NotRequired[list[ToolCall]]
-    unparsed_tool_calls: NotRequired[list["UnparsedToolCall"]]
-    trainable: NotRequired[bool]
-    tool_call_id: NotRequired[str]
-    name: NotRequired[str]
-
-
 @dataclass
 class RenderContext:
     """
@@ -686,35 +540,6 @@ class RenderContext:
     and used by renderers like Qwen3.5 that need to treat assistant messages
     differently based on whether they come before or after the last user message.
     """
-
-
-class ToolSpec(TypedDict):
-    """
-    Tool specification following the OpenAI function calling format.
-
-    This represents a tool that can be called by the model, including its name,
-    description, and parameter schema.
-
-    Example:
-        tool_spec: ToolSpec = {
-            "name": "get_weather",
-            "description": "Get the current weather for a location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {"type": "string", "description": "City name"},
-                },
-                "required": ["location"],
-            },
-        }
-    """
-
-    name: str
-    """The name of the tool."""
-    description: str
-    """A description of what the tool does."""
-    parameters: dict
-    """JSON Schema object describing the tool's parameters."""
 
 
 def ensure_text(content: Content) -> str:
