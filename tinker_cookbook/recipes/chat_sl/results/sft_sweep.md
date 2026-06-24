@@ -11,8 +11,6 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 > **Note:** Wall times are approximate and depend on server load at the time of the run. They may fluctuate significantly between runs.
 
-> **Rerun needed:** This historical report includes models that retire on 2026-06-12 (Qwen3-30B-A3B and its variants, Qwen3-VL-*, Qwen3-32B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3-235B-A22B-Instruct-2507, Qwen3-8B-Base, Qwen3-30B-A3B-Base, Qwen3-4B-Instruct-2507, Kimi-K2.5, Kimi-K2-Thinking, DeepSeek-V3.1-Base, and the Llama-3.x lineup). Names are preserved for traceability — rerun affected sweeps with the recommended replacements before using these as current guidance.
-
 ## Key Findings
 
 **Optimal learning rate is model-size dependent.** Across all models, the best LR per model breaks down as:
