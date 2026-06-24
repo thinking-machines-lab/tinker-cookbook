@@ -116,6 +116,15 @@ def get_tokenizer(model_name: str) -> Tokenizer:
     return _get_hf_tokenizer(model_name)
 
 
+# Pinned revisions for Kimi K2 tokenizers, loaded directly via the custom
+# TikTokenTokenizer class (see _get_hf_tokenizer).
+_KIMI_TOKENIZER_REVISIONS: dict[str, str] = {
+    "moonshotai/Kimi-K2-Thinking": "a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55",
+    "moonshotai/Kimi-K2.5": "2426b45b6af0da48d0dcce71bbce6225e5c73adc",
+    "moonshotai/Kimi-K2.6": "b5aabbfb20227ed42becbf5541dbffd213942c58",
+}
+
+
 @cache
 def _get_hf_tokenizer(model_name: str) -> Tokenizer:
     from transformers.models.auto.tokenization_auto import AutoTokenizer
@@ -134,32 +143,21 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
     if os.environ.get("HF_TRUST_REMOTE_CODE", "").lower() in ("1", "true", "yes"):
         kwargs["trust_remote_code"] = True
 
-    if model_name == "moonshotai/Kimi-K2-Thinking":
-        kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "a51ccc050d73dab088bf7b0e2dd9b30ae85a4e55"
-    elif model_name == "moonshotai/Kimi-K2.5":
-        kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "2426b45b6af0da48d0dcce71bbce6225e5c73adc"
-    elif model_name == "moonshotai/Kimi-K2.6":
-        kwargs["trust_remote_code"] = True
-        kwargs["revision"] = "b5aabbfb20227ed42becbf5541dbffd213942c58"
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name, **kwargs)
-
-    # Kimi models require the custom TikTokenTokenizer which overrides apply_chat_template
-    # to format tool declarations as TypeScript. On some platforms (x86_64 + transformers
-    # >=5.5), AutoTokenizer resolves to TokenizersBackend instead. Bypass AutoTokenizer
-    # and directly load the custom class in that case.
-    if (
-        model_name.startswith("moonshotai/Kimi-K2")
-        and "apply_chat_template" not in type(tokenizer).__dict__
-    ):
+    # Kimi K2 models require the custom TikTokenTokenizer, which overrides
+    # apply_chat_template to format tool declarations as TypeScript. AutoTokenizer
+    # cannot be relied on to resolve it: on some platforms (x86_64 + certain
+    # transformers releases) the model is forced through TokenizersBackend, and on
+    # K2.5/K2.6 AutoTokenizer.from_pretrained raises outright ("Couldn't instantiate
+    # the backend tokenizer ...") instead of using Kimi's tokenization_kimi auto-map.
+    # Load the custom class directly so the result is correct regardless of the
+    # installed transformers version.
+    if model_name.startswith("moonshotai/Kimi-K2"):
         from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-        revision = kwargs.get("revision")
+        revision = _KIMI_TOKENIZER_REVISIONS.get(model_name)
         cls = get_class_from_dynamic_module(
             "tokenization_kimi.TikTokenTokenizer", model_name, revision=revision
         )
-        tokenizer = cls.from_pretrained(model_name, revision=revision)
+        return cls.from_pretrained(model_name, revision=revision)
 
-    return tokenizer
+    return AutoTokenizer.from_pretrained(model_name, **kwargs)
