@@ -151,14 +151,6 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
     # the backend tokenizer ...") instead of using Kimi's tokenization_kimi auto-map.
     # Load the custom class directly so the result is correct regardless of the
     # installed transformers version.
-    #
-    # A previous version called AutoTokenizer first and only fell back to the custom
-    # class when `apply_chat_template` was missing from the result's type (the signal
-    # that AutoTokenizer had returned a TokenizersBackend rather than the custom
-    # class). That guard is dropped here: when AutoTokenizer.from_pretrained raises
-    # (the K2.5/K2.6 case) the fallback was never reached. Loading the custom class
-    # unconditionally removes the dependency on AutoTokenizer resolving Kimi at all,
-    # so there is no post-hoc result to inspect.
     if model_name.startswith("moonshotai/Kimi-K2"):
         from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
