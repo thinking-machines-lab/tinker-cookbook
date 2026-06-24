@@ -70,22 +70,50 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 1 | 0.6090 | 0.6195 |
-| 1e-04 | 1 | 0.5986 | 0.6106 |
-| 3e-04 | 1 | 0.5994 | 0.6145 |
-| 1e-03 | 1 | 0.6340 | 0.6464 |
-| 4e-05 | 2 | 0.6107 | 0.6220 |
-| 1e-04 | 2 | 0.5989 | 0.6121 |
-| 3e-04 | 2 | 0.5947 | 0.6093 |
-| 1e-03 | 2 | 0.6282 | 0.6403 |
-| 4e-05 | 4 | 0.6115 | 0.6215 |
-| 1e-04 | 4 | 0.5990 | 0.6122 |
-| 3e-04 | 4 | 0.5936 | 0.6065 |
-| 1e-03 | 4 | 0.6186 | 0.6316 |
+**Configuration:**
+- Model: `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [1, 2, 4]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[1, 2, 4]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 1 | 0.6090 | 0.6195 | 331 |
+| 1e-04 | 1 | 0.5986 | 0.6106 | 360 |
+| 3e-04 | 1 | 0.5994 | 0.6145 | 297 |
+| 1e-03 | 1 | 0.6340 | 0.6464 | 346 |
+| 4e-05 | 2 | 0.6107 | 0.6220 | 360 |
+| 1e-04 | 2 | 0.5989 | 0.6121 | 369 |
+| 3e-04 | 2 | 0.5947 | 0.6093 | 320 |
+| 1e-03 | 2 | 0.6282 | 0.6403 | 353 |
+| 4e-05 | 4 | 0.6115 | 0.6215 | 377 |
+| 1e-04 | 4 | 0.5990 | 0.6122 | 347 |
+| 3e-04 | 4 | 0.5936 | 0.6065 | 313 |
+| 1e-03 | 4 | 0.6186 | 0.6316 | 314 |
 
 **Best config:** rank=4, lr=3e-04, test_nll=0.5936
+
+**Avg wall time per run:** 341 min
 
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
@@ -93,22 +121,50 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## moonshotai/Kimi-K2.6
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 1 | 0.5653 | 0.5692 |
-| 1e-04 | 1 | 0.5609 | 0.5622 |
-| 3e-04 | 1 | 0.5595 | 0.5680 |
-| 1e-03 | 1 | 0.5880 | 0.5946 |
-| 4e-05 | 2 | 0.5653 | 0.5695 |
-| 1e-04 | 2 | 0.5594 | 0.5623 |
-| 3e-04 | 2 | 0.5578 | 0.5616 |
-| 1e-03 | 2 | 0.5834 | 0.5883 |
-| 4e-05 | 4 | 0.5651 | 0.5680 |
-| 1e-04 | 4 | 0.5597 | 0.5630 |
-| 3e-04 | 4 | 0.5579 | 0.5615 |
-| 1e-03 | 4 | 0.5749 | 0.5910 |
+**Configuration:**
+- Model: `moonshotai/Kimi-K2.6`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [1, 2, 4]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=moonshotai/Kimi-K2.6 \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[1, 2, 4]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 1 | 0.5653 | 0.5692 | 469 |
+| 1e-04 | 1 | 0.5609 | 0.5622 | 528 |
+| 3e-04 | 1 | 0.5595 | 0.5680 | 380 |
+| 1e-03 | 1 | 0.5880 | 0.5946 | 349 |
+| 4e-05 | 2 | 0.5653 | 0.5695 | 503 |
+| 1e-04 | 2 | 0.5594 | 0.5623 | 491 |
+| 3e-04 | 2 | 0.5578 | 0.5616 | 390 |
+| 1e-03 | 2 | 0.5834 | 0.5883 | 348 |
+| 4e-05 | 4 | 0.5651 | 0.5680 | 468 |
+| 1e-04 | 4 | 0.5597 | 0.5630 | 523 |
+| 3e-04 | 4 | 0.5579 | 0.5615 | 382 |
+| 1e-03 | 4 | 0.5749 | 0.5910 | 303 |
 
 **Best config:** rank=2, lr=3e-04, test_nll=0.5578
+
+**Avg wall time per run:** 428 min
 
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
@@ -116,22 +172,50 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## deepseek-ai/DeepSeek-V3.1
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 1 | 0.6156 | 0.6184 |
-| 1e-04 | 1 | 0.6076 | 0.6141 |
-| 3e-04 | 1 | 0.6087 | 0.6057 |
-| 1e-03 | 1 | 0.6540 | 0.6507 |
-| 4e-05 | 2 | 0.6154 | 0.6181 |
-| 1e-04 | 2 | 0.6065 | 0.6100 |
-| 3e-04 | 2 | 0.6045 | 0.6094 |
-| 1e-03 | 2 | 0.6434 | 0.6633 |
-| 4e-05 | 4 | 0.6161 | 0.6187 |
-| 1e-04 | 4 | 0.6079 | 0.6118 |
-| 3e-04 | 4 | 0.6020 | 0.6060 |
-| 1e-03 | 4 | 0.6600 | 0.6679 |
+**Configuration:**
+- Model: `deepseek-ai/DeepSeek-V3.1`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [1, 2, 4]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=deepseek-ai/DeepSeek-V3.1 \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[1, 2, 4]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 1 | 0.6156 | 0.6184 | 304 |
+| 1e-04 | 1 | 0.6076 | 0.6141 | 279 |
+| 3e-04 | 1 | 0.6087 | 0.6057 | 274 |
+| 1e-03 | 1 | 0.6540 | 0.6507 | 276 |
+| 4e-05 | 2 | 0.6154 | 0.6181 | 300 |
+| 1e-04 | 2 | 0.6065 | 0.6100 | 280 |
+| 3e-04 | 2 | 0.6045 | 0.6094 | 278 |
+| 1e-03 | 2 | 0.6434 | 0.6633 | 276 |
+| 4e-05 | 4 | 0.6161 | 0.6187 | 296 |
+| 1e-04 | 4 | 0.6079 | 0.6118 | 278 |
+| 3e-04 | 4 | 0.6020 | 0.6060 | 279 |
+| 1e-03 | 4 | 0.6600 | 0.6679 | 280 |
 
 **Best config:** rank=4, lr=3e-04, test_nll=0.6020
+
+**Avg wall time per run:** 283 min
 
 > **Note:** 3 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 2, 4} and are excluded from the table above.
 
@@ -139,25 +223,53 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## Qwen/Qwen3.6-35B-A3B
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 1 | 0.6921 | 0.6757 |
-| 1e-04 | 1 | 0.6849 | 0.6743 |
-| 3e-04 | 1 | 0.6931 | 0.6747 |
-| 4e-05 | 4 | 0.6917 | 0.6759 |
-| 1e-04 | 4 | 0.6793 | 0.6663 |
-| 3e-04 | 4 | 0.6790 | 0.6642 |
-| 1e-03 | 4 | 0.7179 | 0.7022 |
-| 4e-05 | 16 | 0.6912 | 0.6774 |
-| 1e-04 | 16 | 0.6795 | 0.6687 |
-| 3e-04 | 16 | 0.6710 | 0.6621 |
-| 1e-03 | 16 | 0.6917 | 0.6853 |
-| 4e-05 | 64 | 0.6911 | 0.6774 |
-| 1e-04 | 64 | 0.6783 | 0.6678 |
-| 3e-04 | 64 | 0.6714 | 0.6610 |
-| 1e-03 | 64 | 0.6829 | 0.6805 |
+**Configuration:**
+- Model: `Qwen/Qwen3.6-35B-A3B`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [1, 4, 16, 64]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=Qwen/Qwen3.6-35B-A3B \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[1, 4, 16, 64]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 1 | 0.6921 | 0.6757 | 169 |
+| 1e-04 | 1 | 0.6849 | 0.6743 | 170 |
+| 3e-04 | 1 | 0.6931 | 0.6747 | 178 |
+| 4e-05 | 4 | 0.6917 | 0.6759 | 188 |
+| 1e-04 | 4 | 0.6793 | 0.6663 | 170 |
+| 3e-04 | 4 | 0.6790 | 0.6642 | 176 |
+| 1e-03 | 4 | 0.7179 | 0.7022 | 153 |
+| 4e-05 | 16 | 0.6912 | 0.6774 | 171 |
+| 1e-04 | 16 | 0.6795 | 0.6687 | 44 |
+| 3e-04 | 16 | 0.6710 | 0.6621 | 39 |
+| 1e-03 | 16 | 0.6917 | 0.6853 | 33 |
+| 4e-05 | 64 | 0.6911 | 0.6774 | 166 |
+| 1e-04 | 64 | 0.6783 | 0.6678 | 41 |
+| 3e-04 | 64 | 0.6714 | 0.6610 | 37 |
+| 1e-03 | 64 | 0.6829 | 0.6805 | 89 |
 
 **Best config:** rank=16, lr=3e-04, test_nll=0.6710
+
+**Avg wall time per run:** 122 min
 
 > **Note:** 5 run(s) diverged (test_nll > 2.0) at lr={1e-03, 3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
 
@@ -165,26 +277,54 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## Qwen/Qwen3.6-27B
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 1 | 0.6747 | 0.6698 |
-| 1e-04 | 1 | 0.6675 | 0.6622 |
-| 3e-04 | 1 | 0.6635 | 0.6598 |
-| 1e-03 | 1 | 0.7159 | 0.7063 |
-| 4e-05 | 4 | 0.6746 | 0.6712 |
-| 1e-04 | 4 | 0.6642 | 0.6596 |
-| 3e-04 | 4 | 0.6585 | 0.6578 |
-| 1e-03 | 4 | 0.6994 | 0.7032 |
-| 4e-05 | 16 | 0.6741 | 0.6698 |
-| 1e-04 | 16 | 0.6628 | 0.6589 |
-| 3e-04 | 16 | 0.6557 | 0.6537 |
-| 1e-03 | 16 | 0.6813 | 0.6836 |
-| 4e-05 | 64 | 0.6741 | 0.6712 |
-| 1e-04 | 64 | 0.6635 | 0.6625 |
-| 3e-04 | 64 | 0.6541 | 0.6517 |
-| 1e-03 | 64 | 0.6738 | 0.6702 |
+**Configuration:**
+- Model: `Qwen/Qwen3.6-27B`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [1, 4, 16, 64]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=Qwen/Qwen3.6-27B \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[1, 4, 16, 64]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 1 | 0.6747 | 0.6698 | 53 |
+| 1e-04 | 1 | 0.6675 | 0.6622 | 78 |
+| 3e-04 | 1 | 0.6635 | 0.6598 | 51 |
+| 1e-03 | 1 | 0.7159 | 0.7063 | 59 |
+| 4e-05 | 4 | 0.6746 | 0.6712 | 78 |
+| 1e-04 | 4 | 0.6642 | 0.6596 | 52 |
+| 3e-04 | 4 | 0.6585 | 0.6578 | 52 |
+| 1e-03 | 4 | 0.6994 | 0.7032 | 60 |
+| 4e-05 | 16 | 0.6741 | 0.6698 | 73 |
+| 1e-04 | 16 | 0.6628 | 0.6589 | 96 |
+| 3e-04 | 16 | 0.6557 | 0.6537 | 67 |
+| 1e-03 | 16 | 0.6813 | 0.6836 | 66 |
+| 4e-05 | 64 | 0.6741 | 0.6712 | 78 |
+| 1e-04 | 64 | 0.6635 | 0.6625 | 106 |
+| 3e-04 | 64 | 0.6541 | 0.6517 | 67 |
+| 1e-03 | 64 | 0.6738 | 0.6702 | 48 |
 
 **Best config:** rank=64, lr=3e-04, test_nll=0.6541
+
+**Avg wall time per run:** 68 min
 
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
 
@@ -192,26 +332,54 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## Qwen/Qwen3.5-35B-A3B-Base
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 1 | 0.6565 | 0.6460 |
-| 1e-04 | 1 | 0.6518 | 0.6438 |
-| 3e-04 | 1 | 0.6562 | 0.6469 |
-| 1e-03 | 1 | 0.6839 | 0.6737 |
-| 4e-05 | 4 | 0.6560 | 0.6478 |
-| 1e-04 | 4 | 0.6479 | 0.6383 |
-| 3e-04 | 4 | 0.6439 | 0.6392 |
-| 1e-03 | 4 | 0.6712 | 0.6599 |
-| 4e-05 | 16 | 0.6561 | 0.6480 |
-| 1e-04 | 16 | 0.6461 | 0.6380 |
-| 3e-04 | 16 | 0.6398 | 0.6346 |
-| 1e-03 | 16 | 0.6530 | 0.6554 |
-| 4e-05 | 64 | 0.6565 | 0.6471 |
-| 1e-04 | 64 | 0.6475 | 0.6385 |
-| 3e-04 | 64 | 0.6388 | 0.6316 |
-| 1e-03 | 64 | 0.6469 | 0.6479 |
+**Configuration:**
+- Model: `Qwen/Qwen3.5-35B-A3B-Base`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [1, 4, 16, 64]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=Qwen/Qwen3.5-35B-A3B-Base \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[1, 4, 16, 64]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 1 | 0.6565 | 0.6460 | 78 |
+| 1e-04 | 1 | 0.6518 | 0.6438 | 80 |
+| 3e-04 | 1 | 0.6562 | 0.6469 | 84 |
+| 1e-03 | 1 | 0.6839 | 0.6737 | 72 |
+| 4e-05 | 4 | 0.6560 | 0.6478 | 79 |
+| 1e-04 | 4 | 0.6479 | 0.6383 | 82 |
+| 3e-04 | 4 | 0.6439 | 0.6392 | 79 |
+| 1e-03 | 4 | 0.6712 | 0.6599 | 72 |
+| 4e-05 | 16 | 0.6561 | 0.6480 | 79 |
+| 1e-04 | 16 | 0.6461 | 0.6380 | 24 |
+| 3e-04 | 16 | 0.6398 | 0.6346 | 23 |
+| 1e-03 | 16 | 0.6530 | 0.6554 | 47 |
+| 4e-05 | 64 | 0.6565 | 0.6471 | 41 |
+| 1e-04 | 64 | 0.6475 | 0.6385 | 46 |
+| 3e-04 | 64 | 0.6388 | 0.6316 | 53 |
+| 1e-03 | 64 | 0.6469 | 0.6479 | 24 |
 
 **Best config:** rank=64, lr=3e-04, test_nll=0.6388
+
+**Avg wall time per run:** 60 min
 
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={1, 4, 16, 64} and are excluded from the table above.
 
@@ -219,26 +387,54 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## Qwen/Qwen3.5-9B-Base
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 4 | 0.7012 | 0.6902 |
-| 1e-04 | 4 | 0.6904 | 0.6790 |
-| 3e-04 | 4 | 0.6804 | 0.6780 |
-| 1e-03 | 4 | 0.7145 | 0.7109 |
-| 4e-05 | 16 | 0.7006 | 0.6899 |
-| 1e-04 | 16 | 0.6892 | 0.6786 |
-| 3e-04 | 16 | 0.6774 | 0.6740 |
-| 1e-03 | 16 | 0.6966 | 0.6934 |
-| 4e-05 | 64 | 0.7010 | 0.6901 |
-| 1e-04 | 64 | 0.6894 | 0.6796 |
-| 3e-04 | 64 | 0.6758 | 0.6720 |
-| 1e-03 | 64 | 0.6892 | 0.6872 |
-| 4e-05 | 128 | 0.7011 | 0.6897 |
-| 1e-04 | 128 | 0.6896 | 0.6783 |
-| 3e-04 | 128 | 0.6758 | 0.6728 |
-| 1e-03 | 128 | 0.6864 | 0.6856 |
+**Configuration:**
+- Model: `Qwen/Qwen3.5-9B-Base`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [4, 16, 64, 128]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=Qwen/Qwen3.5-9B-Base \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[4, 16, 64, 128]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 4 | 0.7012 | 0.6902 | 34 |
+| 1e-04 | 4 | 0.6904 | 0.6790 | 19 |
+| 3e-04 | 4 | 0.6804 | 0.6780 | 27 |
+| 1e-03 | 4 | 0.7145 | 0.7109 | 19 |
+| 4e-05 | 16 | 0.7006 | 0.6899 | 19 |
+| 1e-04 | 16 | 0.6892 | 0.6786 | 30 |
+| 3e-04 | 16 | 0.6774 | 0.6740 | 19 |
+| 1e-03 | 16 | 0.6966 | 0.6934 | 31 |
+| 4e-05 | 64 | 0.7010 | 0.6901 | 32 |
+| 1e-04 | 64 | 0.6894 | 0.6796 | 29 |
+| 3e-04 | 64 | 0.6758 | 0.6720 | 28 |
+| 1e-03 | 64 | 0.6892 | 0.6872 | 26 |
+| 4e-05 | 128 | 0.7011 | 0.6897 | 24 |
+| 1e-04 | 128 | 0.6896 | 0.6783 | 20 |
+| 3e-04 | 128 | 0.6758 | 0.6728 | 29 |
+| 1e-03 | 128 | 0.6864 | 0.6856 | 22 |
 
 **Best config:** rank=64, lr=3e-04, test_nll=0.6758
+
+**Avg wall time per run:** 26 min
 
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
@@ -246,26 +442,54 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ## Qwen/Qwen3.5-9B
 
-| LR | LoRA Rank | Test NLL | Train NLL |
-|---:|----------:|---------:|----------:|
-| 4e-05 | 4 | 0.7444 | 0.7313 |
-| 1e-04 | 4 | 0.7307 | 0.7182 |
-| 3e-04 | 4 | 0.7231 | 0.7161 |
-| 1e-03 | 4 | 0.7658 | 0.7589 |
-| 4e-05 | 16 | 0.7436 | 0.7338 |
-| 1e-04 | 16 | 0.7297 | 0.7176 |
-| 3e-04 | 16 | 0.7178 | 0.7134 |
-| 1e-03 | 16 | 0.7476 | 0.7352 |
-| 4e-05 | 64 | 0.7449 | 0.7345 |
-| 1e-04 | 64 | 0.7287 | 0.7183 |
-| 3e-04 | 64 | 0.7166 | 0.7139 |
-| 1e-03 | 64 | 0.7333 | 0.7211 |
-| 4e-05 | 128 | 0.7447 | 0.7331 |
-| 1e-04 | 128 | 0.7295 | 0.7173 |
-| 3e-04 | 128 | 0.7172 | 0.7083 |
-| 1e-03 | 128 | 0.7345 | 0.7261 |
+**Configuration:**
+- Model: `Qwen/Qwen3.5-9B`
+- Dataset: tulu3 (train split for training, test split for evaluation)
+- Batch size: 128
+- Learning rates: [4e-05, 1e-04, 3e-04, 1e-03, 3e-03]
+- LoRA ranks: [4, 16, 64, 128]
+- Metric: `test/nll` — negative log-likelihood on held-out test split
+
+<details>
+<summary>Reproduce</summary>
+
+```bash
+uv run python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    base.model_name=Qwen/Qwen3.5-9B \
+    base.dataset=tulu3 \
+    base.batch_size=128 \
+    metric=test/nll \
+    'learning_rates=[4e-05, 1e-04, 3e-04, 1e-03, 3e-03]' \
+    'lora_ranks=[4, 16, 64, 128]'
+```
+
+</details>
+
+**Results:**
+
+| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |
+|---:|----------:|---------:|----------:|----------------:|
+| 4e-05 | 4 | 0.7444 | 0.7313 | 45 |
+| 1e-04 | 4 | 0.7307 | 0.7182 | 44 |
+| 3e-04 | 4 | 0.7231 | 0.7161 | 48 |
+| 1e-03 | 4 | 0.7658 | 0.7589 | 48 |
+| 4e-05 | 16 | 0.7436 | 0.7338 | 46 |
+| 1e-04 | 16 | 0.7297 | 0.7176 | 42 |
+| 3e-04 | 16 | 0.7178 | 0.7134 | 47 |
+| 1e-03 | 16 | 0.7476 | 0.7352 | 49 |
+| 4e-05 | 64 | 0.7449 | 0.7345 | 45 |
+| 1e-04 | 64 | 0.7287 | 0.7183 | 46 |
+| 3e-04 | 64 | 0.7166 | 0.7139 | 48 |
+| 1e-03 | 64 | 0.7333 | 0.7211 | 47 |
+| 4e-05 | 128 | 0.7447 | 0.7331 | 42 |
+| 1e-04 | 128 | 0.7295 | 0.7173 | 44 |
+| 3e-04 | 128 | 0.7172 | 0.7083 | 49 |
+| 1e-03 | 128 | 0.7345 | 0.7261 | 42 |
 
 **Best config:** rank=64, lr=3e-04, test_nll=0.7166
+
+**Avg wall time per run:** 46 min
 
 > **Note:** 4 run(s) diverged (test_nll > 2.0) at lr={3e-03} with rank={4, 16, 64, 128} and are excluded from the table above.
 
