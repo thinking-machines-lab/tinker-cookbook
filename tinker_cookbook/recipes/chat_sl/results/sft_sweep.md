@@ -68,23 +68,6 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 ---
 
-**June 2026 rerun summary:** these reruns use the same SFT sweep setup as the historical report above: `tulu3`, batch size 128, 780 training steps, LoRA adapters, and `test/nll` on the held-out split. Long-context `:peft:` variants were excluded.
-
-**Summary:**
-
-| Model | Best LR | Best LoRA Rank | Test NLL | Runs | Diverged |
-|-------|--------:|---------------:|---------:|-----:|---------:|
-| `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16` | 3e-04 | 4 | 0.5936 | 15 | 3 |
-| `moonshotai/Kimi-K2.6` | 3e-04 | 2 | 0.5578 | 15 | 3 |
-| `deepseek-ai/DeepSeek-V3.1` | 3e-04 | 4 | 0.6020 | 15 | 3 |
-| `Qwen/Qwen3.6-35B-A3B` | 3e-04 | 16 | 0.6710 | 20 | 5 |
-| `Qwen/Qwen3.6-27B` | 3e-04 | 64 | 0.6541 | 20 | 4 |
-| `Qwen/Qwen3.5-35B-A3B-Base` | 3e-04 | 64 | 0.6388 | 20 | 4 |
-| `Qwen/Qwen3.5-9B-Base` | 3e-04 | 64 | 0.6758 | 20 | 4 |
-| `Qwen/Qwen3.5-9B` | 3e-04 | 64 | 0.7166 | 20 | 4 |
-
----
-
 ## nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
 
 | LR | LoRA Rank | Test NLL | Train NLL |
