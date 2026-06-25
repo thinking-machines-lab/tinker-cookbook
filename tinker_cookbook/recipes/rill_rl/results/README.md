@@ -1,18 +1,22 @@
-# Results from one real run
+# Logbook
 
-Artifacts from a single `Qwen/Qwen3.5-4B` GRPO run (30 steps, `group_size=8`,
-`groups_per_batch=8`, `lr=4e-5`, `lora_rank=32`, `max_turns=2`), trained through the
-production app via the sampling proxy and evaluated on the held-out families.
+Running record of training experiments for the RILL recipe: the state of the training
+loop and reward design at the time, what we ran, and what we found. Newest insights drive
+the next experiment.
 
-- `training_metrics.jsonl` — per-batch `reward/mean`, `reward/pass@1`, datum counts. The
-  training metric climbs from pass@1 ≈ 0.41 to ≈ 0.98.
-- `trained_final_programs.jsonl` — the trained model's final program for each of the 120
-  held-out tasks, with correctness and reward. This is the data behind the headline
-  finding: 98% are hardcoded constant emits.
-- `sample_rollouts.md` — curated before/after transcripts (one per family) plus the
-  reward-hacking writeup.
+| # | Date | Model | Reward design | Held-out pass@1 | Verdict |
+|---|------|-------|---------------|-----------------|---------|
+| [1](./experiment_1/) | 2026-06-25 | Qwen3.5-4B | output-match on fixed-input tasks | 0.10 → 0.97 | reward-hacked (constant emits) |
+| [2](./experiment_2/) | _pending_ | Qwen3.5-4B | output-match on **hidden inputs** (`solve(...)`) | _pending_ | _pending_ |
 
-**Read `sample_rollouts.md` first.** Held-out pass@1 went 0.10 → 0.97, but the policy
-reward-hacked: it emits the literal answer rather than writing a general RILL program,
-because each task has fixed inputs in the prompt and the reward only checks output. The
-recipe README's results caveat explains the fix (grade against hidden inputs).
+## How this is organized
+
+Each `experiment_N/` directory has its own `README.md` (the logbook entry: config, the
+loop + reward design used, the result, and the takeaway) plus the raw artifacts from that
+run (`training_metrics.jsonl`, `trained_final_programs.jsonl`, `sample_rollouts.md`).
+
+The headline so far: a verifiable-reward RL loop will exploit whatever the reward actually
+measures. Experiment 1 measured "did the emitted output match," on tasks whose inputs were
+fixed in the prompt, so the policy learned to print the literal answer. Experiment 2
+changes the reward to grade `solve(...)` against hidden inputs, which a constant can't
+satisfy.

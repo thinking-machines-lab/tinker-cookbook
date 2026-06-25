@@ -118,15 +118,15 @@ Training config for the "after" row: `group_size=8`, `groups_per_batch=8`, 30 ba
 `learning_rate=4e-5`, `lora_rank=32`, `max_turns=2`. The training metric climbed from
 pass@1 ≈ 0.41 (first 5 batches) to ≈ 0.98 (last 5).
 
-> **Caveat — the policy reward-hacked.** That 0.97 is *correct output*, not *learned to
-> code*. Inspecting the rollouts ([`results/sample_rollouts.md`](./results/sample_rollouts.md)),
+> **Caveat — the policy reward-hacked (Experiment 1).** That 0.97 is *correct output*, not
+> *learned to code*. Inspecting the rollouts
+> ([`results/experiment_1/sample_rollouts.md`](./results/experiment_1/sample_rollouts.md)),
 > 98% of trained completions are hardcoded constant emits (`emit 1`, `emit "yes"`): the
 > model computes the answer in its reasoning and prints the literal. Each task is a single
 > fixed instance with its inputs in the prompt and the reward only checks output, so
-> emitting the constant is the cheapest win. To make this measure genuine DSL coding, make
-> each task a function of an input and grade the candidate program against several hidden
-> inputs not shown in the prompt, so a constant can't win. Real measured artifacts of this
-> run live in [`results/`](./results/).
+> emitting the constant is the cheapest win. The fix (grade a `solve(...)` against hidden
+> inputs) is Experiment 2. The full running record is the logbook in
+> [`results/`](./results/).
 
 ## Files
 
