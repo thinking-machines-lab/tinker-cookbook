@@ -7,7 +7,7 @@ final program against the held-out expected output (``grading.py`` / ``tasks.py`
 runs GRPO on the tokens the proxy captured (``train.py``).
 """
 
-from .grading import RillTask, shaped_reward
-from .tasks import EVAL_FAMILIES, TRAIN_FAMILIES, build_tasks
+from .grading import shaped_reward
+from .tasks import EVAL_FAMILIES, TRAIN_FAMILIES, RillTask, build_tasks
 
 __all__ = ["RillTask", "shaped_reward", "build_tasks", "TRAIN_FAMILIES", "EVAL_FAMILIES"]

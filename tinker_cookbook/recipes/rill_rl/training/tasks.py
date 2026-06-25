@@ -1,315 +1,385 @@
-"""Task-family generators for RILL RL.
+"""Task families for RILL RL — input-parameterized, graded on hidden inputs.
 
-Each task is built the cheap, reliable way recommended by the language pack: write
-the reference solution *in RILL*, run it through ``run_rill``, and use its captured
-output as the exact ``expect``. That guarantees the target is achievable and the
-checker is exact.
+Each task asks the model to define a function ``forge solve(...)``. The prompt does not
+contain concrete inputs; the grader (``grading.py``) calls ``solve`` on several hidden
+inputs not shown to the model and checks each output. This is the Experiment 2 design:
+it removes the Experiment 1 reward hack where the model just emitted the literal answer,
+because a constant cannot satisfy multiple hidden inputs (see ``results/``).
 
-To measure genuine generalization of the learned syntax (rather than memorization of
-seen prompts), we hold out disjoint task *families* for eval — not just different
-constants within a family. ``TRAIN_FAMILIES`` and ``EVAL_FAMILIES`` are disjoint.
+Tasks are built by writing the reference ``solve`` in RILL and running it on each hidden
+input to get the exact expected output, so targets are achievable and the checker is
+exact. Train and eval use disjoint families to measure transfer.
 """
 
 from __future__ import annotations
 
-import random
-from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from tinker_cookbook.recipes.rill_rl.agent_app.rill_lang import run_rill
 
-from .grading import RillTask
 
-# A family produces (prompt, reference_solution_src) for a given parameter value.
-FamilyFn = Callable[[object], tuple[str, str]]
+@dataclass(frozen=True)
+class RillTask:
+    name: str
+    family: str
+    prompt: str
+    # Hidden tests: each is (call-args literal, expected stdout of solve on those args).
+    tests: tuple[tuple[str, str], ...]
+    max_steps: int = 50_000
+    metadata: dict = field(default_factory=dict)
 
 
-def _rill_list(xs: list[int]) -> str:
-    return "[" + ", ".join(str(x) for x in xs) + "]"
+def _lit(v) -> str:
+    if isinstance(v, bool):
+        return "yes" if v else "no"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, str):
+        return '"' + v + '"'
+    if isinstance(v, list):
+        return "[" + ", ".join(_lit(x) for x in v) + "]"
+    raise TypeError(type(v))
+
+
+def _args(t: tuple) -> str:
+    return ", ".join(_lit(a) for a in t)
 
 
 # --------------------------------------------------------------------------- #
-# Family definitions. Each returns (natural_language_prompt, reference RILL src).
+# Family definitions: (family, prompt, reference solve, hidden input tuples).
 # --------------------------------------------------------------------------- #
 
 
-def _fam_sum_to_n(n: int) -> tuple[str, str]:
-    prompt = f"Emit the sum of the integers from 1 to {n} inclusive (a single number)."
-    src = f"""\
-0 -> s
-walk k across range(1, {n + 1}) {{ s + k -> s }}
-emit s"""
-    return prompt, src
-
-
-def _fam_fizzbuzz(n: int) -> tuple[str, str]:
+def _sum_div(k: int):
     prompt = (
-        f"For each integer from 1 to {n} inclusive, emit (one per line): "
-        '"fizzbuzz" if it is divisible by both 3 and 5, otherwise "fizz" if '
-        'divisible by 3, otherwise "buzz" if divisible by 5, otherwise the number.'
+        f"Define `forge solve(n)` that returns the sum of every integer from 1 to n "
+        f"inclusive that is divisible by {k}. It is tested on hidden values of n."
     )
-    src = f"""\
-walk x across range(1, {n + 1}) {{
-  when x % 15 = 0 {{ emit "fizzbuzz" }}
-  elsewhen x % 3 = 0 {{ emit "fizz" }}
-  elsewhen x % 5 = 0 {{ emit "buzz" }}
-  otherwise {{ emit x }}
+    ref = f"""\
+forge solve(n) {{
+  0 -> s
+  1 -> i
+  sustain i <= n {{
+    when i % {k} = 0 {{ s + i -> s }}
+    i + 1 -> i
+  }}
+  give s
 }}"""
-    return prompt, src
+    return prompt, ref, [(4,), (9,), (15,), (22,), (30,), (50,)]
 
 
-def _fam_primes_below(n: int) -> tuple[str, str]:
-    prompt = f"Emit every prime number below {n}, one per line, in increasing order."
-    src = f"""\
-forge is_prime(n) {{
-  when n < 2 {{ give no }}
+def _count_div(k: int):
+    prompt = (
+        f"Define `forge solve(n)` that returns how many integers from 1 to n inclusive "
+        f"are divisible by {k}. It is tested on hidden values of n."
+    )
+    ref = f"""\
+forge solve(n) {{
+  0 -> c
+  1 -> i
+  sustain i <= n {{
+    when i % {k} = 0 {{ c + 1 -> c }}
+    i + 1 -> i
+  }}
+  give c
+}}"""
+    return prompt, ref, [(5,), (10,), (18,), (27,), (40,)]
+
+
+def _primes_below():
+    prompt = (
+        "Define `forge solve(n)` that returns how many prime numbers are strictly less "
+        "than n. It is tested on hidden values of n."
+    )
+    ref = """\
+forge is_prime(n) {
+  when n < 2 { give no }
   2 -> d
-  sustain d * d <= n {{
-    when n % d = 0 {{ give no }}
+  sustain d * d <= n {
+    when n % d = 0 { give no }
     d + 1 -> d
-  }}
+  }
   give yes
-}}
-walk k across range(2, {n}) {{ when is_prime(k) {{ emit k }} }}"""
-    return prompt, src
+}
+forge solve(n) {
+  0 -> c
+  2 -> k
+  sustain k < n {
+    when is_prime(k) { c + 1 -> c }
+    k + 1 -> k
+  }
+  give c
+}"""
+    return prompt, ref, [(3,), (6,), (12,), (20,), (30,), (50,)]
 
 
-def _fam_list_reverse(xs: list[int]) -> tuple[str, str]:
+def _digit_sum():
     prompt = (
-        f"Given the list {_rill_list(xs)}, emit its elements in reverse order on a "
-        "single line, joined by single spaces."
+        "Define `forge solve(n)` that returns the sum of the decimal digits of n "
+        "(n >= 0). It is tested on hidden values of n."
     )
-    src = f"""\
-{_rill_list(xs)} -> xs
-[] -> acc
-0 -> i
-sustain i < count(xs) {{
-  push(acc, xs @ (count(xs) - 1 - i)) -> acc
-  i + 1 -> i
-}}
-emit join(acc, " ")"""
-    return prompt, src
+    ref = """\
+forge solve(n) {
+  0 -> s
+  sustain n > 0 {
+    s + (n % 10) -> s
+    n / 10 -> n
+  }
+  give s
+}"""
+    return prompt, ref, [(0,), (7,), (42,), (309,), (1234,), (90909,)]
 
 
-def _fam_count_predicate(args: tuple[list[int], int]) -> tuple[str, str]:
-    xs, threshold = args
+def _digit_count():
     prompt = (
-        f"Given the list {_rill_list(xs)}, emit how many of its elements are "
-        f"strictly greater than {threshold} (a single number)."
+        "Define `forge solve(n)` that returns the number of decimal digits of n "
+        "(n >= 0). It is tested on hidden values of n."
     )
-    src = f"""\
-{_rill_list(xs)} -> xs
-0 -> c
-walk v across xs {{ when v > {threshold} {{ c + 1 -> c }} }}
-emit c"""
-    return prompt, src
-
-
-def _fam_digit_sum(n: int) -> tuple[str, str]:
-    prompt = f"Emit the sum of the decimal digits of {n} (a single number)."
-    src = f"""\
-{n} -> n
-0 -> s
-sustain n > 0 {{
-  s + (n % 10) -> s
-  n / 10 -> n
-}}
-emit s"""
-    return prompt, src
-
-
-def _fam_vowel_count(word: str) -> tuple[str, str]:
-    prompt = (
-        f'Emit how many vowels (a, e, i, o, u) appear in the lowercase word "{word}" '
-        "(a single number)."
-    )
-    src = f"""\
-"{word}" -> w
-0 -> c
-walk ch across chars(w) {{
-  when ch = "a" either ch = "e" either ch = "i" either ch = "o" either ch = "u" {{
+    ref = """\
+forge solve(n) {
+  when n = 0 { give 1 }
+  0 -> c
+  sustain n > 0 {
     c + 1 -> c
-  }}
-}}
-emit c"""
-    return prompt, src
+    n / 10 -> n
+  }
+  give c
+}"""
+    return prompt, ref, [(0,), (5,), (42,), (1000,), (99999,)]
 
 
-def _fam_gcd(args: tuple[int, int]) -> tuple[str, str]:
-    a, b = args
-    prompt = f"Emit the greatest common divisor of {a} and {b} (a single number)."
-    src = f"""\
-forge gcd(a, b) {{
-  sustain b != 0 {{
+def _list_count_gt(t: int):
+    prompt = (
+        f"Define `forge solve(xs)`, where xs is a list of integers, that returns how "
+        f"many elements are strictly greater than {t}. It is tested on hidden lists."
+    )
+    ref = f"""\
+forge solve(xs) {{
+  0 -> c
+  walk v across xs {{ when v > {t} {{ c + 1 -> c }} }}
+  give c
+}}"""
+    return (
+        prompt,
+        ref,
+        [([1, 5, 8, 3],), ([10, 2, 7],), ([0, 0, 9, 9, 9],), ([5],), ([12, 3, 4, 15, 1],)],
+    )
+
+
+def _list_sum():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a list of integers, that returns their "
+        "sum. It is tested on hidden lists."
+    )
+    ref = """\
+forge solve(xs) {
+  0 -> s
+  walk v across xs { s + v -> s }
+  give s
+}"""
+    return prompt, ref, [([1, 2, 3],), ([10, 20],), ([7],), ([4, 4, 4, 4],), ([0, 9, 1, 8],)]
+
+
+def _list_reverse_join():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a list of integers, that returns the "
+        "elements in reverse order joined by single spaces (as text). Tested on hidden lists."
+    )
+    ref = """\
+forge solve(xs) {
+  [] -> acc
+  0 -> i
+  sustain i < count(xs) {
+    push(acc, xs @ (count(xs) - 1 - i)) -> acc
+    i + 1 -> i
+  }
+  give join(acc, " ")
+}"""
+    return prompt, ref, [([1, 2, 3],), ([9, 8, 7, 6],), ([5],), ([2, 4, 6, 8],)]
+
+
+def _vowel_count():
+    prompt = (
+        "Define `forge solve(w)`, where w is lowercase text, that returns the number of "
+        "vowels (a, e, i, o, u) in w. It is tested on hidden words."
+    )
+    ref = """\
+forge solve(w) {
+  0 -> c
+  walk ch across chars(w) {
+    when ch = "a" either ch = "e" either ch = "i" either ch = "o" either ch = "u" {
+      c + 1 -> c
+    }
+  }
+  give c
+}"""
+    return prompt, ref, [("tokenizer",), ("rhythm",), ("aeiou",), ("gradient",), ("xyz",)]
+
+
+# ---- eval families (disjoint) ----
+
+
+def _gcd():
+    prompt = (
+        "Define `forge solve(a, b)` that returns the greatest common divisor of "
+        "non-negative integers a and b. It is tested on hidden pairs."
+    )
+    ref = """\
+forge solve(a, b) {
+  sustain b != 0 {
     a % b -> r
     b -> a
     r -> b
-  }}
+  }
   give a
-}}
-emit gcd({a}, {b})"""
-    return prompt, src
+}"""
+    return prompt, ref, [(48, 36), (109, 446), (100, 75), (17, 5), (60, 24), (81, 27)]
 
 
-def _fam_nth_fib(n: int) -> tuple[str, str]:
+def _nth_fib():
     prompt = (
-        f"Emit the {n}th Fibonacci number (a single number), where fib(0) = 0, "
-        "fib(1) = 1, and fib(k) = fib(k-1) + fib(k-2)."
+        "Define `forge solve(n)` that returns the nth Fibonacci number, where "
+        "fib(0) = 0 and fib(1) = 1. It is tested on hidden values of n."
     )
-    src = f"""\
-forge fib(n) {{
+    ref = """\
+forge solve(n) {
   0 -> a
   1 -> b
   0 -> i
-  sustain i < n {{
+  sustain i < n {
     a + b -> t
     b -> a
     t -> b
     i + 1 -> i
-  }}
+  }
   give a
-}}
-emit fib({n})"""
-    return prompt, src
+}"""
+    return prompt, ref, [(0,), (1,), (2,), (5,), (7,), (10,), (15,)]
 
 
-def _fam_palindrome(word: str) -> tuple[str, str]:
+def _factorial():
     prompt = (
-        f'Emit "yes" if the lowercase word "{word}" is a palindrome (reads the same '
-        'forwards and backwards), otherwise emit "no".'
+        "Define `forge solve(n)` that returns n factorial (the product 1*2*...*n, with "
+        "solve(0) = 1). It is tested on hidden values of n."
     )
-    src = f"""\
-"{word}" -> w
-chars(w) -> cs
-[] -> rev
-0 -> i
-sustain i < count(cs) {{
-  push(rev, cs @ (count(cs) - 1 - i)) -> rev
-  i + 1 -> i
-}}
-when join(rev, "") = w {{ emit yes }} otherwise {{ emit no }}"""
-    return prompt, src
+    ref = """\
+forge solve(n) {
+  1 -> p
+  1 -> i
+  sustain i <= n {
+    p * i -> p
+    i + 1 -> i
+  }
+  give p
+}"""
+    return prompt, ref, [(0,), (1,), (3,), (5,), (7,), (9,)]
 
 
-# --------------------------------------------------------------------------- #
-# Parameter grids per family. Deterministic given the seed.
-# --------------------------------------------------------------------------- #
-
-_WORDS = [
-    "level",
-    "radar",
-    "hello",
-    "world",
-    "banana",
-    "racecar",
-    "python",
-    "noon",
-    "stats",
-    "kayak",
-    "syntax",
-    "rotor",
-    "dataset",
-    "civic",
-    "tenet",
-    "rill",
-    "madam",
-    "reward",
-    "gradient",
-    "policy",
-    "rollout",
-    "tokenizer",
-    "deifit",
-    "refer",
-    "system",
-    "encoder",
-    "sagas",
-    "minimal",
-    "wow",
-    "deed",
-]
+def _palindrome():
+    prompt = (
+        "Define `forge solve(w)`, where w is lowercase text, that returns yes if w is a "
+        "palindrome (reads the same forwards and backwards), otherwise no. Tested on hidden words."
+    )
+    ref = """\
+forge solve(w) {
+  chars(w) -> cs
+  [] -> rev
+  0 -> i
+  sustain i < count(cs) {
+    push(rev, cs @ (count(cs) - 1 - i)) -> rev
+    i + 1 -> i
+  }
+  when join(rev, "") = w { give yes } otherwise { give no }
+}"""
+    return prompt, ref, [("kayak",), ("hello",), ("racecar",), ("rill",), ("noon",), ("abc",)]
 
 
-def _params_for(family: str, rng: random.Random) -> tuple[FamilyFn, list[object]]:
-    if family == "sum_to_n":
-        return _fam_sum_to_n, list(range(5, 65))
-    if family == "fizzbuzz":
-        return _fam_fizzbuzz, list(range(10, 50))
-    if family == "primes_below":
-        return _fam_primes_below, list(range(10, 80))
-    if family == "list_reverse":
-        return _fam_list_reverse, [
-            [rng.randint(0, 99) for _ in range(rng.randint(3, 8))] for _ in range(60)
-        ]
-    if family == "count_predicate":
-        return _fam_count_predicate, [
-            ([rng.randint(0, 20) for _ in range(rng.randint(4, 9))], rng.randint(3, 15))
-            for _ in range(60)
-        ]
-    if family == "digit_sum":
-        return _fam_digit_sum, [rng.randint(0, 999_999) for _ in range(60)]
-    if family == "vowel_count":
-        return _fam_vowel_count, list(_WORDS)
-    if family == "gcd":
-        return _fam_gcd, [(rng.randint(2, 600), rng.randint(2, 600)) for _ in range(60)]
-    if family == "nth_fib":
-        return _fam_nth_fib, list(range(0, 30))
-    if family == "palindrome":
-        return _fam_palindrome, list(_WORDS)
-    raise ValueError(f"unknown family: {family}")
+def _reverse_text():
+    prompt = (
+        "Define `forge solve(w)`, where w is lowercase text, that returns w reversed (as "
+        "text). It is tested on hidden words."
+    )
+    ref = """\
+forge solve(w) {
+  chars(w) -> cs
+  [] -> rev
+  0 -> i
+  sustain i < count(cs) {
+    push(rev, cs @ (count(cs) - 1 - i)) -> rev
+    i + 1 -> i
+  }
+  give join(rev, "")
+}"""
+    return prompt, ref, [("tinker",), ("abc",), ("level",), ("policy",)]
 
 
-# Disjoint family split. Eval families are never seen during training, so eval
-# measures transfer of the learned syntax, not memorized prompts.
-TRAIN_FAMILIES = [
-    "sum_to_n",
-    "fizzbuzz",
-    "primes_below",
-    "list_reverse",
-    "count_predicate",
-    "digit_sum",
-    "vowel_count",
-]
-EVAL_FAMILIES = ["gcd", "nth_fib", "palindrome"]
+# Each entry: (family_name, list of (prompt, reference, inputs) task specs).
+def _train_specs():
+    specs = []
+    for k in range(1, 8):
+        specs.append(("sum_div", _sum_div(k)))
+    for k in (2, 3, 4):
+        specs.append(("count_div", _count_div(k)))
+    specs.append(("primes_below", _primes_below()))
+    specs.append(("digit_sum", _digit_sum()))
+    specs.append(("digit_count", _digit_count()))
+    for t in (2, 4, 6, 8):
+        specs.append(("list_count_gt", _list_count_gt(t)))
+    specs.append(("list_sum", _list_sum()))
+    specs.append(("list_reverse_join", _list_reverse_join()))
+    specs.append(("vowel_count", _vowel_count()))
+    return specs
 
 
-def _build_family(family: str, rng: random.Random) -> list[RillTask]:
-    fn, params = _params_for(family, rng)
+def _eval_specs():
+    return [
+        ("gcd", _gcd()),
+        ("nth_fib", _nth_fib()),
+        ("factorial", _factorial()),
+        ("palindrome", _palindrome()),
+        ("reverse_text", _reverse_text()),
+    ]
+
+
+TRAIN_FAMILIES = sorted({f for f, _ in _train_specs()})
+EVAL_FAMILIES = sorted({f for f, _ in _eval_specs()})
+
+
+def _build(specs) -> list[RillTask]:
     tasks: list[RillTask] = []
-    for i, p in enumerate(params):
-        prompt, src = fn(p)
-        res = run_rill(src)
-        if not res.ok or not res.output:
-            raise AssertionError(
-                f"reference solution for {family}[{i}] did not produce output: "
-                f"error={res.error!r}\n--- src ---\n{src}"
-            )
+    family_counts: dict[str, int] = {}
+    for family, (prompt, ref, inputs) in specs:
+        tests: list[tuple[str, str]] = []
+        for args in inputs:
+            arg_str = _args(args)
+            res = run_rill(ref + f"\nemit solve({arg_str})")
+            if not res.ok or not res.output:
+                raise AssertionError(f"reference for {family} failed on {arg_str}: {res.error}")
+            tests.append((arg_str, res.output))
+        # A constant must not satisfy the task: require at least two distinct expected
+        # outputs across the hidden inputs.
+        if len({e for _, e in tests}) < 2:
+            raise AssertionError(f"{family} hidden inputs are not discriminative (all equal)")
+        idx = family_counts.get(family, 0)
+        family_counts[family] = idx + 1
         tasks.append(
-            RillTask(
-                name=f"{family}_{i}",
-                family=family,
-                prompt=prompt,
-                expect=res.output,
-                metadata={"param": p},
-            )
+            RillTask(name=f"{family}_{idx}", family=family, prompt=prompt, tests=tuple(tests))
         )
     return tasks
 
 
 def build_tasks(seed: int = 0) -> tuple[list[RillTask], list[RillTask]]:
-    """Build (train_tasks, eval_tasks) with disjoint families.
+    import random
 
-    Every task's ``expect`` is the verified output of its reference solution, so the
-    set contains no unsolvable items.
-    """
-    rng = random.Random(seed)
-    train = [t for fam in TRAIN_FAMILIES for t in _build_family(fam, rng)]
-    eval_ = [t for fam in EVAL_FAMILIES for t in _build_family(fam, rng)]
-    rng.shuffle(train)
+    train = _build(_train_specs())
+    eval_ = _build(_eval_specs())
+    random.Random(seed).shuffle(train)
     return train, eval_
 
 
 if __name__ == "__main__":
     train, eval_ = build_tasks()
-    print(f"train tasks: {len(train)} across {len(TRAIN_FAMILIES)} families")
-    print(f"eval tasks:  {len(eval_)} across {len(EVAL_FAMILIES)} families")
-    for t in train[:2] + eval_[:2]:
-        print(f"\n[{t.family}] {t.name}\n  prompt: {t.prompt}\n  expect: {t.expect!r}")
+    print(f"train: {len(train)} tasks across {len(TRAIN_FAMILIES)} families")
+    print(f"eval:  {len(eval_)} tasks across {len(EVAL_FAMILIES)} families")
+    t = eval_[0]
+    print(f"\n[{t.family}] {t.name}\n  {t.prompt}\n  tests: {t.tests}")

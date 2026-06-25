@@ -73,6 +73,10 @@ walk k across range(2, 30) {
 # How to respond
 
 Think briefly if you need to, then return the COMPLETE program inside a single \
-```rill code block. The program's `emit` output is graded against an exact expected \
-output, so emit exactly what is asked, in order, and nothing else.\
+```rill code block, following the task's instructions about what to define or emit.
+
+When a task asks you to define `forge solve(...)`, define that function so it works for \
+*any* valid input, not just one case. You may add a top-level `emit solve(<example>)` to \
+test it; the grader ignores top-level `emit` lines and calls `solve` itself on hidden \
+inputs. Do not hardcode a specific answer.\
 """

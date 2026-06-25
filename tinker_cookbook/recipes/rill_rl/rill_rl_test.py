@@ -15,14 +15,27 @@ import pytest
 
 from tinker_cookbook.recipes.rill_rl.agent_app import extract_program, run_rill
 from tinker_cookbook.recipes.rill_rl.agent_app.agent import RillAgent
-from tinker_cookbook.recipes.rill_rl.training.grading import RillTask, shaped_reward
+from tinker_cookbook.recipes.rill_rl.training.grading import shaped_reward
 from tinker_cookbook.recipes.rill_rl.training.proxy import SamplingProxy, TurnCapture
 from tinker_cookbook.recipes.rill_rl.training.tasks import (
     EVAL_FAMILIES,
     TRAIN_FAMILIES,
+    RillTask,
     build_tasks,
 )
 from tinker_cookbook.recipes.rill_rl.training.train import _build_datums
+
+# A small solve-based task for grading tests: solve(n) = sum 1..n, graded on hidden inputs.
+_SUM_TASK = RillTask(
+    name="sum",
+    family="sum",
+    prompt="define solve(n) = sum 1..n",
+    tests=(("3", "6"), ("5", "15"), ("10", "55")),
+)
+_CORRECT_SOLVE = (
+    "forge solve(n) {\n  0 -> s\n  1 -> i\n"
+    "  sustain i <= n { s + i -> s\n i + 1 -> i }\n  give s\n}"
+)
 
 _EXAMPLES = Path(__file__).parent / "agent_app" / "rill_lang" / "examples"
 
@@ -55,14 +68,24 @@ def test_extract_program():
 # ---- trainer-side grading ----
 
 
-def test_shaped_reward_ordering():
-    task = RillTask("sum", "sum_to_n", "sum 1..10", "55")
-    r_ok, info = shaped_reward("0 -> s\nwalk k across range(1, 11) { s + k -> s }\nemit s", task)
-    r_off, _ = shaped_reward("0 -> s\nwalk k across range(1, 10) { s + k -> s }\nemit s", task)
-    r_empty, _ = shaped_reward("0 -> s\nwalk k across range(1, 11) { s + k -> s }", task)
-    r_parse, _ = shaped_reward("0 -> s walk", task)
+def test_shaped_reward_grades_on_hidden_inputs():
+    r_ok, info = shaped_reward(_CORRECT_SOLVE, _SUM_TASK)
     assert info["correct"] and r_ok == pytest.approx(1.0)
-    assert r_ok > r_off > r_empty > r_parse == 0.0
+    # parse error -> zero
+    r_parse, _ = shaped_reward("forge solve(n) { give", _SUM_TASK)
+    assert r_parse == 0.0
+    # runs but wrong on all inputs -> partial (parse+run), not correct, below correct
+    r_wrong, info_w = shaped_reward("forge solve(n) { give n }", _SUM_TASK)
+    assert not info_w["correct"] and r_parse < r_wrong < r_ok
+
+
+def test_constant_emit_does_not_reward_hack():
+    """The Experiment 1 hack — emitting the literal answer — must fail under hidden-input
+    grading: a constant can match at most one of several distinct expected outputs."""
+    r_const, info = shaped_reward("emit 6", _SUM_TASK)  # correct only for n=3
+    assert not info["correct"]
+    assert info["frac_correct"] < 1.0
+    assert r_const < shaped_reward(_CORRECT_SOLVE, _SUM_TASK)[0]
 
 
 # ---- task families ----
@@ -71,10 +94,12 @@ def test_shaped_reward_ordering():
 def test_tasks_solvable_and_families_disjoint():
     assert not (set(TRAIN_FAMILIES) & set(EVAL_FAMILIES))
     train, eval_ = build_tasks(seed=0)
-    assert len(train) > 100 and len(eval_) > 30
+    assert len(train) >= 15 and len(eval_) >= 4
     assert {t.family for t in train} == set(TRAIN_FAMILIES)
     assert {t.family for t in eval_} == set(EVAL_FAMILIES)
-    assert all(t.expect != "" for t in train + eval_)
+    # every task has hidden tests with at least two distinct expected outputs
+    for t in train + eval_:
+        assert len(t.tests) >= 2 and len({e for _, e in t.tests}) >= 2
 
 
 # ---- the standalone agent loop (mock OpenAI client) ----

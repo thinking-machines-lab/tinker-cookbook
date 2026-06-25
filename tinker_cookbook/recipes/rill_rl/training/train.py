@@ -41,9 +41,9 @@ from tinker.types.tensor_data import TensorData
 
 from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.recipes.rill_rl.training.eval import log_rollouts_html
-from tinker_cookbook.recipes.rill_rl.training.grading import RillTask, shaped_reward
+from tinker_cookbook.recipes.rill_rl.training.grading import shaped_reward
 from tinker_cookbook.recipes.rill_rl.training.proxy import SamplingProxy, TurnCapture
-from tinker_cookbook.recipes.rill_rl.training.tasks import build_tasks
+from tinker_cookbook.recipes.rill_rl.training.tasks import RillTask, build_tasks
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
@@ -230,9 +230,12 @@ def main(config: Config) -> None:
         proxy.set_policy(sampling_client, temperature=config.temperature)
         proxy.reset_captures()
 
-        # 2. trigger rollouts through the app.
-        start = batch_idx * config.groups_per_batch
-        batch_tasks = train_tasks[start : start + config.groups_per_batch]
+        # 2. trigger rollouts through the app. Cycle through the task pool so a modest
+        # set of distinct tasks can support many batches.
+        batch_tasks = [
+            train_tasks[(batch_idx * config.groups_per_batch + j) % len(train_tasks)]
+            for j in range(config.groups_per_batch)
+        ]
         rollout_results = asyncio.run(
             _run_batch_rollouts(config, batch_tasks, batch_idx, proxy_base)
         )
