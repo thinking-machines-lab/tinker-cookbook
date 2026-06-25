@@ -1,10 +1,12 @@
 """Manage RILL checkpoints under a Tinker project.
 
-Tinker groups runs into projects, but the SDK's run/checkpoint types don't expose the
-project id, and `list_user_checkpoints` isn't project-scoped. So we tag each run with
-``user_metadata`` (``rill_project`` + a human ``rill_label``) when it's created or copied,
-and list a project's checkpoints by filtering runs on that tag. This is the "API" the app
-uses to populate its checkpoint picker.
+The Tinker backend filters training runs by project (``GET /api/v1/training_runs?
+project_id=...`` -> ``model_store.list_by_project``), but the public SDK's
+``list_training_runs`` doesn't expose the ``project_id`` parameter. So we call that
+endpoint through the SDK's low-level client to list *every* run in a project dynamically —
+no tagging required, so any new experiment created under the project shows up automatically.
+We still tag copies/runs with a human ``rill_label`` (``user_metadata``) purely for a nice
+display name in the app's picker.
 
 CLI:
     # copy a prior run's weights into the project (never-expires), tagged for the app
@@ -21,9 +23,43 @@ from __future__ import annotations
 import argparse
 
 import tinker
+from tinker.lib.internal_client_holder import ClientConnectionPoolType
 
 PROJECT_TAG = "rill_project"
 LABEL_TAG = "rill_label"
+
+
+def _runs_in_project(project_id: str, page: int = 100) -> list:
+    """All training runs under ``project_id`` via the backend's project filter.
+
+    Calls ``GET /api/v1/training_runs?project_id=...`` through the SDK's low-level client
+    (the public ``list_training_runs`` doesn't take ``project_id`` yet).
+    """
+    holder = tinker.ServiceClient().create_rest_client().holder
+    runs: list = []
+    offset = 0
+    while True:
+
+        async def _fetch(offset: int = offset):
+            async def _send():
+                with holder.aclient(ClientConnectionPoolType.TRAIN) as client:
+                    return await client.get(
+                        "/api/v1/training_runs",
+                        options={
+                            "params": {"project_id": project_id, "limit": page, "offset": offset}
+                        },
+                        cast_to=tinker.types.TrainingRunsResponse,
+                    )
+
+            return await holder.execute_with_retries(_send)
+
+        resp = holder.run_coroutine_threadsafe(_fetch()).future().result()
+        runs.extend(resp.training_runs)
+        total = resp.cursor.total_count if resp.cursor else len(runs)
+        if not resp.training_runs or len(runs) >= total:
+            break
+        offset += page
+    return runs
 
 
 def copy_into_project(source_weights_path: str, project_id: str, label: str) -> dict[str, str]:
@@ -51,40 +87,28 @@ def copy_into_project(source_weights_path: str, project_id: str, label: str) -> 
     return {"label": label, "training": training_path, "sampler": sampler_path}
 
 
-def list_project_checkpoints(project_id: str, limit: int = 500) -> list[dict]:
-    """Return the servable (sampler) checkpoints of runs tagged for ``project_id``.
+def list_project_checkpoints(project_id: str) -> list[dict]:
+    """Every servable (sampler) checkpoint under ``project_id``, newest first.
 
-    Each entry: ``{label, tinker_path, base_model, run, time}``, newest first.
+    Dynamic: lists all runs the backend reports for the project, so new experiments appear
+    automatically. Each entry: ``{label, tinker_path, base_model, run, created_at}``.
     """
-    rest = tinker.ServiceClient().create_rest_client()
-    runs = []
-    offset = 0
-    while len(runs) < limit:
-        resp = rest.list_training_runs(limit=100, offset=offset).result()
-        runs.extend(resp.training_runs)
-        total = resp.cursor.total_count if resp.cursor else len(runs)
-        if not resp.training_runs or len(runs) >= total:
-            break
-        offset += 100
-
     out = []
-    for r in runs:
-        md = r.user_metadata or {}
-        if md.get(PROJECT_TAG) != project_id:
-            continue
+    for r in _runs_in_project(project_id):
         cp = r.last_sampler_checkpoint
         if cp is None:
-            continue
+            continue  # no servable checkpoint yet
+        md = r.user_metadata or {}
         out.append(
             {
-                "label": md.get(LABEL_TAG, r.training_run_id),
+                "label": md.get(LABEL_TAG) or r.training_run_id.split(":")[0][:8],
                 "tinker_path": cp.tinker_path,
                 "base_model": r.base_model,
                 "run": r.training_run_id,
-                "time": cp.time.isoformat(),
+                "created_at": cp.time.isoformat(),
             }
         )
-    out.sort(key=lambda e: e["time"], reverse=True)
+    out.sort(key=lambda e: e["created_at"], reverse=True)
     return out
 
 
@@ -108,7 +132,7 @@ def _main() -> None:
         print(f"  sampler:  {res['sampler']}")
     elif args.cmd == "list":
         for e in list_project_checkpoints(args.project):
-            print(f"  {e['label']:16} {e['base_model']:20} {e['tinker_path']}")
+            print(f"  {e['created_at'][:19]}  {e['label']:16} {e['tinker_path']}")
 
 
 if __name__ == "__main__":

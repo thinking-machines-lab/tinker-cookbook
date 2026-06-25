@@ -164,7 +164,10 @@ async function loadCheckpoints() {
     if (!r.ok) return;  // standalone app (no Tinker serving layer): leave selector hidden
     const d = await r.json();
     const sel = document.getElementById('ckpt');
-    sel.innerHTML = d.checkpoints.map(c => `<option value="${c.tinker_path}">${esc(c.label)}</option>`).join('');
+    sel.innerHTML = d.checkpoints.map(c => {
+      const when = c.created_at ? '  ·  ' + c.created_at.slice(0, 16).replace('T', ' ') : '';
+      return `<option value="${c.tinker_path}">${esc(c.label)}${when}</option>`;
+    }).join('');
     if (d.current && d.current.tinker_path) sel.value = d.current.tinker_path;
     document.getElementById('ckptCurrent').textContent = 'serving: ' + (d.current?.label || '?');
     document.getElementById('ckptBar').classList.remove('hidden');
