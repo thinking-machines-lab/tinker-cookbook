@@ -216,6 +216,95 @@ forge solve(w) {
     return prompt, ref, [("tokenizer",), ("rhythm",), ("aeiou",), ("gradient",), ("xyz",)]
 
 
+# Extra families added in Experiment 4: transferable structure for the held-out families
+# that lagged in Experiment 3 (list reduce -> list_max; accumulate/while-with-branch ->
+# nth_fib/lcm; two-index text scan -> palindrome). None overlap the eval families.
+
+
+def _list_min():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a non-empty list of integers, that returns "
+        "the smallest element. It is tested on hidden lists."
+    )
+    ref = """\
+forge solve(xs) {
+  head(xs) -> m
+  walk v across xs { when v < m { v -> m } }
+  give m
+}"""
+    return prompt, ref, [([3, 1, 2],), ([9],), ([4, 4, 0, 2],), ([7, 8, 1],), ([5, 6, 2, 12, 3],)]
+
+
+def _list_product():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a non-empty list of integers, that returns "
+        "the product of all elements. It is tested on hidden lists."
+    )
+    ref = """\
+forge solve(xs) {
+  1 -> p
+  walk v across xs { p * v -> p }
+  give p
+}"""
+    return prompt, ref, [([1, 2, 3],), ([5],), ([2, 2, 2],), ([4, 0, 9],), ([3, 3, 3, 3],)]
+
+
+def _pow2():
+    prompt = (
+        "Define `forge solve(n)` that returns 2 raised to the power n (n >= 0, "
+        "solve(0) = 1). It is tested on hidden values of n."
+    )
+    ref = """\
+forge solve(n) {
+  1 -> p
+  0 -> i
+  sustain i < n {
+    p * 2 -> p
+    i + 1 -> i
+  }
+  give p
+}"""
+    return prompt, ref, [(0,), (1,), (4,), (8,), (10,), (13,)]
+
+
+def _collatz_steps():
+    prompt = (
+        "Define `forge solve(n)` that returns how many steps it takes to reach 1 from "
+        "n >= 1 under the Collatz rule (if even, halve it; if odd, 3n+1). solve(1) = 0. "
+        "It is tested on hidden values of n."
+    )
+    ref = """\
+forge solve(n) {
+  0 -> c
+  sustain n != 1 {
+    when n % 2 = 0 { n / 2 -> n }
+    otherwise { 3 * n + 1 -> n }
+    c + 1 -> c
+  }
+  give c
+}"""
+    return prompt, ref, [(1,), (2,), (3,), (6,), (7,), (27,)]
+
+
+def _adjacent_dup_count():
+    prompt = (
+        "Define `forge solve(w)`, where w is lowercase text, that returns how many adjacent "
+        "character pairs are equal (e.g. \"aabb\" has 2). It is tested on hidden words."
+    )
+    ref = """\
+forge solve(w) {
+  chars(w) -> cs
+  0 -> c
+  1 -> i
+  sustain i < count(cs) {
+    when cs @ (i - 1) = cs @ i { c + 1 -> c }
+    i + 1 -> i
+  }
+  give c
+}"""
+    return prompt, ref, [("letter",), ("aabb",), ("abc",), ("bookkeeper",), ("mississippi",)]
+
+
 # ---- eval families (disjoint) ----
 
 
@@ -412,6 +501,12 @@ def _train_specs():
     specs.append(("list_sum", _list_sum()))
     specs.append(("list_reverse_join", _list_reverse_join()))
     specs.append(("vowel_count", _vowel_count()))
+    # Experiment 4 additions (transferable structure for the lagging held-out families).
+    specs.append(("list_min", _list_min()))
+    specs.append(("list_product", _list_product()))
+    specs.append(("pow2", _pow2()))
+    specs.append(("collatz_steps", _collatz_steps()))
+    specs.append(("adjacent_dup_count", _adjacent_dup_count()))
     return specs
 
 

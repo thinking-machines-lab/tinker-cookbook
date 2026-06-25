@@ -23,37 +23,48 @@ from __future__ import annotations
 import argparse
 
 import tinker
-from tinker.lib.internal_client_holder import ClientConnectionPoolType
 
 PROJECT_TAG = "rill_project"
 LABEL_TAG = "rill_label"
 
 
-def _runs_in_project(project_id: str, page: int = 100) -> list:
-    """All training runs under ``project_id`` via the backend's project filter.
+def _list_page(rest, project_id: str, limit: int, offset: int):
+    """One page of a project's training runs.
 
-    Calls ``GET /api/v1/training_runs?project_id=...`` through the SDK's low-level client
-    (the public ``list_training_runs`` doesn't take ``project_id`` yet).
+    Uses the public ``RestClient.list_training_runs(project_id=...)`` (added upstream); for
+    SDKs that predate that parameter it falls back to calling the endpoint directly. Drop
+    the fallback once the recipe requires a tinker release with the parameter.
     """
-    holder = tinker.ServiceClient().create_rest_client().holder
-    runs: list = []
-    offset = 0
-    while True:
+    try:
+        return rest.list_training_runs(project_id=project_id, limit=limit, offset=offset).result()
+    except TypeError:
+        from tinker.lib.internal_client_holder import ClientConnectionPoolType
 
-        async def _fetch(offset: int = offset):
+        holder = rest.holder
+
+        async def _fetch():
             async def _send():
                 with holder.aclient(ClientConnectionPoolType.TRAIN) as client:
                     return await client.get(
                         "/api/v1/training_runs",
                         options={
-                            "params": {"project_id": project_id, "limit": page, "offset": offset}
+                            "params": {"project_id": project_id, "limit": limit, "offset": offset}
                         },
                         cast_to=tinker.types.TrainingRunsResponse,
                     )
 
             return await holder.execute_with_retries(_send)
 
-        resp = holder.run_coroutine_threadsafe(_fetch()).future().result()
+        return holder.run_coroutine_threadsafe(_fetch()).future().result()
+
+
+def _runs_in_project(project_id: str, page: int = 100) -> list:
+    """All training runs under ``project_id`` via the backend's project filter."""
+    rest = tinker.ServiceClient().create_rest_client()
+    runs: list = []
+    offset = 0
+    while True:
+        resp = _list_page(rest, project_id, page, offset)
         runs.extend(resp.training_runs)
         total = resp.cursor.total_count if resp.cursor else len(runs)
         if not resp.training_runs or len(runs) >= total:
