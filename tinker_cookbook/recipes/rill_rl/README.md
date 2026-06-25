@@ -116,11 +116,23 @@ the grader runs it on inputs the model never sees, so a constant can't win.
 | after 30 steps  | **0.550** | **0.671** | **20/20** (0 constant emits) |
 
 Lower than Experiment 1's *fake* 0.97 because it now measures generalizing programs, not
-memorized literals. Per-family before → after: `factorial` 0.75→1.00, `palindrome`
-0.00→1.00, `gcd` 0.25→0.50, `nth_fib` 0.00→0.25, `reverse_text` 0.00→0.00 (honest weak
-spots). The model genuinely learned RILL syntax — e.g. it switched from an invalid
-`c = chars(w)` to a correct `chars(w) -> c` with `w @ i` indexing.
+memorized literals. The model genuinely learned RILL syntax — e.g. it switched from an
+invalid `c = chars(w)` to a correct `chars(w) -> c` with `w @ i` indexing.
 ([`results/experiment_2/`](./results/experiment_2/))
+
+**Experiment 3 — async off-policy loop, 50 steps, 10 held-out families.**
+
+| `Qwen/Qwen3.5-4B` | held-out pass@1 | mean reward | real functions |
+|---|---|---|---|
+| before training | 0.250 | 0.418 | — |
+| after 50 steps  | **0.750** | **0.838** | **40/40** (0 constants) |
+
+The Exp-2 weak spots improved (`reverse_text` 0.00→1.00, `gcd` 0.00→0.75, `is_sorted`
+0.00→0.75). The async loop (`max_steps_off_policy`) overlaps sampling with the optimizer
+step and is bounded-correct, but at this scale a LoRA step is as fast as sampling, so the
+sampler never ran ahead (`lag` stayed 0) — i.e. effectively on-policy. The staleness path
+would engage with a slower trainer or longer generations.
+([`results/experiment_3/`](./results/experiment_3/))
 
 The frontier baseline (`gpt-5.5`) row is still _pending an API key_.
 

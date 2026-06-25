@@ -8,6 +8,7 @@ the next experiment.
 |---|------|-------|---------------|-----------------|---------|
 | [1](./experiment_1/) | 2026-06-25 | Qwen3.5-4B | output-match on fixed-input tasks | 0.10 → 0.97 | reward-hacked (98% constant emits) |
 | [2](./experiment_2/) | 2026-06-25 | Qwen3.5-4B | `solve(...)` graded on **hidden inputs** | 0.20 → 0.55 | hack fixed; writes real RILL (0% constants) |
+| [3](./experiment_3/) | 2026-06-25 | Qwen3.5-4B | Exp-2 reward + async loop, 50 steps, 10 eval families | 0.25 → 0.75 | bigger/cleaner; async ran but lag≈0 (effectively on-policy) |
 
 ## How this is organized
 
