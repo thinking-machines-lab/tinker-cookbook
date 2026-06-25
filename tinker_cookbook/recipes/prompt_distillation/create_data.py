@@ -94,7 +94,7 @@ def setup_clients():
     print("Creating sampling client")
     sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
     tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
-    renderer = renderers.get_renderer("qwen3_5", tokenizer)
+    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     return sampling_client, tokenizer, renderer
 
@@ -111,7 +111,7 @@ async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any
         sentence: str,
     ) -> tuple[str, str | None]:
         prompt = LANGUAGE_CLASSIFICATION_PROMPT.format(text=sentence)
-        tokenized_prompt = tinker.ModelInput.from_ints(tokenizer.encode(prompt))
+        tokenized_prompt = renderer.build_generation_prompt([{"role": "user", "content": prompt}])
         params = tinker.SamplingParams(
             max_tokens=1000, temperature=0.15, stop=renderer.get_stop_sequences()
         )
