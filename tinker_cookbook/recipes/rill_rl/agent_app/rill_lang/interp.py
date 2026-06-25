@@ -442,6 +442,10 @@ def run_rill(src: str, *, max_steps: int = 100_000) -> Result:
         interp.run(tree)
     except _Give:
         pass  # `give` at top level just stops the program
+    except (_Halt, _Skip):
+        # A stray `halt`/`skip` with no enclosing loop is a runtime error, not a crash.
+        return Result(ok=False, output="\n".join(interp.out),
+                      error="runtime:halt/skip outside a loop", steps=interp.steps)
     except RillError as e:
         msg = str(e)
         cat = "budget" if "step budget" in msg else "runtime"

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-from tinker_cookbook.recipes.rill_rl.agent_app.rill_lang import run_rill
+from tinker_cookbook.recipes.rill_rl.agent_app.rill_lang import Result, run_rill
 from tinker_cookbook.recipes.rill_rl.training.tasks import RillTask
 
 W_PARSE, W_RUN, W_NONEMPTY, W_CORRECT = 0.15, 0.15, 0.10, 0.60
@@ -39,7 +39,10 @@ def shaped_reward(program: str, task: RillTask) -> tuple[float, dict]:
     first_error: str | None = None
 
     for i, (args, expected) in enumerate(task.tests):
-        res = run_rill(f"{body}\nemit solve({args})", max_steps=task.max_steps)
+        try:
+            res = run_rill(f"{body}\nemit solve({args})", max_steps=task.max_steps)
+        except Exception as e:  # never let adversarial model output crash the trainer
+            res = Result(ok=False, output="", error=f"runtime:{type(e).__name__}", steps=0)
         if i == 0:
             first_output, first_error = res.output, res.error
         # A parse error means the candidate program itself is malformed -> zero.

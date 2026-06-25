@@ -110,8 +110,11 @@ class RillAgent:
 
             messages.append({"role": "assistant", "content": content})
             program = extract_program(content)
-            res = run_rill(program)
-            output, error, ran_clean = res.output, res.error, res.ok
+            try:
+                res = run_rill(program)
+                output, error, ran_clean = res.output, res.error, res.ok
+            except Exception as e:  # malformed program must not crash the request
+                output, error, ran_clean = "", f"runtime:{type(e).__name__}", False
 
             yield {"type": "assistant", "turn": turn, "content": content, "program": program}
             yield {

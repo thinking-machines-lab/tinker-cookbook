@@ -186,7 +186,8 @@ line-length = 100
 exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
-    # Vendored RILL interpreter; the language spec, kept verbatim
+    # Vendored RILL interpreter (the language spec); not restyled. One robustness fix:
+    # run_rill now returns a runtime error for a stray halt/skip instead of crashing.
     "tinker_cookbook/recipes/rill_rl/agent_app/rill_lang/interp.py",
 ]
 
