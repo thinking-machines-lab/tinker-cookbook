@@ -40,6 +40,7 @@ from tinker import types
 from tinker.types.tensor_data import TensorData
 
 from tinker_cookbook import checkpoint_utils, model_info, renderers
+from tinker_cookbook.recipes.rill_rl.training import checkpoints
 from tinker_cookbook.recipes.rill_rl.training.eval import log_rollouts_html
 from tinker_cookbook.recipes.rill_rl.training.grading import shaped_reward
 from tinker_cookbook.recipes.rill_rl.training.proxy import SamplingProxy, TurnCapture
@@ -55,6 +56,8 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     base_url: str | None = None  # Tinker service base url
+    project_id: str | None = None  # Tinker project to create this run under (groups experiments)
+    run_label: str | None = None  # human label tagged on the run (shown in the app's picker)
     model_name: str = "Qwen/Qwen3.5-4B"
     lora_rank: int = 32
     learning_rate: float = 1e-5
@@ -295,10 +298,17 @@ def _setup(config: Config):
     n_batches = config.num_batches or (len(train_tasks) // config.groups_per_batch)
 
     service = tinker.ServiceClient(
-        base_url=config.base_url, user_metadata=recipe_user_metadata("recipe_rill_rl")
+        base_url=config.base_url,
+        project_id=config.project_id,  # group this run under the project
+        user_metadata=recipe_user_metadata("recipe_rill_rl"),
     )
+    # Tag the run so the project's checkpoints are discoverable by the app's picker.
+    run_meta: dict[str, str] = {}
+    if config.project_id:
+        run_meta[checkpoints.PROJECT_TAG] = config.project_id
+        run_meta[checkpoints.LABEL_TAG] = config.run_label or f"rill-{n_batches}b"
     training_client = service.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank
+        base_model=config.model_name, rank=config.lora_rank, user_metadata=run_meta or None
     )
     adam = types.AdamParams(learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
     return proxy, proxy_base, train_tasks, n_batches, training_client, adam

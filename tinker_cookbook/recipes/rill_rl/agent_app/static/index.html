@@ -58,6 +58,11 @@
   <a href="/playground" style="margin-left:auto;color:#79c0ff;text-decoration:none;font-size:14px">Playground &rarr;</a>
 </header>
 <main>
+  <div id="ckptBar" class="controls hidden" style="grid-template-columns:1fr auto auto; align-items:end; margin-bottom:12px">
+    <div><label>Served checkpoint (live A/B)</label><select id="ckpt"></select></div>
+    <button class="run" style="background:#79c0ff" onclick="selectCkpt()">Serve this</button>
+    <span class="hint" id="ckptCurrent"></span>
+  </div>
   <div class="controls">
     <div><label>Model</label><input id="model" value="gpt-5.5" /></div>
     <div><label>Max turns</label><input id="maxTurns" type="number" value="3" min="1" max="8" /></div>
@@ -152,7 +157,31 @@ function renderEvent(ev){
     card('API error','system').innerHTML += `<pre class="err">${esc(ev.message)}</pre>`;
   }
 }
+// Checkpoint A/B selector — only shown when served via training/serve.py (endpoints present).
+async function loadCheckpoints() {
+  try {
+    const r = await fetch('/api/checkpoints');
+    if (!r.ok) return;  // standalone app (no Tinker serving layer): leave selector hidden
+    const d = await r.json();
+    const sel = document.getElementById('ckpt');
+    sel.innerHTML = d.checkpoints.map(c => `<option value="${c.tinker_path}">${esc(c.label)}</option>`).join('');
+    if (d.current && d.current.tinker_path) sel.value = d.current.tinker_path;
+    document.getElementById('ckptCurrent').textContent = 'serving: ' + (d.current?.label || '?');
+    document.getElementById('ckptBar').classList.remove('hidden');
+  } catch (e) { /* selector stays hidden */ }
+}
+async function selectCkpt() {
+  const sel = document.getElementById('ckpt');
+  const label = sel.options[sel.selectedIndex].text;
+  document.getElementById('ckptCurrent').textContent = 'switching…';
+  const r = await fetch('/api/select_checkpoint', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({tinker_path: sel.value, label})});
+  const d = await r.json();
+  document.getElementById('ckptCurrent').textContent = 'serving: ' + (d.current?.label || label);
+}
+
 loadExamples();
+loadCheckpoints();
 </script>
 </body>
 </html>

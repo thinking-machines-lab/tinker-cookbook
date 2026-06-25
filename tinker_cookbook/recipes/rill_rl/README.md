@@ -87,13 +87,34 @@ python -m tinker_cookbook.recipes.rill_rl.training.train \
 ```
 
 The trainer starts the sampling proxy itself and drives the app over HTTP. `Qwen/Qwen3.5-9B`
-gives more headroom at higher cost.
+gives more headroom at higher cost. Pass `project_id=<id>` (and optionally `run_label=...`)
+to group runs under a Tinker project so the app can list them (below).
 
-### 3. Score the trained checkpoint in the same app
+### 3. Serve a trained checkpoint and A/B test live
 
-Serve the checkpoint behind an OpenAI-compatible endpoint, then point the app at it (set
-the app's `OPENAI_BASE_URL`, or pass `--openai-base-url` to the eval) and rerun the eval
-from step 1. Same app, same harness, head-to-head numbers.
+`training/serve.py` runs the proxy + the app and adds a checkpoint picker to the UI. Point
+it at a Tinker project and it lists that project's RILL checkpoints (tagged via
+`user_metadata`); pick one to serve, run a prompt, switch to another, run the same prompt —
+live A/B in the browser.
+
+```bash
+python -m tinker_cookbook.recipes.rill_rl.training.serve \
+    --project <project-id> --app-port 8300 \
+    --checkpoint tinker://<run>:train:0/sampler_weights/<name>   # or 'base'
+```
+
+Manage the project's checkpoints with `training/checkpoints.py` (copies never expire):
+
+```bash
+# copy a prior run's trainable weights into the project, tagged + permanent
+python -m tinker_cookbook.recipes.rill_rl.training.checkpoints copy \
+    --project <project-id> --label exp3 --source tinker://<run>:train:0/weights/final
+# list what's in the project
+python -m tinker_cookbook.recipes.rill_rl.training.checkpoints list --project <project-id>
+```
+
+To score a checkpoint on the held-out set, point the eval at the running app's proxy (or
+any OpenAI-compatible endpoint) via `--openai-base-url` and rerun step 1's eval.
 
 ## Results
 
