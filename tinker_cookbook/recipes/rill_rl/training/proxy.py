@@ -65,11 +65,15 @@ class SamplingProxy:
         with self._lock:
             self._state.captures = {}
 
-    def pop_captures(self) -> dict[str, list[TurnCapture]]:
+    def pop_captures(self, ids: list[str] | None = None) -> dict[str, list[TurnCapture]]:
+        """Remove and return captures. With ``ids``, pop only those rollout ids (so
+        overlapping batches in async training don't mix); otherwise drain everything."""
         with self._lock:
-            caps = self._state.captures
-            self._state.captures = {}
-            return caps
+            if ids is None:
+                caps = self._state.captures
+                self._state.captures = {}
+                return caps
+            return {rid: self._state.captures.pop(rid) for rid in ids if rid in self._state.captures}
 
     def _record(self, rollout_id: str, cap: TurnCapture) -> None:
         with self._lock:

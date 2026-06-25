@@ -310,7 +310,91 @@ forge solve(w) {
   }
   give join(rev, "")
 }"""
-    return prompt, ref, [("tinker",), ("abc",), ("level",), ("policy",)]
+    return prompt, ref, [("tinker",), ("abc",), ("level",), ("policy",), ("zz",), ("a",)]
+
+
+def _lcm():
+    prompt = (
+        "Define `forge solve(a, b)` that returns the least common multiple of positive "
+        "integers a and b. It is tested on hidden pairs."
+    )
+    ref = """\
+forge gcd(a, b) {
+  sustain b != 0 {
+    a % b -> r
+    b -> a
+    r -> b
+  }
+  give a
+}
+forge solve(a, b) {
+  gcd(a, b) -> g
+  give a / g * b
+}"""
+    return prompt, ref, [(4, 6), (3, 5), (12, 8), (7, 7), (9, 6), (10, 4)]
+
+
+def _list_max():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a non-empty list of integers, that returns "
+        "the largest element. It is tested on hidden lists."
+    )
+    ref = """\
+forge solve(xs) {
+  head(xs) -> m
+  walk v across xs { when v > m { v -> m } }
+  give m
+}"""
+    return prompt, ref, [([3, 1, 2],), ([9],), ([4, 4, 9, 2],), ([0, 8, 1],), ([7, 5, 6, 12, 3],)]
+
+
+def _is_sorted():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a list of integers, that returns yes if the "
+        "list is sorted in non-decreasing order, otherwise no. Tested on hidden lists."
+    )
+    ref = """\
+forge solve(xs) {
+  1 -> i
+  sustain i < count(xs) {
+    when xs @ (i - 1) > xs @ i { give no }
+    i + 1 -> i
+  }
+  give yes
+}"""
+    return prompt, ref, [([1, 2, 3],), ([3, 1, 2],), ([5, 5, 6],), ([9, 8],), ([1],), ([2, 2, 1],)]
+
+
+def _count_char():
+    prompt = (
+        "Define `forge solve(w, ch)`, where w is lowercase text and ch is a single "
+        "character, that returns how many times ch occurs in w. Tested on hidden inputs."
+    )
+    ref = """\
+forge solve(w, ch) {
+  0 -> c
+  walk x across chars(w) { when x = ch { c + 1 -> c } }
+  give c
+}"""
+    return prompt, ref, [("banana", "a"), ("mississippi", "s"), ("rill", "l"), ("abc", "z"), ("aaa", "a")]
+
+
+def _power():
+    prompt = (
+        "Define `forge solve(b, e)` that returns b raised to the power e (e >= 0, "
+        "solve(b, 0) = 1). It is tested on hidden pairs."
+    )
+    ref = """\
+forge solve(b, e) {
+  1 -> p
+  0 -> i
+  sustain i < e {
+    p * b -> p
+    i + 1 -> i
+  }
+  give p
+}"""
+    return prompt, ref, [(2, 0), (2, 5), (3, 3), (5, 2), (10, 4), (7, 1)]
 
 
 # Each entry: (family_name, list of (prompt, reference, inputs) task specs).
@@ -338,6 +422,11 @@ def _eval_specs():
         ("factorial", _factorial()),
         ("palindrome", _palindrome()),
         ("reverse_text", _reverse_text()),
+        ("lcm", _lcm()),
+        ("list_max", _list_max()),
+        ("is_sorted", _is_sorted()),
+        ("count_char", _count_char()),
+        ("power", _power()),
     ]
 
 

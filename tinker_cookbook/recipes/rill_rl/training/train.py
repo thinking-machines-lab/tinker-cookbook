@@ -66,6 +66,11 @@ class Config:
     num_batches: int | None = None  # None = one pass over the training tasks
     seed: int = 0
 
+    # Async off-policy RL: let the rollout producer run up to this many batches ahead of
+    # the trainer (overlapping sampling with the optimizer step). 0/None = on-policy and
+    # sequential. importance_sampling on the captured logprobs corrects for the staleness.
+    max_steps_off_policy: int | None = None
+
     # The production agent app (already running) and the embedded sampling proxy.
     app_url: str = "http://127.0.0.1:8000"
     proxy_host: str = "127.0.0.1"
@@ -181,15 +186,101 @@ async def _run_batch_rollouts(
     return results
 
 
-def main(config: Config) -> None:
-    ml_logger = ml_log.setup_logging(
-        log_dir=config.log_path,
-        wandb_project=None,
-        wandb_name=None,
-        config=config,
-        do_configure_logging_module=True,
+def _batch_tasks(config: Config, train_tasks: list[RillTask], batch_idx: int) -> list[RillTask]:
+    # Cycle through the task pool so a modest set of distinct tasks supports many batches.
+    return [
+        train_tasks[(batch_idx * config.groups_per_batch + j) % len(train_tasks)]
+        for j in range(config.groups_per_batch)
+    ]
+
+
+def _grade_and_build(
+    config: Config,
+    batch_tasks: list[RillTask],
+    batch_idx: int,
+    rollout_results: dict[str, tuple[str, list[dict]]],
+    captures: dict[str, list[TurnCapture]],
+) -> tuple[list[types.Datum], dict[str, float], list[dict]]:
+    """Grade the batch, center advantages within each group, and build training datums."""
+    datums: list[types.Datum] = []
+    rewards_all: list[float] = []
+    correct_all: list[float] = []
+    rollout_log: list[dict] = []
+    for ti, task in enumerate(batch_tasks):
+        rewards_g: list[float] = []
+        infos_g: list[dict] = []
+        rids: list[str] = []
+        for g in range(config.group_size):
+            rid = f"{batch_idx}-{ti}-{g}"
+            program, transcript = rollout_results.get(rid, ("", []))
+            reward, info = shaped_reward(program, task)
+            rewards_g.append(reward)
+            infos_g.append(info)
+            rids.append(rid)
+            rollout_log.append(
+                {
+                    "family": task.family,
+                    "name": f"{task.name}#g{g}",
+                    "prompt": task.prompt,
+                    "expect": "; ".join(f"solve({a})={e}" for a, e in task.tests),
+                    "program": program,
+                    "correct": bool(info["correct"]),
+                    "reward": reward,
+                    "transcript": transcript,
+                }
+            )
+        mean_r = sum(rewards_g) / len(rewards_g)
+        rewards_all.extend(rewards_g)
+        correct_all.extend(float(i["correct"]) for i in infos_g)
+        if all(r == mean_r for r in rewards_g):
+            continue  # zero advantage everywhere; nothing to learn from this group
+        for g, rid in enumerate(rids):
+            datums.extend(_build_datums(captures.get(rid, []), rewards_g[g] - mean_r))
+
+    metrics = {
+        "reward/mean": sum(rewards_all) / max(len(rewards_all), 1),
+        "reward/pass@1": sum(correct_all) / max(len(correct_all), 1),
+        "data/num_datums": float(len(datums)),
+        "data/num_rollouts": float(len(rewards_all)),
+    }
+    return datums, metrics, rollout_log
+
+
+def _maybe_log_rollouts(config: Config, batch_idx: int, rollout_log: list[dict]) -> None:
+    if config.log_rollouts_every > 0 and batch_idx % config.log_rollouts_every == 0:
+        rollout_log.sort(key=lambda r: (r["family"], r["name"]))
+        path = os.path.join(config.log_path, f"rollouts_step{batch_idx:06d}.html")
+        log_rollouts_html(path, config.model_name, rollout_log)
+
+
+def _train_step(training_client, datums: list[types.Datum], adam) -> dict[str, float]:
+    """Blocking forward_backward + optim_step (run via asyncio.to_thread in the async loop)."""
+    fwd = training_client.forward_backward(datums, loss_fn="importance_sampling")
+    opt = training_client.optim_step(adam)
+    fwd.result()
+    res = opt.result()
+    return dict(res.metrics) if res.metrics else {}
+
+
+def _publish_policy(training_client, proxy: SamplingProxy, temperature: float) -> None:
+    """Save current weights and point the proxy at them (blocking)."""
+    proxy.set_policy(
+        training_client.save_weights_and_get_sampling_client(), temperature=temperature
     )
 
+
+def _save_state(config: Config, training_client, batch_idx: int) -> None:
+    checkpoint_utils.save_checkpoint(
+        training_client=training_client,
+        name=f"{batch_idx:06d}",
+        log_path=config.log_path,
+        kind="state",
+        loop_state={"batch": batch_idx},
+        ttl_seconds=config.ttl_seconds,
+    )
+
+
+def _setup(config: Config):
     tokenizer = get_tokenizer(config.model_name)
     renderer_name = model_info.get_recommended_renderer_name(config.model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer)
@@ -210,109 +301,128 @@ def main(config: Config) -> None:
         base_model=config.model_name, rank=config.lora_rank
     )
     adam = types.AdamParams(learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
+    return proxy, proxy_base, train_tasks, n_batches, training_client, adam
 
-    logger.info("Training for %d batches of %d tasks", n_batches, config.groups_per_batch)
+
+def _log_batch(ml_logger, batch_idx, metrics, datums, lag, t0):
+    metrics = {**metrics, "progress/batch": batch_idx, "time/total": time.time() - t0}
+    if lag is not None:
+        metrics["off_policy/lag_batches"] = float(lag)
+    ml_logger.log_metrics(metrics, step=batch_idx)
+    logger.info(
+        "batch %d: pass@1=%.3f mean_reward=%.3f datums=%d%s (%.1fs)",
+        batch_idx,
+        metrics["reward/pass@1"],
+        metrics["reward/mean"],
+        len(datums),
+        f" lag={lag}" if lag is not None else "",
+        metrics["time/total"],
+    )
+
+
+def _run_sync(config, proxy, proxy_base, train_tasks, n_batches, training_client, adam, ml_logger):
+    """On-policy: sample a full batch, train on it, repeat (no overlap)."""
     for batch_idx in range(n_batches):
         t0 = time.time()
-
         if config.save_every > 0 and batch_idx > 0 and batch_idx % config.save_every == 0:
-            checkpoint_utils.save_checkpoint(
-                training_client=training_client,
-                name=f"{batch_idx:06d}",
-                log_path=config.log_path,
-                kind="state",
-                loop_state={"batch": batch_idx},
-                ttl_seconds=config.ttl_seconds,
-            )
+            _save_state(config, training_client, batch_idx)
 
-        # 1. point the proxy at the current policy.
-        sampling_client = training_client.save_weights_and_get_sampling_client()
-        proxy.set_policy(sampling_client, temperature=config.temperature)
+        _publish_policy(training_client, proxy, config.temperature)
         proxy.reset_captures()
-
-        # 2. trigger rollouts through the app. Cycle through the task pool so a modest
-        # set of distinct tasks can support many batches.
-        batch_tasks = [
-            train_tasks[(batch_idx * config.groups_per_batch + j) % len(train_tasks)]
-            for j in range(config.groups_per_batch)
-        ]
-        rollout_results = asyncio.run(
-            _run_batch_rollouts(config, batch_tasks, batch_idx, proxy_base)
-        )
-
-        # 3. collect captured tokens.
+        batch_tasks = _batch_tasks(config, train_tasks, batch_idx)
+        rollout_results = asyncio.run(_run_batch_rollouts(config, batch_tasks, batch_idx, proxy_base))
         captures = proxy.pop_captures()
 
-        # 4. grade + GRPO advantages within each task's group; 5. build datums.
-        datums: list[types.Datum] = []
-        rewards_all: list[float] = []
-        correct_all: list[float] = []
-        rollout_log: list[dict] = []
-        for ti, task in enumerate(batch_tasks):
-            rewards_g: list[float] = []
-            infos_g: list[dict] = []
-            rids: list[str] = []
-            for g in range(config.group_size):
-                rid = f"{batch_idx}-{ti}-{g}"
-                program, transcript = rollout_results.get(rid, ("", []))
-                reward, info = shaped_reward(program, task)
-                rewards_g.append(reward)
-                infos_g.append(info)
-                rids.append(rid)
-                rollout_log.append(
-                    {
-                        "family": task.family,
-                        "name": f"{task.name}#g{g}",
-                        "prompt": task.prompt,
-                        "expect": "; ".join(f"solve({a})={e}" for a, e in task.tests),
-                        "program": program,
-                        "correct": bool(info["correct"]),
-                        "reward": reward,
-                        "transcript": transcript,
-                    }
-                )
-            mean_r = sum(rewards_g) / len(rewards_g)
-            rewards_all.extend(rewards_g)
-            correct_all.extend(float(i["correct"]) for i in infos_g)
-            if all(r == mean_r for r in rewards_g):
-                continue  # zero advantage everywhere; nothing to learn from this group
-            for g, rid in enumerate(rids):
-                datums.extend(_build_datums(captures.get(rid, []), rewards_g[g] - mean_r))
-
-        # Log every rollout this batch so you can watch the model learn the syntax.
-        if config.log_rollouts_every > 0 and batch_idx % config.log_rollouts_every == 0:
-            rollout_log.sort(key=lambda r: (r["family"], r["name"]))
-            html_path = os.path.join(config.log_path, f"rollouts_step{batch_idx:06d}.html")
-            log_rollouts_html(html_path, config.model_name, rollout_log)
-
-        # 6. optimizer step.
-        metrics: dict[str, float] = {
-            "progress/batch": batch_idx,
-            "reward/mean": sum(rewards_all) / max(len(rewards_all), 1),
-            "reward/pass@1": sum(correct_all) / max(len(correct_all), 1),
-            "data/num_datums": len(datums),
-            "data/num_rollouts": len(rewards_all),
-        }
+        datums, metrics, rollout_log = _grade_and_build(
+            config, batch_tasks, batch_idx, rollout_results, captures
+        )
+        _maybe_log_rollouts(config, batch_idx, rollout_log)
         if datums:
-            fwd = training_client.forward_backward(datums, loss_fn="importance_sampling")
-            opt = training_client.optim_step(adam)
-            fwd.result()
-            opt_result = opt.result()
-            if opt_result.metrics:
-                metrics.update(opt_result.metrics)
+            metrics.update(_train_step(training_client, datums, adam))
         else:
             logger.warning("batch %d: no datums (all groups zero-advantage)", batch_idx)
+        _log_batch(ml_logger, batch_idx, metrics, datums, None, t0)
 
-        metrics["time/total"] = time.time() - t0
-        ml_logger.log_metrics(metrics, step=batch_idx)
-        logger.info(
-            "batch %d: pass@1=%.3f mean_reward=%.3f datums=%d (%.1fs)",
-            batch_idx,
-            metrics["reward/pass@1"],
-            metrics["reward/mean"],
-            len(datums),
-            metrics["time/total"],
-        )
+
+async def _run_async(
+    config, proxy, proxy_base, train_tasks, n_batches, training_client, adam, ml_logger
+):
+    """Off-policy: a producer keeps sampling at the current policy while the trainer steps
+    in a thread, bounded to `max_steps_off_policy` batches of lookahead. The captured
+    sampling logprobs + importance_sampling loss correct for the staleness."""
+    max_off = config.max_steps_off_policy or 0
+    lookahead = asyncio.Semaphore(max_off + 1)
+    queue: asyncio.Queue = asyncio.Queue()
+    counters = {"produced": 0, "trained": 0}
+
+    await asyncio.to_thread(_publish_policy, training_client, proxy, config.temperature)
+
+    async def producer():
+        for batch_idx in range(n_batches):
+            await lookahead.acquire()  # block if too far ahead of the trainer
+            batch_tasks = _batch_tasks(config, train_tasks, batch_idx)
+            results = await _run_batch_rollouts(config, batch_tasks, batch_idx, proxy_base)
+            ids = [
+                f"{batch_idx}-{ti}-{g}"
+                for ti in range(len(batch_tasks))
+                for g in range(config.group_size)
+            ]
+            captures = proxy.pop_captures(ids=ids)
+            lag = counters["produced"] - counters["trained"]
+            await queue.put((batch_idx, batch_tasks, results, captures, lag))
+            counters["produced"] += 1
+        await queue.put(None)
+
+    async def consumer():
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            batch_idx, batch_tasks, results, captures, lag = item
+            t0 = time.time()
+            if config.save_every > 0 and batch_idx > 0 and batch_idx % config.save_every == 0:
+                await asyncio.to_thread(_save_state, config, training_client, batch_idx)
+
+            datums, metrics, rollout_log = _grade_and_build(
+                config, batch_tasks, batch_idx, results, captures
+            )
+            _maybe_log_rollouts(config, batch_idx, rollout_log)
+            if datums:
+                metrics.update(await asyncio.to_thread(_train_step, training_client, datums, adam))
+            else:
+                logger.warning("batch %d: no datums (all groups zero-advantage)", batch_idx)
+            # Publish fresher weights for subsequent rollouts.
+            await asyncio.to_thread(_publish_policy, training_client, proxy, config.temperature)
+            counters["trained"] += 1
+            lookahead.release()
+            _log_batch(ml_logger, batch_idx, metrics, datums, lag, t0)
+
+    await asyncio.gather(producer(), consumer())
+
+
+def main(config: Config) -> None:
+    ml_logger = ml_log.setup_logging(
+        log_dir=config.log_path,
+        wandb_project=None,
+        wandb_name=None,
+        config=config,
+        do_configure_logging_module=True,
+    )
+    proxy, proxy_base, train_tasks, n_batches, training_client, adam = _setup(config)
+
+    mode = "async off-policy" if (config.max_steps_off_policy or 0) > 0 else "on-policy"
+    logger.info(
+        "Training %d batches of %d tasks (%s, max_steps_off_policy=%s)",
+        n_batches,
+        config.groups_per_batch,
+        mode,
+        config.max_steps_off_policy,
+    )
+    args = (config, proxy, proxy_base, train_tasks, n_batches, training_client, adam, ml_logger)
+    if (config.max_steps_off_policy or 0) > 0:
+        asyncio.run(_run_async(*args))
+    else:
+        _run_sync(*args)
 
     checkpoint_utils.save_checkpoint(
         training_client=training_client,
