@@ -131,7 +131,7 @@ async def _main(args: argparse.Namespace) -> None:
                     "family": task.family,
                     "name": task.name,
                     "prompt": task.prompt,
-                    "expect": task.expect,
+                    "expect": "; ".join(f"solve({a})={e}" for a, e in task.tests),
                     "program": program,
                     "correct": bool(info["correct"]),
                     "reward": reward,

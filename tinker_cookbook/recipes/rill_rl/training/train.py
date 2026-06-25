@@ -264,7 +264,7 @@ def main(config: Config) -> None:
                         "family": task.family,
                         "name": f"{task.name}#g{g}",
                         "prompt": task.prompt,
-                        "expect": task.expect,
+                        "expect": "; ".join(f"solve({a})={e}" for a, e in task.tests),
                         "program": program,
                         "correct": bool(info["correct"]),
                         "reward": reward,

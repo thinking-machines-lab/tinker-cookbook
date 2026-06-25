@@ -6,8 +6,8 @@ the next experiment.
 
 | # | Date | Model | Reward design | Held-out pass@1 | Verdict |
 |---|------|-------|---------------|-----------------|---------|
-| [1](./experiment_1/) | 2026-06-25 | Qwen3.5-4B | output-match on fixed-input tasks | 0.10 → 0.97 | reward-hacked (constant emits) |
-| [2](./experiment_2/) | _pending_ | Qwen3.5-4B | output-match on **hidden inputs** (`solve(...)`) | _pending_ | _pending_ |
+| [1](./experiment_1/) | 2026-06-25 | Qwen3.5-4B | output-match on fixed-input tasks | 0.10 → 0.97 | reward-hacked (98% constant emits) |
+| [2](./experiment_2/) | 2026-06-25 | Qwen3.5-4B | `solve(...)` graded on **hidden inputs** | 0.20 → 0.55 | hack fixed; writes real RILL (0% constants) |
 
 ## How this is organized
 

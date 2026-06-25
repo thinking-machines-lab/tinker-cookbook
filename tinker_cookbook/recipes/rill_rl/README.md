@@ -97,38 +97,32 @@ from step 1. Same app, same harness, head-to-head numbers.
 
 ## Results
 
-Measured on the held-out families (`gcd`, `nth_fib`, `palindrome`, n=120; temperature 1.0,
-single sample, up to 3 turns of interpreter self-correction). The base model barely handles
-the OOD language; 30 GRPO steps take it to near-perfect, and the gains transfer to families
-it never trained on.
+Two experiments so far; the full running record (config, rollouts, takeaways) is the
+[logbook in `results/`](./results/). `Qwen/Qwen3.5-4B`, 30 GRPO steps, held-out disjoint
+families, temperature 1.0.
 
-| Model | pass@1 (held-out families) | mean shaped reward |
-|-------|----------------------------|--------------------|
-| Frontier baseline (`gpt-5.5`)       | _pending an API key_ | _pending_ |
-| `Qwen/Qwen3.5-4B` (before training) | 0.100 | 0.270 |
-| `Qwen/Qwen3.5-4B` (after 30 steps)  | **0.967** | **0.979** |
+**Experiment 1 — output-match reward.** Held-out pass@1 0.10 → 0.97 — but the policy
+**reward-hacked**: 98% of trained completions are hardcoded constant emits (`emit 1`,
+`emit "yes"`). Each task's inputs were fixed in the prompt and the reward only checked
+output, so printing the literal answer was the cheapest win. Not learned-to-code.
+([`results/experiment_1/`](./results/experiment_1/))
 
-Per-family pass@1, before → after:
+**Experiment 2 — grade `solve(...)` on hidden inputs.** Tasks now ask for a function and
+the grader runs it on inputs the model never sees, so a constant can't win.
 
-| Family | before | after |
-|--------|--------|-------|
-| `gcd` (n=60)        | 0.100 | 1.000 |
-| `nth_fib` (n=30)    | 0.133 | 0.867 |
-| `palindrome` (n=30) | 0.067 | 1.000 |
+| `Qwen/Qwen3.5-4B` | held-out pass@1 | mean reward | trained programs that are real functions |
+|---|---|---|---|
+| before training | 0.200 | 0.340 | — |
+| after 30 steps  | **0.550** | **0.671** | **20/20** (0 constant emits) |
 
-Training config for the "after" row: `group_size=8`, `groups_per_batch=8`, 30 batches,
-`learning_rate=4e-5`, `lora_rank=32`, `max_turns=2`. The training metric climbed from
-pass@1 ≈ 0.41 (first 5 batches) to ≈ 0.98 (last 5).
+Lower than Experiment 1's *fake* 0.97 because it now measures generalizing programs, not
+memorized literals. Per-family before → after: `factorial` 0.75→1.00, `palindrome`
+0.00→1.00, `gcd` 0.25→0.50, `nth_fib` 0.00→0.25, `reverse_text` 0.00→0.00 (honest weak
+spots). The model genuinely learned RILL syntax — e.g. it switched from an invalid
+`c = chars(w)` to a correct `chars(w) -> c` with `w @ i` indexing.
+([`results/experiment_2/`](./results/experiment_2/))
 
-> **Caveat — the policy reward-hacked (Experiment 1).** That 0.97 is *correct output*, not
-> *learned to code*. Inspecting the rollouts
-> ([`results/experiment_1/sample_rollouts.md`](./results/experiment_1/sample_rollouts.md)),
-> 98% of trained completions are hardcoded constant emits (`emit 1`, `emit "yes"`): the
-> model computes the answer in its reasoning and prints the literal. Each task is a single
-> fixed instance with its inputs in the prompt and the reward only checks output, so
-> emitting the constant is the cheapest win. The fix (grade a `solve(...)` against hidden
-> inputs) is Experiment 2. The full running record is the logbook in
-> [`results/`](./results/).
+The frontier baseline (`gpt-5.5`) row is still _pending an API key_.
 
 ## Files
 
