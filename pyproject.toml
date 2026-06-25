@@ -47,6 +47,20 @@ math-rl = [
     "pylatexenc>=2.0",
     "sympy>=1.12.0",
 ]
+# Standalone production agent app (chat agent + UI). No tinker.
+rill-agent-app = [
+    "lark>=1.1.0",
+    "openai>=1.0.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+]
+# RL post-training: runs the sampling proxy and drives the app over HTTP.
+rill-rl = [
+    "lark>=1.1.0",
+    "httpx>=0.27.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+]
 modal = [
     "modal>=1.0.0",
 ]
@@ -128,6 +142,8 @@ eval = [
 all = [
     "tinker_cookbook[eval]",
     "tinker_cookbook[math-rl]",
+    "tinker_cookbook[rill-rl]",
+    "tinker_cookbook[rill-agent-app]",
     "tinker_cookbook[modal]",
     "tinker_cookbook[multiplayer-rl]",
     "tinker_cookbook[vector-search]",
@@ -170,6 +186,8 @@ line-length = 100
 exclude = [
     # Vendored from HuggingFace, kept identical to upstream
     "kimi-k2.5-hf-tokenizer/tool_declaration_ts.py",
+    # Vendored RILL interpreter; the language spec, kept verbatim
+    "tinker_cookbook/recipes/rill_rl/agent_app/rill_lang/interp.py",
 ]
 
 [tool.ruff.lint]
