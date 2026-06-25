@@ -26,6 +26,8 @@ Functions are hoisted, so definition order doesn't matter.
 - Booleans / null: `yes`, `no`, `void`.
 - Logical operators: `both` (and), `either` (or), `flip` (not).
 - Indexing: `xs @ i` reads element i of a list or text (0-based).
+- Print: `emit EXPR` is program output. `trace EXPR` prints to a separate debug channel \
+(not counted as program output) for debugging.
 - Comments: `~` to end of line.
 
 # Operators and types

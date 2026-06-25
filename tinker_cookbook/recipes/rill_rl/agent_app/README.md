@@ -26,6 +26,9 @@ request it gets before the next attempt.
 ## Endpoints
 
 - `GET /` — the web UI.
+- `GET /playground` — a RILL interpreter/REPL page for debugging programs (run a program,
+  see `emit` output, `trace` debug output, errors, and step count). Backed by
+  `POST /api/run_rill`.
 - `GET /api/examples` — demo task prompts.
 - `POST /solve` — run the agent on one task; returns the final program, its interpreter
   output, whether it ran cleanly, and the turn count. Accepts a per-request model backend

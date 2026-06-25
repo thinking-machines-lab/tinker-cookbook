@@ -41,6 +41,7 @@ class Result:
     output: str
     error: str | None
     steps: int
+    trace: str = ""  # `trace` debug output, separate from `emit` program output
 
 
 class _Func:
@@ -77,6 +78,7 @@ class _Env:
 class Interpreter:
     def __init__(self, max_steps: int):
         self.out: list[str] = []
+        self.trace: list[str] = []  # `trace` debug output (not program output)
         self.steps = 0
         self.max_steps = max_steps
 
@@ -108,6 +110,9 @@ class Interpreter:
 
         elif kind == "emit_stmt":
             self.out.append(_to_str(self._eval(node.children[0], env)))
+
+        elif kind == "trace_stmt":
+            self.trace.append(_to_str(self._eval(node.children[0], env)))
 
         elif kind == "expr_stmt":
             self._eval(node.children[0], env)
@@ -438,6 +443,7 @@ def run_rill(src: str, *, max_steps: int = 100_000) -> Result:
         return Result(ok=False, output="", error=f"parse:{_oneline(e)}", steps=0)
 
     interp = Interpreter(max_steps=max_steps)
+    _trace = lambda: "\n".join(interp.trace)  # noqa: E731
     try:
         interp.run(tree)
     except _Give:
@@ -445,16 +451,16 @@ def run_rill(src: str, *, max_steps: int = 100_000) -> Result:
     except (_Halt, _Skip):
         # A stray `halt`/`skip` with no enclosing loop is a runtime error, not a crash.
         return Result(ok=False, output="\n".join(interp.out),
-                      error="runtime:halt/skip outside a loop", steps=interp.steps)
+                      error="runtime:halt/skip outside a loop", steps=interp.steps, trace=_trace())
     except RillError as e:
         msg = str(e)
         cat = "budget" if "step budget" in msg else "runtime"
         return Result(ok=False, output="\n".join(interp.out),
-                      error=f"{cat}:{msg}", steps=interp.steps)
+                      error=f"{cat}:{msg}", steps=interp.steps, trace=_trace())
     except RecursionError:
         return Result(ok=False, output="\n".join(interp.out),
-                      error="runtime:call depth exceeded", steps=interp.steps)
-    return Result(ok=True, output="\n".join(interp.out), error=None, steps=interp.steps)
+                      error="runtime:call depth exceeded", steps=interp.steps, trace=_trace())
+    return Result(ok=True, output="\n".join(interp.out), error=None, steps=interp.steps, trace=_trace())
 
 
 def _oneline(e):

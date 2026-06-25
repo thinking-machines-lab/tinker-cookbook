@@ -59,6 +59,28 @@ def test_error_categories():
     assert run_rill("sustain yes { 1 -> x }", max_steps=100).error.startswith("budget:")
 
 
+def test_trace_is_separate_from_emit_output():
+    res = run_rill('trace "dbg=" + 7\nemit 42')
+    assert res.ok
+    assert res.output == "42"  # emit is program output
+    assert res.trace == "dbg=7"  # trace is a separate debug channel
+    # trace survives a later error (partial debug output preserved)
+    res2 = run_rill('trace "step1"\nemit (1 / 0)')
+    assert res2.error.startswith("runtime:") and res2.trace == "step1"
+
+
+def test_run_rill_endpoint():
+    from fastapi.testclient import TestClient
+
+    from tinker_cookbook.recipes.rill_rl.agent_app import server
+
+    client = TestClient(server.app)
+    assert client.get("/playground").status_code == 200
+    r = client.post("/api/run_rill", json={"program": 'trace "x"\nemit 1 + 2'})
+    d = r.json()
+    assert d["ok"] and d["output"] == "3" and d["trace"] == "x" and d["steps"] > 0
+
+
 def test_stray_halt_is_runtime_error_not_crash():
     # A `halt` with no enclosing loop must return a runtime error, not raise (it crashed
     # an Experiment 3 training run before this was guarded).

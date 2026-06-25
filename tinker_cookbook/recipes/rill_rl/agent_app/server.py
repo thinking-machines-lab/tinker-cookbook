@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from .agent import RillAgent
 from .examples import EXAMPLE_PROMPTS
+from .rill_lang import run_rill
 
 _STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="RILL Coding Agent")
@@ -63,6 +64,33 @@ async def index() -> FileResponse:
 @app.get("/api/examples")
 async def examples() -> dict:
     return {"prompts": EXAMPLE_PROMPTS}
+
+
+@app.get("/playground")
+async def playground() -> FileResponse:
+    """A RILL interpreter/REPL page for debugging programs."""
+    return FileResponse(_STATIC / "playground.html")
+
+
+class RunRillRequest(BaseModel):
+    program: str
+    max_steps: int = 100_000
+
+
+@app.post("/api/run_rill")
+async def run_rill_endpoint(req: RunRillRequest) -> dict:
+    """Run a RILL program through the reference interpreter (no model). For debugging."""
+    try:
+        res = run_rill(req.program, max_steps=req.max_steps)
+        return {
+            "ok": res.ok,
+            "output": res.output,
+            "trace": res.trace,
+            "error": res.error,
+            "steps": res.steps,
+        }
+    except Exception as e:
+        return {"ok": False, "output": "", "trace": "", "error": f"runtime:{type(e).__name__}", "steps": 0}
 
 
 @app.post("/solve")

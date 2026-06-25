@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RILL Playground</title>
+<style>
+  :root {
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --border:#2a313c;
+    --fg:#e6edf3; --muted:#8b949e; --accent:#7ee787; --bad:#ff7b72; --warn:#e3b341; --blue:#79c0ff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:18px; margin:0; font-weight:650; }
+  header a { color:var(--blue); text-decoration:none; font-size:14px; margin-left:auto; }
+  main { max-width:1080px; margin:0 auto; padding:24px; display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .col h2 { font-size:13px; color:var(--muted); font-weight:500; margin:0 0 8px; text-transform:uppercase; letter-spacing:.04em; }
+  textarea { width:100%; height:340px; background:var(--panel); color:var(--fg); border:1px solid var(--border);
+    border-radius:10px; padding:14px; font-family:var(--mono); font-size:13px; line-height:1.5; resize:vertical; }
+  .row { display:flex; gap:12px; align-items:center; margin:12px 0; }
+  button.run { background:var(--accent); color:#04210c; border:none; border-radius:8px; padding:9px 18px; font-weight:650; cursor:pointer; }
+  select, input { background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:7px 9px; font-size:13px; }
+  .out { background:var(--panel); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .out .head { padding:8px 14px; border-bottom:1px solid var(--border); font-size:12px; color:var(--muted); display:flex; gap:10px; align-items:center; }
+  .badge { font-family:var(--mono); font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--border); }
+  .badge.ok { color:var(--accent); border-color:#2ea04340; }
+  .badge.no { color:var(--bad); border-color:#ff7b7240; }
+  pre { margin:0; padding:14px; font-family:var(--mono); font-size:13px; white-space:pre-wrap; word-break:break-word; min-height:28px; }
+  pre.emit { color:var(--accent); } pre.trace { color:var(--warn); } pre.err { color:var(--bad); }
+  .cheat { grid-column:1 / -1; color:var(--muted); font-size:12px; font-family:var(--mono); border-top:1px solid var(--border); padding-top:12px; }
+  .cheat code { color:var(--blue); }
+</style>
+</head>
+<body>
+<header>
+  <h1>RILL Playground</h1>
+  <a href="/">&larr; back to the agent</a>
+</header>
+<main>
+  <div class="col">
+    <h2>Program</h2>
+    <textarea id="prog"></textarea>
+    <div class="row">
+      <button class="run" id="runBtn" onclick="run()">Run (Ctrl/Cmd+Enter)</button>
+      <select id="examples" onchange="loadEx()">
+        <option value="">examples…</option>
+        <option value="sum">sum 1..n with trace</option>
+        <option value="primes">primes below 30</option>
+        <option value="fizz">fizzbuzz 1..15</option>
+        <option value="solve">forge solve(n) factorial</option>
+      </select>
+    </div>
+  </div>
+  <div class="col">
+    <h2>Result</h2>
+    <div class="out">
+      <div class="head"><span id="status">idle</span><span id="steps"></span></div>
+      <div style="border-bottom:1px solid var(--border)"><div style="padding:6px 14px 0;color:var(--muted);font-size:11px">emit output</div><pre id="emit" class="emit"></pre></div>
+      <div style="border-bottom:1px solid var(--border)"><div style="padding:6px 14px 0;color:var(--muted);font-size:11px">trace (debug)</div><pre id="trace" class="trace"></pre></div>
+      <div><div style="padding:6px 14px 0;color:var(--muted);font-size:11px">error</div><pre id="err" class="err"></pre></div>
+    </div>
+  </div>
+  <div class="cheat">
+    RILL: <code>5 -> x</code> assign · <code>when/elsewhen/otherwise</code> · <code>sustain c { }</code> while ·
+    <code>walk x across xs { }</code> · <code>forge f(a) { give a }</code> · <code>emit e</code> output ·
+    <code>trace e</code> debug · <code>xs @ i</code> index · <code>=</code> equality · <code>both/either/flip</code> · <code>~</code> comment
+  </div>
+</main>
+<script>
+const EX = {
+  sum: "0 -> s\n1 -> i\nsustain i <= 10 {\n  trace \"i=\" + i\n  s + i -> s\n  i + 1 -> i\n}\nemit s",
+  primes: "forge is_prime(n) {\n  when n < 2 { give no }\n  2 -> d\n  sustain d * d <= n {\n    when n % d = 0 { give no }\n    d + 1 -> d\n  }\n  give yes\n}\nwalk k across range(2, 30) {\n  when is_prime(k) { emit k }\n}",
+  fizz: "walk n across range(1, 16) {\n  when n % 15 = 0 { emit \"fizzbuzz\" }\n  elsewhen n % 3 = 0 { emit \"fizz\" }\n  elsewhen n % 5 = 0 { emit \"buzz\" }\n  otherwise { emit n }\n}",
+  solve: "forge solve(n) {\n  1 -> p\n  1 -> i\n  sustain i <= n {\n    p * i -> p\n    i + 1 -> i\n  }\n  give p\n}\nemit solve(5)",
+};
+function loadEx() {
+  const v = document.getElementById('examples').value;
+  if (v && EX[v]) document.getElementById('prog').value = EX[v];
+}
+async function run() {
+  const btn = document.getElementById('runBtn'); btn.disabled = true;
+  document.getElementById('status').textContent = 'running…';
+  try {
+    const r = await fetch('/api/run_rill', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({program: document.getElementById('prog').value})});
+    const d = await r.json();
+    const s = document.getElementById('status');
+    s.innerHTML = d.ok ? '<span class="badge ok">ran clean</span>'
+                       : '<span class="badge no">' + (d.error ? d.error.split(':')[0] : 'error') + '</span>';
+    document.getElementById('steps').textContent = (d.steps ?? 0) + ' steps';
+    document.getElementById('emit').textContent = d.output || '(none)';
+    document.getElementById('trace').textContent = d.trace || '(none)';
+    document.getElementById('err').textContent = d.error || '(none)';
+  } catch (e) {
+    document.getElementById('err').textContent = String(e);
+  }
+  btn.disabled = false;
+}
+document.getElementById('prog').addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+});
+document.getElementById('examples').value = 'sum'; loadEx();
+</script>
+</body>
+</html>

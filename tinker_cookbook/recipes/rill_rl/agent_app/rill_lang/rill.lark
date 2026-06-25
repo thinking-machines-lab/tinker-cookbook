@@ -8,6 +8,7 @@ start: stmt*
 
 ?stmt: bind
      | emit_stmt
+     | trace_stmt
      | when_stmt
      | sustain_stmt
      | walk_stmt
@@ -20,6 +21,8 @@ start: stmt*
 // rightward binding: value flows INTO a name   (e.g.  3 + 4 -> total)
 bind:       expr "->" NAME
 emit_stmt:  "emit" expr
+// `trace` prints to a separate debug channel; it is NOT part of program output.
+trace_stmt: "trace" expr
 give_stmt:  "give" [expr]
 halt_stmt:  "halt"
 skip_stmt:  "skip"
