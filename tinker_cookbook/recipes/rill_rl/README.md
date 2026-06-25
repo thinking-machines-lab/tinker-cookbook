@@ -95,15 +95,28 @@ from step 1. Same app, same harness, head-to-head numbers.
 
 ## Results
 
-Fill these in from your runs (the eval prints exactly these). Expected shape: the base open
-model starts well below the frontier baseline; the trained model overtakes it on held-out
-families.
+Measured on the held-out families (`gcd`, `nth_fib`, `palindrome`, n=120; temperature 1.0,
+single sample, up to 3 turns of interpreter self-correction). The base model barely handles
+the OOD language; 30 GRPO steps take it to near-perfect, and the gains transfer to families
+it never trained on.
 
 | Model | pass@1 (held-out families) | mean shaped reward |
 |-------|----------------------------|--------------------|
-| Frontier baseline (`gpt-5.5`)       | _your number_ | _your number_ |
-| `Qwen/Qwen3.5-4B` (before training) | _your number_ | _your number_ |
-| `Qwen/Qwen3.5-4B` (after training)  | _your number_ | _your number_ |
+| Frontier baseline (`gpt-5.5`)       | _pending an API key_ | _pending_ |
+| `Qwen/Qwen3.5-4B` (before training) | 0.100 | 0.270 |
+| `Qwen/Qwen3.5-4B` (after 30 steps)  | **0.967** | **0.979** |
+
+Per-family pass@1, before → after:
+
+| Family | before | after |
+|--------|--------|-------|
+| `gcd` (n=60)        | 0.100 | 1.000 |
+| `nth_fib` (n=30)    | 0.133 | 0.867 |
+| `palindrome` (n=30) | 0.067 | 1.000 |
+
+Training config for the "after" row: `group_size=8`, `groups_per_batch=8`, 30 batches,
+`learning_rate=4e-5`, `lora_rank=32`, `max_turns=2`. The training metric climbed from
+pass@1 ≈ 0.41 (first 5 batches) to ≈ 0.98 (last 5).
 
 ## Files
 
