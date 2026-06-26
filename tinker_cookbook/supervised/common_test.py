@@ -81,6 +81,22 @@ def test_target_tokens_are_left_shifted():
     assert targets == [20, 30, 40]
 
 
+def test_trailing_empty_text_chunk_does_not_break_right_shift():
+    """A trailing empty text chunk should not keep the last real token in the input."""
+    model_input = tinker.ModelInput(
+        chunks=[
+            tinker.types.EncodedTextChunk(tokens=[10]),
+            tinker.types.EncodedTextChunk(tokens=[20, 30]),
+            tinker.types.EncodedTextChunk(tokens=[]),
+        ]
+    )
+    weights = torch.tensor([1.0, 1.0, 1.0])
+    datum = datum_from_model_input_weights(model_input, weights)
+
+    assert datum.model_input.length == 2
+    assert _extract_targets(datum) == [20, 30]
+
+
 def test_max_length_truncation_with_mean_reduction():
     """Truncation + 'mean' reduction should produce weights summing to 1.0."""
     model_input = _make_model_input([10, 20, 30, 40, 50, 60])

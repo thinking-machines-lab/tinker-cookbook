@@ -5,9 +5,9 @@ python -m tinker_cookbook.recipes.preference.rlhf.rlhf_pipeline
 ```
 
 There are three stages:
-1. Policy SFT stage: this stage is short, and `test/nll` should decrease from 1.99 to 1.92 in 20 steps.
-2. Reward model SFT stage: this stage is longer, and `test/nll` should drastically decrease from 7 to around 0.7 in the first 40 steps, slowly decrease to 0.6 at around step 300, and converge to around 0.55 in 600 steps. This stage needs to finish before the next stage.
-3. Policy RL stage: `test/win_rate` should increase from ~40% to ~70% in 100 steps.
+1. Policy SFT stage: this stage is short, and `test/nll` should decrease from 1.87 to 1.63 in 20 steps.
+2. Reward model SFT stage: this stage is longer, and `test/nll` should drastically decrease from 3.0 to around 0.58 in the first 40 steps, slowly decrease to 0.54 at around step 300, and converge to around 0.53 in 600 steps. This stage needs to finish before the next stage.
+3. Policy RL stage: `test/win_rate` should increase from ~46% to ~94% in 100 steps.
 
 ### Stage 1 and 2: Supervised Fine-Tuning
 

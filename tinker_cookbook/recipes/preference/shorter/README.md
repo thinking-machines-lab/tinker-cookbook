@@ -4,7 +4,7 @@
 python -m tinker_cookbook.recipes.preference.shorter.train
 ```
 
-`ac_tokens_per_turn` should drop significantly after 40 steps. The policy generates significantly shorter responses.
+`ac_tokens_per_turn` should drop significantly after 20 steps. The policy generates significantly shorter responses.
 
 ### Using the `PairwisePreferenceRLDatasetBuilder` class
 
