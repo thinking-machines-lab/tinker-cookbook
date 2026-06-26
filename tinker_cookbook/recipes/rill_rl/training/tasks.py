@@ -286,6 +286,27 @@ forge solve(n) {
     return prompt, ref, [(1,), (2,), (3,), (6,), (7,), (27,)]
 
 
+def _lucas():
+    prompt = (
+        "Define `forge solve(n)` that returns the nth Lucas number, where L(0) = 2, "
+        "L(1) = 1, and L(k) = L(k-1) + L(k-2). It is tested on hidden values of n."
+    )
+    ref = """\
+forge solve(n) {
+  2 -> a
+  1 -> b
+  0 -> i
+  sustain i < n {
+    a + b -> t
+    b -> a
+    t -> b
+    i + 1 -> i
+  }
+  give a
+}"""
+    return prompt, ref, [(0,), (1,), (2,), (5,), (7,), (10,)]
+
+
 def _adjacent_dup_count():
     prompt = (
         "Define `forge solve(w)`, where w is lowercase text, that returns how many adjacent "
@@ -507,6 +528,8 @@ def _train_specs():
     specs.append(("pow2", _pow2()))
     specs.append(("collatz_steps", _collatz_steps()))
     specs.append(("adjacent_dup_count", _adjacent_dup_count()))
+    # Experiment 5: a two-state recurrence (Lucas) — same structure as the held-out nth_fib.
+    specs.append(("lucas", _lucas()))
     return specs
 
 
