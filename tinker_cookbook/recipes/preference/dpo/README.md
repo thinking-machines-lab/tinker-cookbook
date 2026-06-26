@@ -15,7 +15,7 @@ python -m tinker_cookbook.recipes.preference.dpo.train \
 
 After 50 training steps, the final logged step should look like:
 ```
-                 Step 49
+             Step 49 (0-indexed)
 ┏━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
 ┃ Metric                ┃ Value         ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
