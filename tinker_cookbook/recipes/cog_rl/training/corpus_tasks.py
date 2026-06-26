@@ -166,10 +166,14 @@ def build_corpus_tasks(
     """
     rows = _load_rows()
     tasks: list[CogTask] = []
-    for r in rows:
-        t = _build_one(r)
-        if t is not None:
-            tasks.append(t)
+    # Many MBPP refs/tests embed unescaped regex strings; parsing/compiling them emits
+    # SyntaxWarnings that are noise here.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for r in rows:
+            t = _build_one(r)
+            if t is not None:
+                tasks.append(t)
     # Deterministic order, then shuffle by seed so train/eval split is stable per seed.
     tasks.sort(key=lambda t: t.name)
     random.Random(seed).shuffle(tasks)
