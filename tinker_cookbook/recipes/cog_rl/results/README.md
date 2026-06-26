@@ -12,6 +12,7 @@ the next experiment.
 | [4](./experiment_4/) | 2026-06-26 | Qwen3.5-4B | + 5 structure-matched train families, 60 steps | 0.25 → 0.78 | matched families lifted (list_max/palindrome 0.50→1.00); overall flat — n=4/family eval too noisy |
 | [5](./experiment_5/) | 2026-06-26 | Qwen3.5-4B | + Lucas (two-state recurrence) family, **16 samples/family eval** (n=160) | 0.275 → **0.944** | stable eval; nth_fib 0.19→0.62 (Lucas transferred); Exp-4 "regressions" were noise; 0 constants |
 | [6](./experiment_6/) | 2026-06-26 | Qwen3.5-4B | **handbook system prompt** + keyed-lookup train shapes; held-out keyed-lookup eval families | 0.600 → **0.933** | handbook alone doubled the base floor (0.275→0.600); rebuild idiom transferred to held-out `mode_count` (1.00); 0 constants |
+| [7](./experiment_7/) | 2026-06-26 | Qwen3.5-4B | **scalable corpus source**: grade Cog against MBPP's Python ref I/O; 561 train + 99 held-out, zero hand-written Cog | 0.283 → **0.364** (reward 0.467 → 0.665) | shape coverage from corpus diversity, not enumerated families; honest harder distribution (some tasks Cog-infeasible) |
 
 ## How this is organized
 
