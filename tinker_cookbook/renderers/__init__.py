@@ -122,6 +122,9 @@ def get_renderer(
 
     Args:
         name (str): Renderer name. Supported values:
+            - ``"apply_chat_template"``: Model-agnostic. Delegates rendering to
+              ``tokenizer.apply_chat_template``; works for any chat-tuned model
+              whose template is prefix-preserving for tool messages.
             - ``"role_colon"``: Simple role:content format
             - ``"llama3"``: Llama 3 chat format
             - ``"qwen3"``: Qwen3 with thinking enabled
@@ -189,6 +192,7 @@ def get_renderer(
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
+    from tinker_cookbook.renderers.apply_chat_template import TitoRenderer
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
@@ -217,7 +221,9 @@ def get_renderer(
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
 
     renderer: Renderer
-    if name == "role_colon":
+    if name == "apply_chat_template":
+        renderer = TitoRenderer(tokenizer)
+    elif name == "role_colon":
         renderer = RoleColonRenderer(tokenizer)
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
