@@ -326,7 +326,166 @@ forge solve(w) {
     return prompt, ref, [("letter",), ("aabb",), ("abc",), ("bookkeeper",), ("mississippi",)]
 
 
+# Experiment 6 additions: keyed-lookup / accumulate-by-rebuild shapes. Cog has no map/set
+# type, so these force the parallel-list and seen-list idioms the handbook teaches. They are
+# the shapes the model failed to generalize to before (e.g. "most frequent element").
+
+
+def _most_frequent():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a non-empty list of integers, that returns the "
+        "element that occurs most often. If several tie, return the one that first reaches that "
+        "count (earliest in the list). It is tested on hidden lists."
+    )
+    ref = """\
+forge index_of(xs, t) {
+  0 -> i
+  walk x across xs { when x = t { give i } i + 1 -> i }
+  give -1
+}
+forge solve(xs) {
+  [] -> keys
+  [] -> counts
+  walk it across xs {
+    index_of(keys, it) -> pos
+    when pos = -1 { push(keys, it) -> keys  push(counts, 1) -> counts }
+    otherwise {
+      [] -> nc
+      0 -> j
+      walk c across counts {
+        when j = pos { push(nc, c + 1) -> nc } otherwise { push(nc, c) -> nc }
+        j + 1 -> j
+      }
+      nc -> counts
+    }
+  }
+  head(keys) -> best
+  head(counts) -> bestc
+  0 -> k
+  walk c across counts {
+    when c > bestc { c -> bestc  keys @ k -> best }
+    k + 1 -> k
+  }
+  give best
+}"""
+    return prompt, ref, [([1, 2, 2, 3],), ([5, 5, 5, 1],), ([7],), ([4, 4, 5, 5, 5],), ([9, 1, 1],)]
+
+
+def _count_distinct():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a list of integers, that returns how many "
+        "distinct values it contains. It is tested on hidden lists."
+    )
+    ref = """\
+forge seen(xs, t) {
+  walk x across xs { when x = t { give yes } }
+  give no
+}
+forge solve(xs) {
+  [] -> u
+  walk v across xs { when flip(seen(u, v)) { push(u, v) -> u } }
+  give count(u)
+}"""
+    return prompt, ref, [([1, 2, 2, 3],), ([5, 5, 5],), ([1, 2, 3, 4],), ([7, 7, 1],), ([9],)]
+
+
+def _dedupe_join():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a list of integers, that removes duplicates "
+        "keeping the first occurrence of each value, then returns the kept values joined by "
+        "single spaces (as text). It is tested on hidden lists."
+    )
+    ref = """\
+forge seen(xs, t) {
+  walk x across xs { when x = t { give yes } }
+  give no
+}
+forge solve(xs) {
+  [] -> u
+  walk v across xs { when flip(seen(u, v)) { push(u, v) -> u } }
+  give join(u, " ")
+}"""
+    return prompt, ref, [([1, 2, 2, 3],), ([5, 5, 5],), ([1, 2, 3],), ([3, 3, 1, 1, 2],)]
+
+
+def _gcd_steps():
+    prompt = (
+        "Define `forge solve(a, b)` that returns how many division steps the Euclidean "
+        "algorithm takes on non-negative integers a and b: repeatedly replace (a, b) with "
+        "(b, a mod b), counting each step, until b is 0. It is tested on hidden pairs."
+    )
+    ref = """\
+forge solve(a, b) {
+  0 -> c
+  sustain b != 0 {
+    a % b -> r
+    b -> a
+    r -> b
+    c + 1 -> c
+  }
+  give c
+}"""
+    return prompt, ref, [(48, 36), (109, 446), (100, 75), (17, 5), (60, 24)]
+
+
 # ---- eval families (disjoint) ----
+
+
+def _mode_count():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a non-empty list of integers, that returns how "
+        "many times the most frequent element occurs (the count, not the element). It is tested "
+        "on hidden lists."
+    )
+    ref = """\
+forge index_of(xs, t) {
+  0 -> i
+  walk x across xs { when x = t { give i } i + 1 -> i }
+  give -1
+}
+forge solve(xs) {
+  [] -> keys
+  [] -> counts
+  walk it across xs {
+    index_of(keys, it) -> pos
+    when pos = -1 { push(keys, it) -> keys  push(counts, 1) -> counts }
+    otherwise {
+      [] -> nc
+      0 -> j
+      walk c across counts {
+        when j = pos { push(nc, c + 1) -> nc } otherwise { push(nc, c) -> nc }
+        j + 1 -> j
+      }
+      nc -> counts
+    }
+  }
+  0 -> best
+  walk c across counts { when c > best { c -> best } }
+  give best
+}"""
+    return prompt, ref, [([1, 2, 2, 3],), ([5, 5, 5, 1],), ([7],), ([4, 4, 5, 5, 5],), ([9, 1, 1],)]
+
+
+def _first_repeat():
+    prompt = (
+        "Define `forge solve(xs)`, where xs is a list of integers, that returns the first value "
+        "that appears more than once (the first element equal to some earlier element). If every "
+        "value is unique, return void. It is tested on hidden lists."
+    )
+    ref = """\
+forge seen(xs, t) {
+  walk x across xs { when x = t { give yes } }
+  give no
+}
+forge solve(xs) {
+  [] -> u
+  walk v across xs {
+    when seen(u, v) { give v }
+    push(u, v) -> u
+  }
+  give void
+}"""
+    return prompt, ref, [([1, 2, 2, 3],), ([1, 2, 3],), ([5, 5],), ([1, 2, 3, 1],), ([9, 8, 7],)]
 
 
 def _gcd():
@@ -534,6 +693,12 @@ def _train_specs():
     specs.append(("adjacent_dup_count", _adjacent_dup_count()))
     # Experiment 5: a two-state recurrence (Lucas) — same structure as the held-out nth_fib.
     specs.append(("lucas", _lucas()))
+    # Experiment 6: keyed-lookup / accumulate-by-rebuild shapes (the generalization gap). The
+    # held-out mode_count/first_repeat reuse these exact idioms on different tasks.
+    specs.append(("most_frequent", _most_frequent()))
+    specs.append(("count_distinct", _count_distinct()))
+    specs.append(("dedupe_join", _dedupe_join()))
+    specs.append(("gcd_steps", _gcd_steps()))
     return specs
 
 
@@ -549,6 +714,10 @@ def _eval_specs():
         ("is_sorted", _is_sorted()),
         ("count_char", _count_char()),
         ("power", _power()),
+        # Experiment 6 held-out keyed-lookup shapes: same idioms as the new train families
+        # (parallel keys/counts, seen-list), different task, to measure shape transfer.
+        ("mode_count", _mode_count()),
+        ("first_repeat", _first_repeat()),
     ]
 
 

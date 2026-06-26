@@ -80,6 +80,9 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--model", default="gpt-5.5")
     ap.add_argument("--max-turns", type=int, default=3)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument(
+        "--repeat", type=int, default=1, help="sample each task this many times (stabilizes pass@1)"
+    )
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--openai-base-url", default=None, help="per-request backend override")
     ap.add_argument("--openai-api-key", default=None)
@@ -95,6 +98,8 @@ async def _main(args: argparse.Namespace) -> None:
     _, eval_tasks = build_tasks(seed=args.seed)
     if args.limit is not None:
         eval_tasks = eval_tasks[: args.limit]
+    if args.repeat > 1:
+        eval_tasks = [t for t in eval_tasks for _ in range(args.repeat)]
 
     sem = asyncio.Semaphore(args.concurrency)
     by_family: dict[str, list[tuple[bool, float]]] = defaultdict(list)
