@@ -26,7 +26,7 @@ ar (Arabic), de (German), el (Greek), en (English), es (Spanish), fr (French), h
 
 The recipe in [`create_data.py`](create_data.py) also includes handling strategies for inputs containing code, numerical content, or multiple languages.
 
-In the example below, the same model (`Qwen/Qwen3-30B-A3B`) is used as both teacher and student, though in general they need not be identical.
+In the example below, the same model (`Qwen/Qwen3.6-35B-A3B`) is used as both teacher and student, though in general they need not be identical.
 
 ---
 
