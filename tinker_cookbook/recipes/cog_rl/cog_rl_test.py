@@ -223,3 +223,52 @@ def test_build_datums_shapes_and_advantage_placement():
     assert d0.model_input.length == len(tgt) == len(adv)
     # empty sampled sequence is skipped.
     assert _build_datums([TurnCapture([1, 2], [], [])], 0.5) == []
+
+
+# ---- corpus task pipeline (offline: pure parsing + the Cog-print adapter) ----
+
+
+def test_cog_repr_matches_interpreter_to_str():
+    from tinker_cookbook.recipes.cog_rl.agent_app.cog_lang.interp import _to_str
+    from tinker_cookbook.recipes.cog_rl.training.cog_format import cog_repr
+
+    for v in [0, 7, -3, True, False, None, "abc", "", [1, 2, 3], [], ["x", "y"], [True, None, 5]]:
+        assert cog_repr(v) == _to_str(v)
+
+
+def test_cog_literal_escapes_and_supported_filter():
+    from tinker_cookbook.recipes.cog_rl.training.cog_format import cog_args, cog_literal, supported
+
+    assert cog_literal('a"b\\c') == '"a\\"b\\\\c"'
+    assert cog_args((5, "hi", [1, 2], True)) == '5, "hi", [1, 2], yes'
+    assert supported([1, ["a", False]]) and not supported(1.5)
+    assert not supported({"a": 1}) and not supported((1, 2))
+
+
+def test_corpus_parse_assert_and_build_one():
+    from tinker_cookbook.recipes.cog_rl.training import corpus_tasks
+
+    func, params = corpus_tasks._func_def("def add(a, b):\n    return a + b")
+    assert func == "add" and params == ["a", "b"]
+    assert corpus_tasks._parse_assert("assert add(2, 3) == 5", "add") == ((2, 3), 5)
+    assert corpus_tasks._parse_assert("assert is_even(4)", "is_even") == ((4,), True)
+    assert corpus_tasks._parse_assert("assert f(x) == 5", "f") is None  # non-literal arg
+
+    row = {
+        "task_id": 1,
+        "prompt": "Write a function to add two numbers",
+        "code": "def add(a, b):\n    return a + b",
+        "test_imports": [],
+        "test_list": ["assert add(2, 3) == 5", "assert add(0, 0) == 0", "assert add(10, 2) == 12"],
+    }
+    task = corpus_tasks._build_one(row)
+    assert task is not None and task.family == "corpus" and task.name == "mbpp_1"
+    assert task.tests == (("2, 3", "5"), ("0, 0", "0"), ("10, 2", "12"))
+
+    # A float output is filtered out (Cog has no float-print contract).
+    float_row = dict(
+        row,
+        code="def add(a, b):\n    return a / b",
+        test_list=["assert add(6, 2) == 3.0", "assert add(9, 3) == 3.0"],
+    )
+    assert corpus_tasks._build_one(float_row) is None

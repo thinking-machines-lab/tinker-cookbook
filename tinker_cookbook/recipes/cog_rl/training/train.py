@@ -44,7 +44,7 @@ from tinker_cookbook.recipes.cog_rl.training import checkpoints
 from tinker_cookbook.recipes.cog_rl.training.eval import log_rollouts_html
 from tinker_cookbook.recipes.cog_rl.training.grading import shaped_reward
 from tinker_cookbook.recipes.cog_rl.training.proxy import SamplingProxy, TurnCapture
-from tinker_cookbook.recipes.cog_rl.training.tasks import CogTask, build_tasks
+from tinker_cookbook.recipes.cog_rl.training.tasks import CogTask, get_tasks
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
@@ -68,6 +68,8 @@ class Config:
     temperature: float = 1.0
     num_batches: int | None = None  # None = one pass over the training tasks
     seed: int = 0
+    # Task source: "families" (hand-authored), "corpus" (MBPP-derived), or "both".
+    task_source: str = "families"
 
     # Async off-policy RL: let the rollout producer run up to this many batches ahead of
     # the trainer (overlapping sampling with the optimizer step). 0/None = on-policy and
@@ -294,7 +296,8 @@ def _setup(config: Config):
     proxy_base = f"http://{config.proxy_host}:{config.proxy_port}"
     logger.info("Sampling proxy serving at %s; app at %s", proxy_base, config.app_url)
 
-    train_tasks, _ = build_tasks(seed=config.seed)
+    train_tasks, _ = get_tasks(config.task_source, seed=config.seed)
+    logger.info("Loaded %d training tasks from source=%s", len(train_tasks), config.task_source)
     n_batches = config.num_batches or (len(train_tasks) // config.groups_per_batch)
 
     service = tinker.ServiceClient(

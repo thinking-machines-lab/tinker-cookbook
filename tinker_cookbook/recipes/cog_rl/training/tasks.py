@@ -757,6 +757,28 @@ def build_tasks(seed: int = 0) -> tuple[list[CogTask], list[CogTask]]:
     return train, eval_
 
 
+def get_tasks(source: str = "families", seed: int = 0) -> tuple[list[CogTask], list[CogTask]]:
+    """Return (train, eval) tasks from the chosen source.
+
+    - ``families``: the hand-authored, guaranteed-Cog-solvable families (default).
+    - ``corpus``: tasks generated from the MBPP corpus, graded on the corpus's own I/O
+      (no hand-written Cog; shape coverage comes from corpus diversity). Requires the
+      ``datasets`` package and network access on first load.
+    - ``both``: the union (corpus train + family train; eval kept separate per source).
+    """
+    if source == "families":
+        return build_tasks(seed=seed)
+    from tinker_cookbook.recipes.cog_rl.training.corpus_tasks import build_corpus_tasks
+
+    if source == "corpus":
+        return build_corpus_tasks(seed=seed)
+    if source == "both":
+        ftrain, feval = build_tasks(seed=seed)
+        ctrain, ceval = build_corpus_tasks(seed=seed)
+        return ftrain + ctrain, feval + ceval
+    raise ValueError(f"unknown task source: {source!r} (want families|corpus|both)")
+
+
 if __name__ == "__main__":
     train, eval_ = build_tasks()
     print(f"train: {len(train)} tasks across {len(TRAIN_FAMILIES)} families")

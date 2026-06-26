@@ -21,7 +21,7 @@ from collections import defaultdict
 import httpx
 
 from tinker_cookbook.recipes.cog_rl.training.grading import shaped_reward
-from tinker_cookbook.recipes.cog_rl.training.tasks import build_tasks
+from tinker_cookbook.recipes.cog_rl.training.tasks import get_tasks
 from tinker_cookbook.utils import logtree
 
 
@@ -77,6 +77,7 @@ def log_rollouts_html(path: str, model: str, rollouts: list[dict]) -> None:
 def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Score the Cog agent app on held-out tasks.")
     ap.add_argument("--app-url", default="http://127.0.0.1:8000")
+    ap.add_argument("--task-source", default="families", help="families | corpus | both")
     ap.add_argument("--model", default="gpt-5.5")
     ap.add_argument("--max-turns", type=int, default=3)
     ap.add_argument("--limit", type=int, default=None)
@@ -95,7 +96,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _main(args: argparse.Namespace) -> None:
-    _, eval_tasks = build_tasks(seed=args.seed)
+    _, eval_tasks = get_tasks(args.task_source, seed=args.seed)
     if args.limit is not None:
         eval_tasks = eval_tasks[: args.limit]
     if args.repeat > 1:

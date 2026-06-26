@@ -60,6 +60,7 @@ cog-rl = [
     "httpx>=0.27.0",
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
+    "datasets>=2.14.0",  # corpus task source (MBPP-derived tasks)
 ]
 modal = [
     "modal>=1.0.0",
