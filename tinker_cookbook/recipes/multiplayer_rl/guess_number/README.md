@@ -4,7 +4,7 @@
 python -m tinker_cookbook.recipes.multiplayer_rl.guess_number.train
 ```
 
-The `test/env/all/reward/total` should increase from ~40% to >=50% in 20 steps.
+The `test/env/all/reward/total` should increase from roughly 0 (slightly negative at first, while the model learns the answer format) to >=80% within 20 steps.
 
 ### Background: Guess the Number
 
