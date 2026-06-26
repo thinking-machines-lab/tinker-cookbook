@@ -155,6 +155,16 @@ sampler never ran ahead (`lag` stayed 0) — i.e. effectively on-policy. The sta
 would engage with a slower trainer or longer generations.
 ([`results/experiment_3/`](./results/experiment_3/))
 
+**Experiment 4 — enrich the train mix for the lagging families.** Added 5 structure-matched
+train families (list reduce, accumulate/while-with-branch, two-index text scan; eval still
+disjoint), 60 steps. The matched held-out families lifted — `list_max` 0.50→**1.00**,
+`palindrome` 0.50→**1.00**, `lcm` 0.50→**0.75**, `is_sorted` 0.75→**1.00** — and mean reward
+rose 0.838→**0.904**, but overall pass@1 was flat (0.75→**0.775**): the held-out set is only
+n=4/family, so unrelated families swing within noise (and `nth_fib` stayed hardest). Lesson:
+structure-matched data transfers to matched structure, but read per-family deltas at n=4
+with caution — a bigger eval is the real next step.
+([`results/experiment_4/`](./results/experiment_4/))
+
 The frontier baseline (`gpt-5.5`) row is still _pending an API key_.
 
 ## Files
