@@ -165,6 +165,14 @@ structure-matched data transfers to matched structure, but read per-family delta
 with caution — a bigger eval is the real next step.
 ([`results/experiment_4/`](./results/experiment_4/))
 
+**Experiment 5 — two-state recurrence family + a stable (16-sample) eval.** Added a `lucas`
+train family (same two-state recurrence as the held-out `nth_fib`, different seeds) and
+re-measured at 16 samples/family (n=160). On the stable eval, **overall pass@1 0.275 →
+0.944** (mean reward 0.419 → 0.974), with every completion a real `solve(...)` (0 constants).
+`nth_fib` moved 0.19 → 0.62 (the matched recurrence transferred; still the hardest), and the
+Exp-4 "regressions" (`gcd`, `power`, `reverse_text`) turned out to be n=4 noise — all 0.94–1.00
+here. This is the recipe's headline result. ([`results/experiment_5/`](./results/experiment_5/))
+
 The frontier baseline (`gpt-5.5`) row is still _pending an API key_.
 
 ## Files
