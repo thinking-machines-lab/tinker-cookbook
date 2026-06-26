@@ -1,7 +1,0 @@
-~ classic, in RILL idiom
-walk n across range(1, 16) {
-  when n % 15 = 0 { emit "fizzbuzz" }
-  elsewhen n % 3 = 0 { emit "fizz" }
-  elsewhen n % 5 = 0 { emit "buzz" }
-  otherwise { emit n }
-}
