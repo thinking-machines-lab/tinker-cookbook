@@ -70,6 +70,9 @@ class Config:
     seed: int = 0
     # Task source: "families" (hand-authored), "corpus" (MBPP-derived), or "both".
     task_source: str = "families"
+    # Optional warm-start: a tinker://.../weights/... state path (e.g. an SFT checkpoint) to
+    # continue GRPO from, instead of a fresh LoRA on the base model.
+    init_state_path: str | None = None
 
     # Async off-policy RL: let the rollout producer run up to this many batches ahead of
     # the trainer (overlapping sampling with the optimizer step). 0/None = on-policy and
@@ -310,9 +313,16 @@ def _setup(config: Config):
     if config.project_id:
         run_meta[checkpoints.PROJECT_TAG] = config.project_id
         run_meta[checkpoints.LABEL_TAG] = config.run_label or f"cog-{n_batches}b"
-    training_client = service.create_lora_training_client(
-        base_model=config.model_name, rank=config.lora_rank, user_metadata=run_meta or None
-    )
+    if config.init_state_path:
+        # GRPO warm-start: continue from an SFT (or prior) checkpoint instead of base.
+        logger.info("Warm-starting training client from %s", config.init_state_path)
+        training_client = service.create_training_client_from_state(
+            config.init_state_path, user_metadata=run_meta or None
+        )
+    else:
+        training_client = service.create_lora_training_client(
+            base_model=config.model_name, rank=config.lora_rank, user_metadata=run_meta or None
+        )
     adam = types.AdamParams(learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
     return proxy, proxy_base, train_tasks, n_batches, training_client, adam
 
