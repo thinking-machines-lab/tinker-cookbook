@@ -1,9 +1,10 @@
-"""SFT warm-start on verified gold Cog solutions (Experiment 8: distill, then GRPO).
+"""SFT warm-start on verified gold Cog solutions (Experiment 8: self-distill, then GRPO).
 
-The gold solutions come from ``curate.py`` (programs that passed the hidden tests, harvested
-from a strong model like gpt-5.5). Supervised fine-tuning on them teaches the OOD surface
-syntax directly, which is what GRPO otherwise spends many steps merely discovering. After
-this, run ``train.py`` with ``init_state_path=<this checkpoint>`` to GRPO from the warm start.
+The gold solutions come from ``curate.py`` — programs the *open model itself* produced and the
+interpreter verified against the hidden tests (rejection-sampling self-distillation, no external
+model). Supervised fine-tuning on them teaches the OOD surface syntax directly, which is what
+GRPO otherwise spends many steps merely discovering. After this, run ``train.py`` with
+``init_state_path=<this checkpoint>`` to GRPO from the warm start.
 
     python -m tinker_cookbook.recipes.cog_rl.training.sft \\
         --gold /tmp/dylan/cog_gold_gpt55.jsonl --project <id> --label exp8-sft

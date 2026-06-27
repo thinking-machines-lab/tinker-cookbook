@@ -1,14 +1,23 @@
-"""Harvest verified gold Cog solutions from an agent, for SFT warm-start + feasibility filter.
+"""Harvest verified gold Cog solutions for SFT warm-start + feasibility filter.
 
-Runs the agent app (any backend, e.g. gpt-5.5) over corpus tasks ``n`` times each, grades
-every attempt against the task's hidden tests with the *same* grader training uses, and keeps
-the first program that passes. A task with >= 1 passing attempt is "Cog-feasible"; its passing
-program is a gold solution. This both filters the corpus to expressible problems and yields a
-supervised dataset, with no hand-written Cog.
+This is **self-distillation** (rejection-sampling fine-tuning / STaR / expert iteration): the
+*open model we are training* generates the candidate solutions, and the interpreter + hidden
+tests decide which to keep. No external/frontier model is involved — the verifier is what makes
+a kept solution trustworthy, not the source.
 
+Runs the agent app (pointed at the open policy via the sampling proxy) over corpus tasks ``n``
+times each, grades every attempt against the task's hidden tests with the *same* grader training
+uses, and keeps the first program that passes. A task with >= 1 passing attempt is "Cog-feasible";
+its passing program is a gold solution. This both filters the corpus to expressible problems and
+yields a supervised dataset, with no hand-written Cog. Each RL round raises the solve rate, which
+yields more gold, which warm-starts the next round (the expert-iteration loop).
+
+    # serve the current best checkpoint, then harvest from it
     python -m tinker_cookbook.recipes.cog_rl.training.curate \\
-        --app-url http://127.0.0.1:8260 --model gpt-5.5 --attempts 3 \\
-        --out /tmp/dylan/cog_gold.jsonl
+        --app-url http://127.0.0.1:8250 --model exp7 --attempts 6 \\
+        --out /tmp/dylan/cog_gold_self.jsonl
+
+(``--model`` is just the label the app forwards; behind the proxy it samples the served policy.)
 
 Output JSONL rows: ``{"name", "family", "prompt", "program"}`` (one per solved task).
 """
