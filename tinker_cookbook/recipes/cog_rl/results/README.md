@@ -13,6 +13,7 @@ the next experiment.
 | [5](./experiment_5/) | 2026-06-26 | Qwen3.5-4B | + Lucas (two-state recurrence) family, **16 samples/family eval** (n=160) | 0.275 → **0.944** | stable eval; nth_fib 0.19→0.62 (Lucas transferred); Exp-4 "regressions" were noise; 0 constants |
 | [6](./experiment_6/) | 2026-06-26 | Qwen3.5-4B | **handbook system prompt** + keyed-lookup train shapes; held-out keyed-lookup eval families | 0.600 → **0.933** | handbook alone doubled the base floor (0.275→0.600); rebuild idiom transferred to held-out `mode_count` (1.00); 0 constants |
 | [7](./experiment_7/) | 2026-06-26 | Qwen3.5-4B | **scalable corpus source**: grade Cog against MBPP's Python ref I/O; 561 train + 99 held-out, zero hand-written Cog | 0.283 → **0.364** (reward 0.467 → 0.665) | shape coverage from corpus diversity, not enumerated families; honest harder distribution (some tasks Cog-infeasible) |
+| [8](./experiment_8/) | 2026-06-27 | Qwen3.5-4B | **self-distillation** (rejection-sample verified Cog from the open model itself) SFT warm-start, then GRPO; no frontier model in training | 0.283 → **0.495** (reward 0.467 → 0.708) | distill-then-RL compounds (>GRPO-only 0.364, >SFT-only 0.394); expert iteration; closes ~45% of gap to gpt-5.5 (0.751) self-contained |
 
 ## How this is organized
 
