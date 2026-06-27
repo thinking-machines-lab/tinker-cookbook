@@ -1,0 +1,13 @@
+~ emit primes below 30
+forge is_prime(n) {
+  when n < 2 { give no }
+  2 -> d
+  sustain d * d <= n {
+    when n % d = 0 { give no }
+    d + 1 -> d
+  }
+  give yes
+}
+walk k across range(2, 30) {
+  when is_prime(k) { emit k }
+}

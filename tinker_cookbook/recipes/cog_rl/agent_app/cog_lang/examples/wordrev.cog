@@ -1,0 +1,9 @@
+~ reverse the items of a list, then join with spaces
+["alpha", "beta", "gamma", "delta"] -> words
+[] -> acc
+0 -> i
+sustain i < count(words) {
+  push(acc, words @ (count(words) - 1 - i)) -> acc
+  i + 1 -> i
+}
+emit join(acc, " ")
