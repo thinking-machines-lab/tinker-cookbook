@@ -10,5 +10,5 @@
   "repository": "https://github.com/thinking-machines-lab/tinker-cookbook",
   "license": "MIT",
   "keywords": ["tinker", "fine-tuning", "rl", "sft", "dpo", "llm"],
-  "skills": "skills/"
+  "skills": "./skills/"
 }
