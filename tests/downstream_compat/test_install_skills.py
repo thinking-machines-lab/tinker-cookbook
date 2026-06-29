@@ -61,10 +61,27 @@ class TestPluginManifest:
         """plugin.json must be valid JSON with required fields."""
         data = json.loads(PLUGIN_JSON.read_text())
         assert "name" in data, "plugin.json missing 'name'"
-        assert "skills" in data, "plugin.json missing 'skills'"
-        assert data["skills"] == "skills/", (
-            f"plugin.json 'skills' should be 'skills/', got '{data['skills']}'"
-        )
+
+    def test_plugin_json_no_redundant_skills_field(self):
+        """The 'skills' field must not point at the default skills/ directory.
+
+        Claude Code auto-discovers skills from the default skills/ directory; the
+        manifest 'skills' field is only for *additional* directories and, when
+        present, must be a './'-prefixed relative path. Pointing it at the default
+        location is redundant and the bare 'skills/' value fails manifest
+        validation ("skills: Invalid input"), blocking /plugin install.
+        """
+        data = json.loads(PLUGIN_JSON.read_text())
+        if "skills" in data:
+            values = data["skills"] if isinstance(data["skills"], list) else [data["skills"]]
+            for value in values:
+                assert value not in ("skills/", "./skills/"), (
+                    f"plugin.json 'skills' redundantly points at the default skills/ "
+                    f"directory ({value!r}); remove the field and rely on auto-discovery"
+                )
+                assert value.startswith("./"), (
+                    f"plugin.json 'skills' path must be './'-prefixed, got {value!r}"
+                )
 
     def test_plugin_name_is_tinker(self):
         """Plugin name must be 'tinker' for /tinker:* namespace."""
