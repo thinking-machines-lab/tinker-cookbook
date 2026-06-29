@@ -14,20 +14,20 @@ reads). The script will not run without it.
 Usage:
     # Set the credential command (example), then run this script:
     export TINKER_CREDENTIAL_CMD="<command that prints your credential>"
-    ./tinker_login
+    ./get_access_token.py
 
     # Apply the token to your current shell:
-    eval "$(./tinker_login)"
+    eval "$(./get_access_token.py)"
 
 Tip: combine this with `copy_checkpoint.py` for cross-org checkpoint copies.
 Run it once against each org's credential to mint a source token and a
 destination token, then pass the source token to the copy script:
 
     export TINKER_CREDENTIAL_CMD="<source-org credential command>"
-    export SRC_TINKER_ACCESS_TOKEN="$(./tinker_login | cut -d= -f2-)"
+    export SRC_TINKER_ACCESS_TOKEN="$(./get_access_token.py | cut -d= -f2-)"
 
     export TINKER_CREDENTIAL_CMD="<destination-org credential command>"
-    eval "$(./tinker_login)"   # sets TINKER_API_KEY to the destination token
+    eval "$(./get_access_token.py)"   # sets TINKER_API_KEY to the destination token
 
     python -m tinker_cookbook.scripts.copy_checkpoint \\
         --source-path tinker://<run-id>:train:0/weights/<name> \\
@@ -49,7 +49,7 @@ def main() -> None:
     if not cmd:
         sys.exit(
             "Set TINKER_CREDENTIAL_CMD to a command that prints a credential, "
-            "e.g. TINKER_CREDENTIAL_CMD='<your command>' ./tinker_login"
+            "e.g. TINKER_CREDENTIAL_CMD='<your command>' ./get_access_token.py"
         )
     credential = subprocess.check_output(cmd, shell=True, text=True).strip()
     if not credential:
