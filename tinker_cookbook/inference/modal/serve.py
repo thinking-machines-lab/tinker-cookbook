@@ -1,7 +1,7 @@
 """SERVE: an OpenAI-compatible SGLang endpoint for a prepared artifact
 
-    FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal deploy serve.py   # persistent
-    FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal run    serve.py   # smoke test
+    FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal deploy -m tinker_cookbook.inference.modal.serve
+    FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal run    -m tinker_cookbook.inference.modal.serve
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import subprocess
 import time
 
 import modal
-import modal.experimental
 
 from .common import (
     HF_CACHE_PATH,
@@ -28,7 +27,7 @@ from .common import (
 )
 
 PORT = 30000
-PROXY_REGION = "us-west"
+ROUTING_REGION = "us-west"
 TARGET_INPUTS = 10
 
 FINETUNE = os.environ["FINETUNE"]
@@ -86,16 +85,19 @@ def warmup(rounds: int = 3) -> None:
         ).raise_for_status()
 
 
-@app.cls(
+@app.server(
     image=serve_image,
     gpu=CONFIG.gpu,
     volumes={ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
     secrets=[hf_secret],
+    port=PORT,
+    target_concurrency=TARGET_INPUTS,
     scaledown_window=10 * MINUTES,
     startup_timeout=20 * MINUTES,
+    exit_grace_period=15,
+    routing_region=ROUTING_REGION,
+    unauthenticated=True,
 )
-@modal.experimental.http_server(port=PORT, proxy_regions=[PROXY_REGION], exit_grace_period=15)
-@modal.concurrent(target_inputs=TARGET_INPUTS)
 class Server:
     @modal.enter()
     def start(self) -> None:
@@ -115,12 +117,11 @@ async def test(prompt: str = "What is Modal?", timeout: int = 10 * MINUTES) -> N
 
     import aiohttp
 
-    url = (await Server._experimental_get_flash_urls.aio())[0]
-    headers = {"Modal-Session-ID": "0"}
+    url = await Server.get_url.aio()
     body = {"model": FINETUNE, "messages": [{"role": "user", "content": prompt}], "stream": True}
     deadline = time.time() + timeout
 
-    async with aiohttp.ClientSession(base_url=url, headers=headers) as session:
+    async with aiohttp.ClientSession(base_url=url) as session:
         while time.time() < deadline:
             try:
                 async with session.post("/v1/chat/completions", json=body) as resp:
@@ -138,7 +139,7 @@ async def test(prompt: str = "What is Modal?", timeout: int = 10 * MINUTES) -> N
                     print()
                     return
             except aiohttp.ClientResponseError as exc:
-                if exc.status == 503: 
+                if exc.status == 503:  # cold start, no live replica yet
                     await asyncio.sleep(1)
                     continue
                 raise

@@ -48,7 +48,7 @@ math-rl = [
     "sympy>=1.12.0",
 ]
 modal = [
-    "modal>=1.0.0",
+    "modal>=1.5.1",
 ]
 multiplayer-rl = [
     "textarena>=0.7.4",
