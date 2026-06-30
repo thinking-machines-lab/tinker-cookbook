@@ -38,8 +38,10 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
     cfg.base_model: cfg
     for cfg in (
         ModelConfig("Qwen/Qwen3-8B", gpu="H100:1", tp=1, lora_serving=True),
-        ModelConfig("Qwen/Qwen3.6-35B-A3B", gpu="H100:2", tp=2, lora_serving=True),
-        # lora_serving=False forces merge mode for any model not supported
+        ModelConfig("Qwen/Qwen3.5-4B", gpu="H100:1", tp=1, lora_serving=False),
+        ModelConfig("Qwen/Qwen3.6-35B-A3B", gpu="H100:2", tp=2, lora_serving=False),
+        ModelConfig("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", gpu="H100:2", tp=2, lora_serving=False),
+        # lora_serving=False -> SGLang can't LoRA-serve this arch, so prepare merges instead
     )
 }
 
@@ -104,7 +106,7 @@ prepare_image = (
 )
 
 # Pinned SGLang image
-SGLANG_TAG = "lmsysorg/sglang:v0.5.12.post1-cu130"
+SGLANG_TAG = "lmsysorg/sglang:nightly-dev-cu13-20260629-b9b86065"
 sglang_image = (
     modal.Image.from_registry(SGLANG_TAG)
     .entrypoint([])

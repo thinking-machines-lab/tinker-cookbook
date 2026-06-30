@@ -40,6 +40,7 @@ def _builder(weights, mode: str) -> Callable[..., None]:
     image=prepare_image,
     volumes={ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
     secrets=[tinker_secret, hf_secret],
+    gpu="H100",  # merge runs the dequant/requant math on GPU (build_hf_model auto-uses cuda)
     cpu=8.0,
     memory=65536,
     timeout=60 * MINUTES,
