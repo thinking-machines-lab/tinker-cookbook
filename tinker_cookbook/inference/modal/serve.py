@@ -1,7 +1,7 @@
 """SERVE: an OpenAI-compatible SGLang endpoint for a prepared artifact
 
-    FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal deploy -m tinker_cookbook.inference.modal.serve
-    FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal run    -m tinker_cookbook.inference.modal.serve
+FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal deploy -m tinker_cookbook.inference.modal.serve
+FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal run    -m tinker_cookbook.inference.modal.serve
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ import time
 import modal
 
 from .common import (
+    ARTIFACTS_PATH,
     HF_CACHE_PATH,
     MINUTES,
-    ARTIFACTS_PATH,
     app,
     artifact_dir,
     artifacts,

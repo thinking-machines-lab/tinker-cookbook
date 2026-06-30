@@ -54,12 +54,19 @@ def artifact_dir(name: str) -> str:
 
 def sglang_command(*, model_path: str, served_name: str, tp: int, port: int) -> tuple[str, ...]:
     return (
-        "python", "-m", "sglang.launch_server",
-        "--model-path", model_path,
-        "--served-model-name", served_name,
-        "--host", "0.0.0.0",
-        "--port", str(port),
-        "--tp", str(tp),
+        "python",
+        "-m",
+        "sglang.launch_server",
+        "--model-path",
+        model_path,
+        "--served-model-name",
+        served_name,
+        "--host",
+        "0.0.0.0",
+        "--port",
+        str(port),
+        "--tp",
+        str(tp),
         "--trust-remote-code",
     )
 

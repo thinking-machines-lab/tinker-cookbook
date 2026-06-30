@@ -12,9 +12,9 @@ from __future__ import annotations
 import modal
 
 from .common import (
+    ARTIFACTS_PATH,
     HF_CACHE_PATH,
     MINUTES,
-    ARTIFACTS_PATH,
     app,
     artifact_dir,
     artifacts,
@@ -51,4 +51,6 @@ def prepare(*, tinker_path: str, base_model: str, name: str) -> str:
 def main(tinker_path: str, base_model: str, name: str) -> None:
     output_path = prepare.remote(tinker_path=tinker_path, base_model=base_model, name=name)
     print(f"\nArtifact on the tinker-artifacts Volume: {output_path}")
-    print(f"Serve it:\n  FINETUNE={name} MODEL={base_model} modal deploy -m tinker_cookbook.inference.modal.serve")
+    print(
+        f"Serve it:\n  FINETUNE={name} MODEL={base_model} modal deploy -m tinker_cookbook.inference.modal.serve"
+    )
