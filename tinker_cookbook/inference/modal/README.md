@@ -58,11 +58,6 @@ is engine-level rounding, not a model difference).
 | Qwen/Qwen3.6-35B-A3B | MoE + GDN | merge | 0.005 |
 | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 | Mamba hybrid | merge | 0.016 |
 
-SGLang can't LoRA-serve the GDN / linear-attention / Mamba architectures (the
-adapter's split `in_proj_q/k/v/z` modules aren't normalized to the fused
-`in_proj_qkvz` it expects), so those run in merge mode. `lora_serving=False` in
-the registry routes them there automatically.
-
 ## Adding a model
 
 Add a row to `MODEL_REGISTRY` in `common.py`:
