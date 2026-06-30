@@ -14,6 +14,7 @@ the next experiment.
 | [6](./experiment_6/) | 2026-06-26 | Qwen3.5-4B | **handbook system prompt** + keyed-lookup train shapes; held-out keyed-lookup eval families | 0.600 → **0.933** | handbook alone doubled the base floor (0.275→0.600); rebuild idiom transferred to held-out `mode_count` (1.00); 0 constants |
 | [7](./experiment_7/) | 2026-06-26 | Qwen3.5-4B | **scalable corpus source**: grade Cog against MBPP's Python ref I/O; 561 train + 99 held-out, zero hand-written Cog | 0.283 → **0.364** (reward 0.467 → 0.665) | shape coverage from corpus diversity, not enumerated families; honest harder distribution (some tasks Cog-infeasible) |
 | [8](./experiment_8/) | 2026-06-27 | Qwen3.5-4B | **self-distillation** (rejection-sample verified Cog from the open model itself) SFT warm-start, then GRPO; no frontier model in training | 0.283 → **0.495** (reward 0.467 → 0.708) | distill-then-RL compounds (>GRPO-only 0.364, >SFT-only 0.394); expert iteration; closes ~45% of gap to gpt-5.5 (0.751) self-contained |
+| [9](./experiment_9/) | 2026-06-30 | Qwen3.5-4B | **expert-iteration sweep** — 3 more harvest/SFT/GRPO rounds; clean repeat=5 (n=495) eval | exp8 0.503 → exp10 0.513 (within ±0.022 SE) | converged ~0.51; SFT warm-start was the win (exp7 0.374→exp8 0.503), more RL rounds insignificant; 4B is capacity-bound, 9B is the next lever |
 
 ## How this is organized
 
