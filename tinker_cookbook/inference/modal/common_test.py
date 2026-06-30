@@ -5,11 +5,16 @@ pytest.importorskip("modal")
 from tinker_cookbook.inference.modal import common
 
 
-def test_registry_resolves_and_hybrids_force_merge():
+def test_sglang_command_builds_for_registry_models():
     for cfg in common.MODEL_REGISTRY.values():
-        mode = common.resolve_mode(cfg, None)
-        assert mode == ("adapter" if cfg.lora_serving else "merge")
-        if not cfg.lora_serving:
-            # asking for adapter on a model SGLang can't LoRA-serve must fail fast
-            with pytest.raises(ValueError):
-                common.resolve_mode(cfg, "adapter")
+        argv = common.sglang_command(
+            model_path=common.artifact_dir("ft"), served_name="ft", tp=cfg.tp, port=30000
+        )
+        assert argv[:3] == ("python", "-m", "sglang.launch_server")
+        assert "--model-path" in argv and "/artifacts/ft" in argv
+        assert argv[argv.index("--tp") + 1] == str(cfg.tp)
+
+
+def test_unknown_model_raises():
+    with pytest.raises(KeyError):
+        common.model_config("nope/not-a-model")

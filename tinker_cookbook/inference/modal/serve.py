@@ -21,7 +21,6 @@ from .common import (
     artifacts,
     hf_cache,
     model_config,
-    resolve_mode,
     sglang_command,
     sglang_image,
 )
@@ -32,13 +31,9 @@ TARGET_INPUTS = 10
 
 FINETUNE = os.environ["FINETUNE"]
 MODEL = os.environ["MODEL"]
-MODE_OVERRIDE = os.environ.get("MODE") or None
 CONFIG = model_config(MODEL)
-MODE = resolve_mode(CONFIG, MODE_OVERRIDE)
 
-serve_image = sglang_image.env(
-    {"FINETUNE": FINETUNE, "MODEL": MODEL} | ({"MODE": MODE_OVERRIDE} if MODE_OVERRIDE else {})
-)
+serve_image = sglang_image.env({"FINETUNE": FINETUNE, "MODEL": MODEL})
 
 hf_secret = modal.Secret.from_name("huggingface")
 
@@ -47,14 +42,8 @@ with serve_image.imports():
 
 
 def launch_argv() -> tuple[str, ...]:
-    path = artifact_dir(FINETUNE)
-    if MODE == "adapter":  # serve base model + attach the adapter
-        return sglang_command(
-            model_path=CONFIG.base_model, served_name=FINETUNE,
-            tp=CONFIG.tp, port=PORT, lora=(FINETUNE, path),
-        )
-    return sglang_command(  # serve the merged dir directly
-        model_path=path, served_name=FINETUNE, tp=CONFIG.tp, port=PORT
+    return sglang_command(
+        model_path=artifact_dir(FINETUNE), served_name=FINETUNE, tp=CONFIG.tp, port=PORT
     )
 
 
