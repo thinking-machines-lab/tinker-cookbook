@@ -17,6 +17,8 @@ the next experiment.
 | [9](./experiment_9/) | 2026-06-30 | Qwen3.5-4B | **expert-iteration sweep** — 3 more harvest/SFT/GRPO rounds; clean repeat=5 (n=495) eval | exp8 0.503 → exp10 0.513 (within ±0.022 SE) | converged ~0.51; SFT warm-start was the win (exp7 0.374→exp8 0.503), more RL rounds insignificant; 4B is capacity-bound, 9B is the next lever |
 | [10](./experiment_10/) | 2026-06-30 | **Qwen3.5-9B** | same recipe (SFT on the 408 self-distilled gold, then GRPO) on a bigger base; repeat=5 | base 0.347 → SFT 0.519 → **SFT+GRPO 0.562** | capacity was the lever: 9B-SFT alone matches 4B's trained ceiling; GRPO has juice again on 9B (+0.043, flat on 4B); ~60% of gap to gpt-5.5 (0.751) closed, self-contained |
 
+| [11](./experiment_11/) | 2026-07-03 | **Qwen3.5-9B** | autonomous hill-climb loop: CoT-SFT(neg), OPD tuning(null), **OPD->GRPO@8e-5 chain (best)**, GRPO extension(null), +HumanEval data, test-time example+BoN (+0.14, product win) | best **0.618** (harness 0.768) | 9B trained ceiling ~0.62 = untrained 397B/Kimi-K2.6; gap to teacher is capacity; next lever is a bigger student |
+
 ## How this is organized
 
 Each `experiment_N/` directory has its own `README.md` (the logbook entry: config, the
