@@ -179,6 +179,18 @@ class TestTrainingRunStore:
             "eval_labels": [],
         }
 
+    def test_summarize_empty_run(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        summary = store.summarize()
+
+        assert not summary.has_config
+        assert summary.metric_count == 0
+        assert summary.metric_keys == []
+        assert summary.latest_metric_step is None
+        assert summary.checkpoint_count == 0
+        assert summary.latest_checkpoint_name is None
+        assert summary.iterations == []
+
     def test_read_rollouts(self, run_dir: Path) -> None:
         store = TrainingRunStore(LocalStorage(run_dir))
         rollouts = store.read_rollouts(0)

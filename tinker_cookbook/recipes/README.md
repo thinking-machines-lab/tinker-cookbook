@@ -45,3 +45,15 @@ Our examples support the following CLI arguments to log the results.
     - `{log_path}/metrics.jsonl` saves training metrics.
     - `{log_path}/checkpoints.jsonl` records all the checkpoints saved during training. You can share these checkpoints for model release, offline evaluation, etc.
   - Resuming: When using an existing `log_path`, you can either overwrite the previous run or resume training. This is particularly useful for recovering from runtime interruptions.
+
+To quickly inspect which machine-readable artifacts are available for a run,
+use `TrainingRunStore.summarize()`:
+
+```python
+from tinker_cookbook.stores.storage import LocalStorage
+from tinker_cookbook.stores.training_store import TrainingRunStore
+
+store = TrainingRunStore(LocalStorage("/path/to/log_path"))
+summary = store.summarize()
+print(summary.to_dict())
+```
