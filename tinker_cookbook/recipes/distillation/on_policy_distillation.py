@@ -36,7 +36,7 @@ from typing import Any
 import chz
 from tinker.types import LossFnType
 
-from tinker_cookbook import checkpoint_utils, cli_utils
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import (
     DistillationDatasetConfig,
@@ -60,6 +60,7 @@ class CLIConfig:
     # Teacher configuration
     teacher_model: str = "Qwen/Qwen3.5-9B"
     teacher_checkpoint: str | None = None
+    teacher_renderer_name: str | None = None
 
     # Dataset configuration
     dataset: str = "deepmath"  # Options: deepmath, tulu3
@@ -110,6 +111,12 @@ async def cli_main(cli_config: CLIConfig):
         base_url=cli_config.base_url,
     )
 
+    # Get teacher renderer name (defaults to teacher model's recommended renderer)
+    if cli_config.teacher_renderer_name is not None:
+        teacher_renderer_name = cli_config.teacher_renderer_name
+    else:
+        teacher_renderer_name = model_info.get_recommended_renderer_name(cli_config.teacher_model)
+
     # Create log path if not specified
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
@@ -157,6 +164,7 @@ async def cli_main(cli_config: CLIConfig):
         dataset_configs=[dataset_config],
         model_name=cli_config.model_name,
         renderer_name=renderer_name,
+        teacher_renderer_name=teacher_renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         kl_penalty_coef=cli_config.kl_penalty_coef,

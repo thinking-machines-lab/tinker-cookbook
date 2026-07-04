@@ -19,7 +19,7 @@ import tinker
 import torch
 from tinker.types import LossFnType
 
-from tinker_cookbook import checkpoint_utils, model_info
+from tinker_cookbook import checkpoint_utils, model_info, renderers
 from tinker_cookbook.display import colorize_example
 from tinker_cookbook.distillation.datasets import (
     CompositeDataset,
@@ -57,6 +57,8 @@ async def incorporate_kl_penalty(
     dataset_indices_D: list[int],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    teacher_renderer: renderers.Renderer | None = None,
+    tokenizer: Tokenizer | None = None,
 ) -> dict[str, float]:
     """
     Compute reverse KL between the student (log p) and the teacher model (log q), computed as
@@ -68,13 +70,59 @@ async def incorporate_kl_penalty(
         dataset_indices_D: List of dataset indices, one per datum
         kl_penalty_coef: Coefficient for KL penalty
         kl_discount_factor: Discount factor for future KL
+        teacher_renderer: Optional renderer for the teacher model. If provided, the prompt
+            will be reformatted using this renderer before computing teacher logprobs.
+        tokenizer: Optional tokenizer, required if teacher_renderer is provided.
     """
-    # Note: if your teacher has a different renderer than the student, you may want to modify
-    #       the full_sequence_inputs_D to match the teacher's renderer.
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
+    # Build full sequence inputs for teacher logprob computation
+    # If teacher_renderer is provided, reformat the prompt using the teacher's native renderer
+    # to avoid biased logprobs from format mismatch
+    full_sequence_inputs_D: list[tinker.ModelInput] = []
+    teacher_prompt_lengths_D: list[int] = []  # Track prompt length for each datum
+    for datum in data_D:
+        if teacher_renderer is not None and tokenizer is not None:
+            # Decode the student's prompt to text (only EncodedTextChunk tokens)
+            prompt_tokens: list[int] = []
+            for chunk in datum.model_input.chunks:
+                if isinstance(chunk, tinker.EncodedTextChunk):
+                    prompt_tokens.extend(chunk.tokens)
+            prompt_text = str(tokenizer.decode(prompt_tokens))
+            # Build a new prompt using the teacher's renderer
+            # Extract the user message from the prompt text (simple heuristic)
+            # The prompt text is in student's format, e.g., "User: ...\n\nAssistant:"
+            # We need to extract just the user content
+            if "User:" in prompt_text and "Assistant:" in prompt_text:
+                user_content = prompt_text.split("User:")[1].split("Assistant:")[0].strip()
+            else:
+                user_content = prompt_text
+            # Build teacher-formatted prompt
+            teacher_messages: list[renderers.Message] = [{"role": "user", "content": user_content}]
+            teacher_prompt = teacher_renderer.build_generation_prompt(teacher_messages)
+            # Count tokens in teacher prompt
+            teacher_prompt_len = sum(
+                len(chunk.tokens)
+                for chunk in teacher_prompt.chunks
+                if isinstance(chunk, tinker.EncodedTextChunk)
+            )
+            teacher_prompt_lengths_D.append(teacher_prompt_len)
+            # Append the response tokens
+            target_tokens = datum.loss_fn_inputs["target_tokens"].data
+            full_sequence = teacher_prompt.append_int(cast(int, target_tokens[-1]))
+            full_sequence_inputs_D.append(full_sequence)
+        else:
+            # Original behavior: use student's format
+            # Count tokens in student prompt
+            student_prompt_len = sum(
+                len(chunk.tokens)
+                for chunk in datum.model_input.chunks
+                if isinstance(chunk, tinker.EncodedTextChunk)
+            )
+            teacher_prompt_lengths_D.append(student_prompt_len)
+            full_sequence_inputs_D.append(
+                datum.model_input.append_int(
+                    cast(int, datum.loss_fn_inputs["target_tokens"].data[-1])
+                )
+            )
     # Compute the teacher's logprobs for each element of the batch
     # Each datum uses its corresponding teacher sampling client
     teacher_logprobs_D = await asyncio.gather(
@@ -88,12 +136,20 @@ async def incorporate_kl_penalty(
     #   - q: teacher_logprobs
     sampled_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
     float_masks = [datum.loss_fn_inputs["mask"].to_torch().float() for datum in data_D]
-    reverse_kl = [
-        (sampled_logprobs - torch.tensor(teacher_logprobs[1:])) * mask
-        for teacher_logprobs, sampled_logprobs, mask in safezip(
-            teacher_logprobs_D, sampled_logprobs_D, float_masks
-        )
-    ]
+    reverse_kl = []
+    for teacher_logprobs, sampled_logprobs, mask, teacher_prompt_len in safezip(
+        teacher_logprobs_D, sampled_logprobs_D, float_masks, teacher_prompt_lengths_D
+    ):
+        # Slice teacher logprobs to align with student's response tokens
+        # Teacher logprobs: [prompt_token_0, prompt_token_1, ..., response_token_0, ...]
+        # We want logprobs for response tokens, starting at index teacher_prompt_len
+        teacher_response_logprobs = torch.tensor(teacher_logprobs[teacher_prompt_len:])
+        # Ensure lengths match (in case of off-by-one)
+        min_len = min(len(sampled_logprobs), len(teacher_response_logprobs))
+        sampled_logprobs_aligned = sampled_logprobs[:min_len]
+        teacher_logprobs_aligned = teacher_response_logprobs[:min_len]
+        mask_aligned = mask[:min_len]
+        reverse_kl.append((sampled_logprobs_aligned - teacher_logprobs_aligned) * mask_aligned)
     # Track per-dataset KL for logging
     # dataset_idx -> (sum of KL, sum of mask)
     per_dataset_kl: dict[int, tuple[float, float]] = {}
@@ -137,6 +193,7 @@ class Config:
     model_name: str
     recipe_name: str
     renderer_name: str | None = None
+    teacher_renderer_name: str | None = None
     max_tokens: int
     temperature: float = 1.0
     compute_post_kl: bool = False
@@ -180,6 +237,7 @@ async def prepare_minibatch(
     teacher_clients: list[tinker.SamplingClient],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    teacher_renderer: renderers.Renderer | None = None,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -220,6 +278,8 @@ async def prepare_minibatch(
                 dataset_indices_D,
                 kl_penalty_coef,
                 kl_discount_factor,
+                teacher_renderer,
+                tokenizer,
             )
         metrics.update(kl_penalty_metrics)
 
@@ -238,6 +298,7 @@ async def do_train_step_and_get_sampling_client(
     trajectory_groups_P: list[TrajectoryGroup],
     dataset_indices_P: list[int],
     teacher_clients: list[tinker.SamplingClient],
+    teacher_renderer: renderers.Renderer | None = None,
     store: TrainingRunStore | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     trace.update_scope_context({"step": i_batch})
@@ -251,6 +312,7 @@ async def do_train_step_and_get_sampling_client(
         teacher_clients,
         kl_penalty_coef=config.kl_penalty_coef,
         kl_discount_factor=config.kl_discount_factor,
+        teacher_renderer=teacher_renderer,
     )
     metrics.update(prepare_minibatch_metrics)
 
@@ -293,6 +355,7 @@ async def do_sync_training(
     teacher_clients: list[tinker.SamplingClient],
     ml_logger: ml_log.Logger,
     tokenizer: Tokenizer,
+    teacher_renderer: renderers.Renderer | None = None,
 ):
     """Implements fully synchronous on-policy training"""
 
@@ -354,6 +417,7 @@ async def do_sync_training(
                 trajectory_groups_P,
                 dataset_indices_P,
                 teacher_clients,
+                teacher_renderer,
             )
 
             metrics.update(train_step_metrics)
@@ -440,6 +504,12 @@ async def main(
     # Get tokenizer from training client
     tokenizer = training_client.get_tokenizer()
 
+    # Create teacher renderer if specified
+    teacher_renderer = None
+    if config.teacher_renderer_name is not None:
+        teacher_renderer = renderers.get_renderer(config.teacher_renderer_name, tokenizer=tokenizer)
+        logger.info(f"Using teacher renderer: {config.teacher_renderer_name}")
+
     # Create datasets and teacher sampling clients from configs
     datasets = []
     teacher_clients = []
@@ -499,6 +569,7 @@ async def main(
         evaluators=evaluators,
         dataset=composite_dataset,
         teacher_clients=teacher_clients,
+        teacher_renderer=teacher_renderer,
         ml_logger=ml_logger,
         tokenizer=tokenizer,
     )

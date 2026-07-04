@@ -33,6 +33,7 @@ We observe an AIME'24 score of ~76.7% using a rank-128 LoRA after 200 steps with
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     model_name=Qwen/Qwen3.5-9B-Base \
     teacher_model=Qwen/Qwen3.5-9B \
+    teacher_renderer_name=qwen3_5 \
     load_checkpoint_path=tinker://b89f6676-49c4-53ed-9788-2e0c81a9eabf:train:0/weights/final \
     dataset=deepmath \
     learning_rate=1e-4 \
@@ -41,6 +42,8 @@ python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     max_tokens=16384 \
     wandb_project=cookbook_distillation
 ```
+
+**Important:** When the teacher model uses a different renderer than the student (e.g., `qwen3_5` for the instruct teacher vs `role_colon` for the base student), you should specify `teacher_renderer_name` to ensure the teacher computes logprobs on properly formatted input. Without this, the teacher's logprobs are biased, which can cause training instability (see [Renderer mismatch](#renderer-mismatch) below).
 
 This script can also be used to replicate the experiments in our Discussion section, after you have run RL to obtain an appropriate checkpoint for the teacher model.
 
@@ -71,6 +74,7 @@ In our experiment, we saw [IF-eval](https://huggingface.co/datasets/google/IFEva
 python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
     model_name=Qwen/Qwen3.5-9B-Base \
     teacher_model=Qwen/Qwen3.5-9B \
+    teacher_renderer_name=qwen3_5 \
     load_checkpoint_path=tinker://YOUR_SFT_INITIALIZATION \
     dataset=tulu3 \
     learning_rate=1e-4 \
@@ -128,6 +132,41 @@ python -m tinker_cookbook.recipes.distillation.on_policy_distillation_harbor_mul
 ```
 
 ## Additional details
+
+### Renderer mismatch
+
+When the student and teacher models use different renderers (e.g., `role_colon` for the base student vs `qwen3_5` for the instruct teacher), the teacher computes logprobs on input formatted for the student, not its native format. This creates a biased KL target:
+
+**Student format (role_colon):**
+```
+User: What is 2+2?
+
+Assistant: The answer is 4.
+```
+
+**Teacher format (qwen3_5):**
+```
+<|im_start|>user
+What is 2+2?<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+The answer is 4.<|im_end|>
+```
+
+The teacher was trained on the `qwen3_5` format, so its logprobs on `role_colon`-formatted input are biased. This can cause training instability, especially with large batch sizes where the model confidently converges to the biased target then overshoots.
+
+**Fix:** Specify `teacher_renderer_name` to make the teacher compute logprobs using its native renderer:
+
+```bash
+python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
+    model_name=Qwen/Qwen3.5-9B-Base \
+    teacher_model=Qwen/Qwen3.5-9B \
+    teacher_renderer_name=qwen3_5 \
+    ...
+```
 
 ### Reward calculation
 
