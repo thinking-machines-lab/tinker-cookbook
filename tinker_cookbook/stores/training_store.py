@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 _ITERATION_RE = re.compile(r"^iteration_(\d+)$")
 
 
+def _latest_int_value(records: list[dict[str, Any]], key: str) -> int | None:
+    for record in reversed(records):
+        value = record.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
 class _Unset:
     """Sentinel that survives pickle (unlike bare object())."""
 
@@ -45,6 +53,39 @@ class IterationInfo:
     has_train_rollouts: bool = False
     has_train_logtree: bool = False
     eval_labels: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RunArtifactSummary:
+    """Compact inventory of machine-readable artifacts for a training run."""
+
+    has_config: bool
+    metric_count: int
+    metric_keys: list[str]
+    latest_metric_step: int | None
+    checkpoint_count: int
+    latest_checkpoint_name: str | None
+    iterations: list[IterationInfo] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the summary to a JSON-friendly dictionary."""
+        return {
+            "has_config": self.has_config,
+            "metric_count": self.metric_count,
+            "metric_keys": self.metric_keys,
+            "latest_metric_step": self.latest_metric_step,
+            "checkpoint_count": self.checkpoint_count,
+            "latest_checkpoint_name": self.latest_checkpoint_name,
+            "iterations": [
+                {
+                    "iteration": iteration.iteration,
+                    "has_train_rollouts": iteration.has_train_rollouts,
+                    "has_train_logtree": iteration.has_train_logtree,
+                    "eval_labels": iteration.eval_labels,
+                }
+                for iteration in self.iterations
+            ],
+        }
 
 
 class TrainingRunStore:
@@ -152,6 +193,30 @@ class TrainingRunStore:
     def metric_keys(self) -> set[str]:
         """All metric keys seen so far (excluding 'step')."""
         return self._get_metrics().known_keys
+
+    def summarize(self) -> RunArtifactSummary:
+        """Return a compact inventory of artifacts available for this run.
+
+        The summary is intended for scripts, dashboards, and debugging tools
+        that need to quickly inspect a ``log_path`` without loading large
+        rollout/logtree payloads.
+        """
+        config = self.read_config()
+        metrics = self.read_metrics()
+        checkpoints = self.read_checkpoints()
+        latest_metric_step = _latest_int_value(metrics, "step")
+        latest_checkpoint_name = (
+            str(checkpoints[-1]["name"]) if checkpoints and "name" in checkpoints[-1] else None
+        )
+        return RunArtifactSummary(
+            has_config=config is not None,
+            metric_count=len(metrics),
+            metric_keys=sorted(self.metric_keys()),
+            latest_metric_step=latest_metric_step,
+            checkpoint_count=len(checkpoints),
+            latest_checkpoint_name=latest_checkpoint_name,
+            iterations=self.list_iterations(),
+        )
 
     # ── Rollouts (typed, cached) ──────────────────────────────────────
 
