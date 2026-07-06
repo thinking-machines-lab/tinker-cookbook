@@ -1,3 +1,0 @@
-round	checkpoint	gold_total	heldout_pass1	heldout_reward
-exp9	tinker://a6a75dc4-61d7-5f2b-990e-ebc86cd6c5fb:train:0/sampler_weights/final	385	0.475	0.722
-exp10	tinker://d078e04a-9a6f-51b2-9b7d-260aa22efc11:train:0/sampler_weights/final	402	0.495	0.710

@@ -1,4 +1,0 @@
-model	pass@1	mean_reward
-9b-base	0.347	0.559
-9b-sft	0.519	0.728
-9b-grpo	0.562	0.748

@@ -14,9 +14,12 @@ the next experiment.
 | [6](./experiment_6/) | 2026-06-26 | Qwen3.5-4B | **handbook system prompt** + keyed-lookup train shapes; held-out keyed-lookup eval families | 0.600 → **0.933** | handbook alone doubled the base floor (0.275→0.600); rebuild idiom transferred to held-out `mode_count` (1.00); 0 constants |
 | [7](./experiment_7/) | 2026-06-26 | Qwen3.5-4B | **scalable corpus source**: grade Cog against MBPP's Python ref I/O; 561 train + 99 held-out, zero hand-written Cog | 0.283 → **0.364** (reward 0.467 → 0.665) | shape coverage from corpus diversity, not enumerated families; honest harder distribution (some tasks Cog-infeasible) |
 | [8](./experiment_8/) | 2026-06-27 | Qwen3.5-4B | **self-distillation** (rejection-sample verified Cog from the open model itself) SFT warm-start, then GRPO; no frontier model in training | 0.283 → **0.495** (reward 0.467 → 0.708) | distill-then-RL compounds (>GRPO-only 0.364, >SFT-only 0.394); expert iteration; closes ~45% of gap to gpt-5.5 (0.751) self-contained |
-| [9](./experiment_9/) | 2026-06-30 | Qwen3.5-4B | **expert-iteration sweep** — 3 more harvest/SFT/GRPO rounds; clean repeat=5 (n=495) eval | exp8 0.503 → exp10 0.513 (within ±0.022 SE) | converged ~0.51; SFT warm-start was the win (exp7 0.374→exp8 0.503), more RL rounds insignificant; 4B is capacity-bound, 9B is the next lever |
-| [10](./experiment_10/) | 2026-06-30 | **Qwen3.5-9B** | same recipe (SFT on the 408 self-distilled gold, then GRPO) on a bigger base; repeat=5 | base 0.347 → SFT 0.519 → **SFT+GRPO 0.562** | capacity was the lever: 9B-SFT alone matches 4B's trained ceiling; GRPO has juice again on 9B (+0.043, flat on 4B); ~60% of gap to gpt-5.5 (0.751) closed, self-contained |
-| [11](./experiment_11/) | 2026-07-03 | **Qwen3.5-9B** | autonomous hill-climb loop: CoT-SFT(neg), OPD tuning(null), **OPD→GRPO@8e-5 chain (best)**, GRPO extension(null), +HumanEval data, test-time example+BoN (+0.14, product win) | best **0.618** (harness 0.768) | 9B trained ceiling ~0.62 = untrained 397B/Kimi-K2.6; gap to teacher is capacity; next lever is a bigger student |
+
+After experiment 8 the work shifted from building the recipe to mapping where the gains
+come from (model scale, distillation variants, per-method learning rates, method ordering,
+test-time technique). That phase is consolidated in **[FINDINGS.md](./FINDINGS.md)**, which
+carries the final results table (best trained 9B: 0.618 standard protocol, 0.768 with the
+example + best-of-4 harness).
 
 ## How this is organized
 
