@@ -156,13 +156,78 @@ def _load_rows() -> list[dict]:
     return rows
 
 
+def _he_description(prompt: str) -> str:
+    """Natural-language task description from a HumanEval stub: its docstring text."""
+    try:
+        tree = ast.parse(prompt)
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                doc = ast.get_docstring(node) or ""
+                # Drop doctest-style example lines; keep the prose.
+                lines = [
+                    ln.strip()
+                    for ln in doc.splitlines()
+                    if ln.strip() and not ln.strip().startswith(">>>")
+                ]
+                return " ".join(lines)
+    except SyntaxError:
+        pass
+    return ""
+
+
+def _load_humaneval_rows() -> list[dict]:
+    """HumanEval as MBPP-shaped rows: check(candidate) asserts -> test_list with the entry
+    point substituted, reference = prompt + canonical_solution, NL prompt = docstring."""
+    from datasets import load_dataset
+
+    try:
+        ds = load_dataset("openai_humaneval", split="test")
+    except Exception:
+        return []
+    rows: list[dict] = []
+    for r in ds:
+        entry = r["entry_point"]
+        desc = _he_description(r["prompt"])
+        if not desc:
+            continue
+        # Pull `assert candidate(...) == ...` lines out of check() and rename the callee.
+        tests: list[str] = []
+        try:
+            tree = ast.parse(r["test"])
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assert):
+                stmt = ast.unparse(node)
+                if "candidate(" in stmt:
+                    tests.append(stmt.replace("candidate(", f"{entry}("))
+        if len(tests) < 2:
+            continue
+        rows.append(
+            {
+                "task_id": f"he_{r['task_id'].split('/')[-1]}",
+                "prompt": desc,
+                "code": r["prompt"] + r["canonical_solution"],
+                "test_imports": [],
+                "test_list": tests,
+            }
+        )
+    return rows
+
+
 def build_corpus_tasks(
-    seed: int = 0, eval_frac: float = 0.15, max_tasks: int | None = None
+    seed: int = 0,
+    eval_frac: float = 0.15,
+    max_tasks: int | None = None,
+    include_humaneval: bool = False,
 ) -> tuple[list[CogTask], list[CogTask]]:
-    """Return (train, eval) Cog tasks generated from MBPP, split by problem.
+    """Return (train, eval) Cog tasks generated from MBPP (optionally + HumanEval), split by
+    problem.
 
     ``eval_frac`` of the usable problems are held out for eval. ``max_tasks`` caps the total
-    (after filtering) for quick runs.
+    (after filtering) for quick runs. ``include_humaneval`` appends HumanEval-derived tasks
+    to the TRAIN side only — the MBPP shuffle/split is computed first and unchanged, so the
+    held-out eval set stays identical to the MBPP-only benchmark.
     """
     rows = _load_rows()
     tasks: list[CogTask] = []
@@ -181,6 +246,12 @@ def build_corpus_tasks(
         tasks = tasks[:max_tasks]
     n_eval = max(1, int(len(tasks) * eval_frac))
     eval_, train = tasks[:n_eval], tasks[n_eval:]
+    if include_humaneval:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            he = [t for t in (_build_one(r) for r in _load_humaneval_rows()) if t is not None]
+        he.sort(key=lambda t: t.name)
+        train = train + he
     return train, eval_
 
 

@@ -772,11 +772,14 @@ def get_tasks(source: str = "families", seed: int = 0) -> tuple[list[CogTask], l
 
     if source == "corpus":
         return build_corpus_tasks(seed=seed)
+    if source == "corpus+he":
+        # MBPP train + HumanEval train; eval stays the identical MBPP-only benchmark.
+        return build_corpus_tasks(seed=seed, include_humaneval=True)
     if source == "both":
         ftrain, feval = build_tasks(seed=seed)
         ctrain, ceval = build_corpus_tasks(seed=seed)
         return ftrain + ctrain, feval + ceval
-    raise ValueError(f"unknown task source: {source!r} (want families|corpus|both)")
+    raise ValueError(f"unknown task source: {source!r} (want families|corpus|corpus+he|both)")
 
 
 if __name__ == "__main__":

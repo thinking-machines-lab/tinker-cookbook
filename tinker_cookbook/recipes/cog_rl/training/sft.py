@@ -34,11 +34,16 @@ def _datums(gold_path: str, renderer, max_length: int) -> list[types.Datum]:
     with open(gold_path) as f:
         for line in f:
             row = json.loads(line)
-            program = row["program"].strip()
+            # CoT distillation: if the harvest kept the teacher's full response (reasoning +
+            # code), train on it verbatim; otherwise wrap the bare program in a code block.
+            if row.get("response"):
+                assistant = row["response"].strip()
+            else:
+                assistant = f"```cog\n{row['program'].strip()}\n```"
             messages = [
                 {"role": "system", "content": COG_SYSTEM_PROMPT},
                 {"role": "user", "content": row["prompt"]},
-                {"role": "assistant", "content": f"```cog\n{program}\n```"},
+                {"role": "assistant", "content": assistant},
             ]
             # Single assistant message per conversation, so LAST == ALL (and this avoids the
             # sequence-extension warning for renderers without the extension property).

@@ -48,6 +48,7 @@ async def _curate(args: argparse.Namespace) -> None:
         async def one(task):
             nonlocal solved, done
             best = None
+            best_response = ""
             for _ in range(args.attempts):
                 body = {"prompt": task.prompt, "model": args.model, "max_turns": args.max_turns}
                 if args.max_completion_tokens is not None:
@@ -56,25 +57,31 @@ async def _curate(args: argparse.Namespace) -> None:
                     try:
                         resp = await http.post(f"{args.app_url}/solve", json=body)
                         resp.raise_for_status()
-                        program = resp.json().get("program", "")
+                        data = resp.json()
+                        program = data.get("program", "")
+                        transcript = data.get("transcript", [])
                     except Exception:
-                        program = ""
+                        program, transcript = "", []
                 if program:
                     _, info = shaped_reward(program, task)
                     if info["correct"]:
                         best = program
+                        # full final assistant message (reasoning + code) for CoT distillation
+                        asst = [e for e in transcript if e.get("type") == "assistant"]
+                        best_response = asst[-1].get("content", "") if asst else ""
                         break
             done += 1
             if best is not None:
                 solved += 1
-                gold.append(
-                    {
-                        "name": task.name,
-                        "family": task.family,
-                        "prompt": task.prompt,
-                        "program": best,
-                    }
-                )
+                row = {
+                    "name": task.name,
+                    "family": task.family,
+                    "prompt": task.prompt,
+                    "program": best,
+                }
+                if args.keep_response and best_response:
+                    row["response"] = best_response
+                gold.append(row)
             if done % 25 == 0 or done == len(train):
                 print(f"  ... {done}/{len(train)} ({solved} solved)")
 
@@ -96,6 +103,11 @@ def main() -> None:
     ap.add_argument("--model", default="gpt-5.5")
     ap.add_argument("--task-source", default="corpus")
     ap.add_argument("--attempts", type=int, default=3, help="samples per task; keep first pass")
+    ap.add_argument(
+        "--keep-response",
+        action="store_true",
+        help="also store the full final assistant message (reasoning + code) for CoT distillation",
+    )
     ap.add_argument("--max-turns", type=int, default=3)
     ap.add_argument("--max-completion-tokens", type=int, default=None)
     ap.add_argument("--concurrency", type=int, default=12)
