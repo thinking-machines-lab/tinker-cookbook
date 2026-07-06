@@ -156,7 +156,7 @@ class TestEvaluators:
 
 
 # ---------------------------------------------------------------------------
-# distillation.datasets (used by tibo)
+# distillation.datasets (used by downstream training code)
 # ---------------------------------------------------------------------------
 
 
