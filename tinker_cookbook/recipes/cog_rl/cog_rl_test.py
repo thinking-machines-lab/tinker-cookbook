@@ -272,3 +272,26 @@ def test_corpus_parse_assert_and_build_one():
         test_list=["assert add(6, 2) == 3.0", "assert add(9, 3) == 3.0"],
     )
     assert corpus_tasks._build_one(float_row) is None
+
+
+# ---- eval test-time protocol helpers (--show-example / --best-of) ----
+
+
+def test_eval_show_example_split_is_honest():
+    from tinker_cookbook.recipes.cog_rl.training.eval import split_visible_hidden, with_example
+
+    task = CogTask(
+        name="t",
+        family="f",
+        prompt="Define `forge solve(n)` that returns n doubled.",
+        tests=(("2", "4"), ("3", "6"), ("10", "20")),
+    )
+    shown = with_example(task)
+    assert "For example, solve(2) should output 4." in shown.prompt
+    assert shown.tests == task.tests  # prompt changes; the answer key doesn't
+
+    visible, hidden = split_visible_hidden(task)
+    assert visible.tests == (("2", "4"),)
+    assert hidden.tests == (("3", "6"), ("10", "20"))
+    # the shown example is excluded from grading, so showing it can't inflate the score
+    assert task.tests[0] not in hidden.tests

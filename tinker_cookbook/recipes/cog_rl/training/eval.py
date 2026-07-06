@@ -16,13 +16,39 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 from collections import defaultdict
 
 import httpx
 
 from tinker_cookbook.recipes.cog_rl.training.grading import shaped_reward
-from tinker_cookbook.recipes.cog_rl.training.tasks import get_tasks
+from tinker_cookbook.recipes.cog_rl.training.tasks import CogTask, get_tasks
 from tinker_cookbook.utils import logtree
+
+
+def with_example(task: CogTask) -> CogTask:
+    """The task with its first hidden test shown in the prompt as a worked example.
+
+    Showing one concrete input/output disambiguates the task semantics (the main failure
+    mode on natural-language corpus prompts) and gives the agent something to self-verify
+    against. Grading must then exclude that test — see ``split_visible_hidden``.
+    """
+    a, e = task.tests[0]
+    return dataclasses.replace(
+        task, prompt=task.prompt + f" For example, solve({a}) should output {e}."
+    )
+
+
+def split_visible_hidden(task: CogTask) -> tuple[CogTask, CogTask]:
+    """(visible-only, hidden-only) copies of ``task``, split at the first test.
+
+    The visible task is the self-verification target (the one example the model saw); the
+    hidden task is the honest grading set. Requires ``len(task.tests) >= 2``.
+    """
+    return (
+        dataclasses.replace(task, tests=(task.tests[0],)),
+        dataclasses.replace(task, tests=tuple(task.tests[1:])),
+    )
 
 
 def log_rollouts_html(path: str, model: str, rollouts: list[dict]) -> None:
@@ -84,6 +110,19 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--repeat", type=int, default=1, help="sample each task this many times (stabilizes pass@1)"
     )
+    ap.add_argument(
+        "--show-example",
+        action="store_true",
+        help="show the first test as a worked example in the prompt; grade ONLY on the "
+        "remaining hidden tests (a different, easier protocol — don't compare with default runs)",
+    )
+    ap.add_argument(
+        "--best-of",
+        type=int,
+        default=1,
+        help="with --show-example: retry /solve up to N times, keeping the first program "
+        "that passes the visible example (self-verification; hidden tests never leak)",
+    )
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--openai-base-url", default=None, help="per-request backend override")
     ap.add_argument("--openai-api-key", default=None)
@@ -96,7 +135,14 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _main(args: argparse.Namespace) -> None:
+    if args.best_of > 1 and not args.show_example:
+        raise SystemExit("--best-of needs --show-example (nothing legitimate to verify against)")
     _, eval_tasks = get_tasks(args.task_source, seed=args.seed)
+    if args.show_example:
+        n0 = len(eval_tasks)
+        eval_tasks = [t for t in eval_tasks if len(t.tests) >= 2]
+        if len(eval_tasks) < n0:
+            print(f"--show-example: dropped {n0 - len(eval_tasks)} tasks with <2 tests")
     if args.limit is not None:
         eval_tasks = eval_tasks[: args.limit]
     if args.repeat > 1:
@@ -109,9 +155,8 @@ async def _main(args: argparse.Namespace) -> None:
 
     async with httpx.AsyncClient(timeout=600.0) as http:
 
-        async def one(task):
-            nonlocal done
-            body = {"prompt": task.prompt, "model": args.model, "max_turns": args.max_turns}
+        async def solve_once(prompt: str, name: str) -> tuple[str, list]:
+            body = {"prompt": prompt, "model": args.model, "max_turns": args.max_turns}
             if args.openai_base_url:
                 body["openai_base_url"] = args.openai_base_url
             if args.openai_api_key:
@@ -120,24 +165,41 @@ async def _main(args: argparse.Namespace) -> None:
                 body["temperature"] = args.temperature
             if args.max_completion_tokens is not None:
                 body["max_completion_tokens"] = args.max_completion_tokens
-            program, transcript = "", []
+            try:
+                resp = await http.post(f"{args.app_url}/solve", json=body)
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("program", ""), data.get("transcript", [])
+            except Exception as e:
+                print(f"  rollout error on {name}: {e!r}")
+                return "", []
+
+        async def one(task):
+            nonlocal done
+            if args.show_example:
+                visible, grade_task = split_visible_hidden(task)
+                prompt = with_example(task).prompt
+            else:
+                visible, grade_task = None, task
+                prompt = task.prompt
             async with sem:
-                try:
-                    resp = await http.post(f"{args.app_url}/solve", json=body)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    program = data.get("program", "")
-                    transcript = data.get("transcript", [])
-                except Exception as e:
-                    print(f"  rollout error on {task.name}: {e!r}")
-            reward, info = shaped_reward(program, task)
+                program, transcript = await solve_once(prompt, task.name)
+                # Best-of-n with self-verification: retry until the program passes the one
+                # example the model was shown. Hidden tests are never consulted here.
+                for _ in range(args.best_of - 1):
+                    if program and shaped_reward(program, visible)[1]["correct"]:
+                        break
+                    cand, cand_tr = await solve_once(prompt, task.name)
+                    if cand:
+                        program, transcript = cand, cand_tr
+            reward, info = shaped_reward(program, grade_task)
             by_family[task.family].append((bool(info["correct"]), reward))
             rollouts.append(
                 {
                     "family": task.family,
                     "name": task.name,
-                    "prompt": task.prompt,
-                    "expect": "; ".join(f"solve({a})={e}" for a, e in task.tests),
+                    "prompt": prompt,
+                    "expect": "; ".join(f"solve({a})={e}" for a, e in grade_task.tests),
                     "program": program,
                     "correct": bool(info["correct"]),
                     "reward": reward,
@@ -154,7 +216,10 @@ async def _main(args: argparse.Namespace) -> None:
         rollouts.sort(key=lambda r: (r["family"], r["name"]))
         log_rollouts_html(args.log_html, args.model, rollouts)
 
-    print(f"\n=== Cog eval: {args.model} via {args.app_url} ===")
+    protocol = ""
+    if args.show_example:
+        protocol = f" [show-example, best-of-{args.best_of}, graded on hidden tests only]"
+    print(f"\n=== Cog eval: {args.model} via {args.app_url}{protocol} ===")
     all_rows = [row for rows in by_family.values() for row in rows]
     n = len(all_rows)
     overall_pass = sum(c for c, _ in all_rows) / max(n, 1)
