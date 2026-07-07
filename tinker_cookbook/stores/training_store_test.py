@@ -151,6 +151,46 @@ class TestTrainingRunStore:
         assert "env/all/reward/total" in keys
         assert "step" not in keys
 
+    def test_summarize_run_artifacts(self, run_dir: Path) -> None:
+        store = TrainingRunStore(LocalStorage(run_dir))
+        summary = store.summarize()
+
+        assert summary.has_config
+        assert summary.metric_count == 5
+        assert summary.metric_keys == ["env/all/reward/total", "train_mean_nll"]
+        assert summary.latest_metric_step == 4
+        assert summary.checkpoint_count == 1
+        assert summary.latest_checkpoint_name == "000004"
+        assert [iteration.iteration for iteration in summary.iterations] == [0, 2]
+        assert summary.iterations[0].has_train_rollouts
+        assert summary.iterations[0].has_train_logtree
+
+    def test_summarize_to_dict(self, run_dir: Path) -> None:
+        store = TrainingRunStore(LocalStorage(run_dir))
+        summary_dict = store.summarize().to_dict()
+
+        assert summary_dict["has_config"]
+        assert summary_dict["metric_count"] == 5
+        assert summary_dict["latest_metric_step"] == 4
+        assert summary_dict["iterations"][0] == {
+            "iteration": 0,
+            "has_train_rollouts": True,
+            "has_train_logtree": True,
+            "eval_labels": [],
+        }
+
+    def test_summarize_empty_run(self, tmp_path: Path) -> None:
+        store = TrainingRunStore(LocalStorage(tmp_path))
+        summary = store.summarize()
+
+        assert not summary.has_config
+        assert summary.metric_count == 0
+        assert summary.metric_keys == []
+        assert summary.latest_metric_step is None
+        assert summary.checkpoint_count == 0
+        assert summary.latest_checkpoint_name is None
+        assert summary.iterations == []
+
     def test_read_rollouts(self, run_dir: Path) -> None:
         store = TrainingRunStore(LocalStorage(run_dir))
         rollouts = store.read_rollouts(0)
