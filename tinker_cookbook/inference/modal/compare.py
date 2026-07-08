@@ -28,12 +28,14 @@ MAX_TOKENS = 256
 
 
 def _modal_output(url: str, model: str, prompt: str) -> str:
-    body = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.0,
-        "max_tokens": MAX_TOKENS,
-    }).encode()
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": MAX_TOKENS,
+        }
+    ).encode()
     req = urllib.request.Request(
         f"{url}/v1/chat/completions", data=body, headers={"Content-Type": "application/json"}
     )
@@ -49,7 +51,11 @@ async def compare(tinker_path: str, url: str, prompts: str = "") -> None:
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
     model, finetune = os.environ["MODEL"], os.environ["FINETUNE"]
-    questions = json.load(open(prompts)) if prompts else DEFAULT_PROMPTS
+    if prompts:
+        with open(prompts) as f:
+            questions = json.load(f)
+    else:
+        questions = DEFAULT_PROMPTS
 
     tok = get_tokenizer(model)
     rend = renderers.get_renderer(model_info.get_recommended_renderer_name(model), tok)
@@ -59,9 +65,12 @@ async def compare(tinker_path: str, url: str, prompts: str = "") -> None:
     for q in questions:
         mi = rend.build_generation_prompt([{"role": "user", "content": q}])
         sampled = await sc.sample_async(
-            mi, num_samples=1, sampling_params=tinker.SamplingParams(temperature=0.0, max_tokens=MAX_TOKENS)
+            mi,
+            num_samples=1,
+            sampling_params=tinker.SamplingParams(temperature=0.0, max_tokens=MAX_TOKENS),
         )
-        tinker_out = rend.parse_response(sampled.sequences[0].tokens)[0]["content"]
+        parsed = rend.parse_response(sampled.sequences[0].tokens)[0]
+        tinker_out = renderers.get_text_content(parsed)
         modal_out = _modal_output(url, finetune, q)
         same = tinker_out.strip() == modal_out.strip()
         disagree += not same
