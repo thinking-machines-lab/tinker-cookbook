@@ -28,6 +28,7 @@ from .common import (
 PORT = 30000
 ROUTING_REGION = "us-west"
 TARGET_INPUTS = 10
+UNAUTHENTICATED = os.environ.get("UNAUTHENTICATED") == "1"  # default: require Modal proxy auth
 
 FINETUNE = os.environ["FINETUNE"]
 MODEL = os.environ["MODEL"]
@@ -35,7 +36,8 @@ CONFIG = model_config(MODEL)
 
 serve_image = sglang_image.env({"FINETUNE": FINETUNE, "MODEL": MODEL})
 
-hf_secret = modal.Secret.from_name("huggingface")
+# Optional: only needed for gated base models. Empty token = anonymous HF access.
+hf_secret = modal.Secret.from_dict({"HF_TOKEN": os.environ.get("HF_TOKEN", "")})
 
 with serve_image.imports():
     import requests
@@ -85,7 +87,7 @@ def warmup(rounds: int = 3) -> None:
     startup_timeout=20 * MINUTES,
     exit_grace_period=15,
     routing_region=ROUTING_REGION,
-    unauthenticated=True,
+    unauthenticated=UNAUTHENTICATED,
 )
 class Server:
     @modal.enter()

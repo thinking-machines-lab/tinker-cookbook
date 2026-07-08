@@ -34,6 +34,8 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
         ModelConfig("Qwen/Qwen3.5-4B", gpu="H100:1", tp=1),
         ModelConfig("Qwen/Qwen3.6-35B-A3B", gpu="H100:2", tp=2),
         ModelConfig("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", gpu="H100:2", tp=2),
+        ModelConfig("nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", gpu="H100:4", tp=4),
+        ModelConfig("Qwen/Qwen3-235B-A22B-Instruct-2507", gpu="H100:8", tp=8),
     )
 }
 

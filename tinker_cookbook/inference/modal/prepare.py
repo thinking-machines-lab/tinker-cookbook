@@ -9,6 +9,8 @@ Also callable from another app via prepare.remote(...).
 
 from __future__ import annotations
 
+import os
+
 import modal
 
 from .common import (
@@ -22,14 +24,20 @@ from .common import (
     prepare_image,
 )
 
-tinker_secret = modal.Secret.from_name("tinker")  # TINKER_API_KEY
-hf_secret = modal.Secret.from_name("huggingface")  # HF_TOKEN, for gated bases
+# Read from the local env at deploy time. TINKER_API_KEY is required to download
+# the checkpoint; HF_TOKEN is optional (only gated base models need it).
+secret = modal.Secret.from_dict(
+    {
+        "TINKER_API_KEY": os.environ.get("TINKER_API_KEY", ""),
+        "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+    }
+)
 
 
 @app.function(
     image=prepare_image,
     volumes={ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
-    secrets=[tinker_secret, hf_secret],
+    secrets=[secret],
     gpu="H100",  # merge runs the dequant/requant math on GPU
     cpu=8.0,
     memory=65536,

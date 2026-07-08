@@ -10,9 +10,12 @@ model and writes it to a Volume; `serve.py` runs it behind an
 ```bash
 pip install "tinker-cookbook[modal]"
 modal setup
-modal secret create tinker      TINKER_API_KEY=tml-...
-modal secret create huggingface HF_TOKEN=hf-...   # for gated base models
+export TINKER_API_KEY=tml-...   # required, used to download the checkpoint
+export HF_TOKEN=hf-...          # optional, only for gated base models
 ```
+
+`prepare`/`serve` read these from your local environment at deploy time; no
+pre-created Modal secrets are needed.
 
 ## Prepare
 
@@ -32,30 +35,42 @@ FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B modal deploy -m tinker_cookbook.inferen
 ```
 
 `modal deploy` gives a persistent URL; `modal run` spins up a replica and runs a
-smoke test. Hit it with any OpenAI client:
+smoke test.
 
-```python
-from openai import OpenAI
+By default the endpoint requires a [Modal proxy auth
+token](https://modal.com/docs/guide/webhook-urls#authentication). For a quick
+open endpoint (no token), deploy with `UNAUTHENTICATED=1`. Then:
 
-client = OpenAI(base_url="https://<...>.modal.direct/v1", api_key="x")
-client.chat.completions.create(
-    model="my-finetune",
-    messages=[{"role": "user", "content": "hello"}],
-)
+```bash
+curl $URL/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "my-finetune",
+  "messages": [{"role": "user", "content": "hello"}]
+}'
+```
+
+## Comparing against Tinker
+
+`compare.py` samples the same prompts from the Tinker sampling client and the
+Modal endpoint and reports how often they disagree:
+
+```bash
+FINETUNE=my-finetune MODEL=Qwen/Qwen3-8B \
+  modal run -m tinker_cookbook.inference.modal.compare \
+  --tinker-path tinker://<run-id>/sampler_weights/<name> --url $URL
 ```
 
 ## Tested models
 
-Parity is mean per-token `|Δlogprob|` between Tinker's sampling client and the
-Modal endpoint on the same checkpoint (lower is closer; ~0.01 is engine-level
-rounding, not a model difference).
+Merge + serve verified end to end against the Tinker sampling client:
 
-| Model | Arch | parity (Δlogprob) |
-|---|---|---|
-| Qwen/Qwen3-8B | dense | 0.005 |
-| Qwen/Qwen3.5-4B | GDN hybrid | 0.003 |
-| Qwen/Qwen3.6-35B-A3B | MoE + GDN | 0.005 |
-| nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 | Mamba hybrid | 0.016 |
+| Model | Arch |
+|---|---|
+| Qwen/Qwen3-8B | dense |
+| Qwen/Qwen3.5-4B | GDN hybrid |
+| Qwen/Qwen3.6-35B-A3B | MoE + GDN |
+| nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 | Mamba hybrid |
+| nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 | Mamba hybrid |
+| Qwen/Qwen3-235B-A22B-Instruct-2507 | MoE |
 
 ## Adding a model
 
