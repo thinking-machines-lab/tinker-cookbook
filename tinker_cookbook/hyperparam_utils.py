@@ -234,6 +234,9 @@ def get_lora_param_count(
 
     Returns:
         Total trainable parameter count.
+
+    Notes:
+        For MoE expert layers, Tinker uses a shared-outer LoRA scheme: the LoRA factor connected to the model hidden dimension is shared across experts, while the other factor remains expert-specific. This reduces LoRA parameter count and optimizer state while preserving per-expert adaptation. The parameter count returned by this function reflects this sharing.
     """
     if not (train_mlp or train_attn or train_unembed):
         raise ValueError("At least one of train_mlp, train_attn, or train_unembed must be True.")
