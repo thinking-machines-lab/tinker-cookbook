@@ -26,7 +26,6 @@ class ModelConfig(NamedTuple):
     tp: int
 
 
-# Adding support for a model we have tested
 MODEL_REGISTRY: dict[str, ModelConfig] = {
     cfg.base_model: cfg
     for cfg in (
@@ -44,7 +43,7 @@ def model_config(base_model: str) -> ModelConfig:
     try:
         return MODEL_REGISTRY[base_model]
     except KeyError:
-        known = ", ".join(sorted(MODEL_REGISTRY)) or "(none)"
+        known = ", ".join(sorted(MODEL_REGISTRY))
         raise KeyError(
             f"{base_model!r} is not in MODEL_REGISTRY (common.py). Known: {known}"
         ) from None
@@ -79,7 +78,6 @@ prepare_image = (
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1", "HF_HUB_CACHE": HF_CACHE_PATH})
 )
 
-# Pinned SGLang image
 SGLANG_TAG = "lmsysorg/sglang:nightly-dev-cu13-20260629-b9b86065"
 sglang_image = (
     modal.Image.from_registry(SGLANG_TAG)
