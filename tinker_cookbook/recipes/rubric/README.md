@@ -27,6 +27,7 @@ python -m tinker_cookbook.recipes.rubric.generate_data
 ```
 
 Then you will see two `jsonl` files generated, one for training, one for testing. For example, if you look into `tinker_cookbook/example_data/example_rubric_train.jsonl`, each datapoint consists of
+
 - a convo (the conversation prefix that the policy sees)
 - rubric_items: a list of rubric items that specify what is a good response, how the grader should format the response, and how the grading result should be extracted.
 

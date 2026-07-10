@@ -9,6 +9,7 @@ Specifically, we provide the scripts needed to reproduce our experiments from th
 ## Distillation for reasoning
 
 Our results can be reproduced by running:
+
 1. Supervised fine-tuning on [OpenThoughts3](https://huggingface.co/datasets/open-thoughts/OpenThoughts3-1.2M)
 2. On-policy distillation on [DeepMath](https://huggingface.co/datasets/zwhe99/DeepMath-103K)
 
@@ -60,6 +61,7 @@ See the on-policy distillation launch command above for an example of how to loa
 ## Distillation for personalization
 
 In this section, we ran:
+
 1. Supervised fine-tuning on internal documents + resampled Tulu3 data
 2. On-policy distillation on [Tulu3](https://huggingface.co/datasets/allenai/tulu-3-sft-mixture) prompts
 
