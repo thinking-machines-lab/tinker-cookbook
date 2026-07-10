@@ -44,6 +44,7 @@ python -m tinker_cookbook.recipes.code_rl.train \
 ```
 
 Optional environment variables for Modal:
+
 - `MODAL_POOL_SIZE`: Number of concurrent sandboxes (default: 32)
 - `MODAL_CREATION_RATE_LIMIT`: Max sandboxes created per second (default: 4)
 
