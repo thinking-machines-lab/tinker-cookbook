@@ -1,8 +1,11 @@
 """Minimal provider-agnostic chat-completions client for the tokendb chat agent.
 
 Speaks the Anthropic Messages API and the OpenAI Chat Completions API over
-plain HTTP (aiohttp + server-sent events); no provider SDK dependencies. Both
-providers are normalized into one internal representation:
+plain HTTP (aiohttp + server-sent events); no provider SDK dependencies. A
+third provider, ``tinker``, samples from any Tinker-served model through the
+tinker SDK and the cookbook's renderer machinery (see
+:mod:`tinker_cookbook.tokendb.tinker_llm`). All providers are normalized into
+one internal representation:
 
 - :class:`Message` / :class:`ToolCall` / :class:`ToolDef` describe the
   conversation and tools once; ``build_anthropic_request`` /
@@ -13,7 +16,7 @@ providers are normalized into one internal representation:
 
 API key resolution order: an explicitly configured key (held in memory, e.g.
 set through the viewer's settings endpoint), then the provider's environment
-variable (``ANTHROPIC_API_KEY`` / ``OPENAI_API_KEY``).
+variable (``ANTHROPIC_API_KEY`` / ``OPENAI_API_KEY`` / ``TINKER_API_KEY``).
 
 The HTTP layer is behind the small :class:`SSETransport` protocol so tests can
 inject a scripted transport and exercise the full parsing path offline.
@@ -35,21 +38,26 @@ ANTHROPIC_VERSION = "2023-06-01"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 
 # Plain-constant defaults; override via LLMConfig(model=...) or the viewer's
-# agent-config endpoint.
+# agent-config endpoint. The tinker default is a static fallback; the viewer
+# usually resolves a better one from the fetched supported-model list.
 DEFAULT_MODELS = {
     "anthropic": "claude-fable-5",
     "openai": "gpt-5.6-sol",
+    "tinker": "Qwen/Qwen3-30B-A3B-Instruct-2507",
 }
 # Curated per-provider suggestions surfaced by the viewer's settings UI.
 # Not exhaustive; any model id the provider accepts still works via the
-# "custom" option / LLMConfig(model=...).
+# "custom" option / LLMConfig(model=...). The tinker list is dynamic (server
+# capabilities), so it is empty here and filled in by the config endpoint.
 KNOWN_MODELS = {
     "anthropic": ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
     "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    "tinker": [],
 }
 API_KEY_ENV_VARS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
+    "tinker": "TINKER_API_KEY",
 }
 DEFAULT_MAX_TOKENS = 8192
 
@@ -122,7 +130,7 @@ LLMEvent = TextDelta | ToolCallEvent | Done | ErrorEvent
 class LLMConfig:
     """Provider, model, and key configuration for :class:`LLMClient`."""
 
-    provider: str = "anthropic"  # "anthropic" | "openai"
+    provider: str = "anthropic"  # "anthropic" | "openai" | "tinker"
     model: str | None = None  # None resolves to DEFAULT_MODELS[provider]
     api_key: str | None = None  # explicit key beats the environment variable
     max_tokens: int = DEFAULT_MAX_TOKENS
@@ -403,13 +411,22 @@ async def _stream_openai(
 class LLMClient:
     """Streaming chat-completions client over an :class:`SSETransport`."""
 
-    def __init__(self, config: LLMConfig, transport: SSETransport | None = None) -> None:
+    def __init__(
+        self,
+        config: LLMConfig,
+        transport: SSETransport | None = None,
+        tinker_session_factory: Any = None,
+    ) -> None:
         if config.provider not in DEFAULT_MODELS:
             raise ValueError(
-                f"Unknown provider {config.provider!r} (expected 'anthropic' or 'openai')"
+                f"Unknown provider {config.provider!r} "
+                "(expected 'anthropic', 'openai', or 'tinker')"
             )
         self.config = config
         self.transport: SSETransport = transport or AiohttpSSETransport()
+        # Test seam for the tinker provider (tinker_llm.SessionFactory);
+        # None uses the real SDK + renderer machinery.
+        self.tinker_session_factory = tinker_session_factory
 
     async def stream(
         self, system: str, messages: Sequence[Message], tools: Sequence[ToolDef] = ()
@@ -427,6 +444,25 @@ class LLMClient:
                 f"No API key configured for provider {self.config.provider!r}: "
                 f"set {env_var} or configure a key in the viewer settings."
             )
+            return
+        if self.config.provider == "tinker":
+            # Renderer + SDK path (see tinker_llm); imported lazily to keep
+            # the HTTP providers importable without the tinker/renderer stack.
+            from tinker_cookbook.tokendb import tinker_llm
+
+            try:
+                async for event in tinker_llm.stream_tinker(
+                    self.config,
+                    api_key,
+                    system,
+                    messages,
+                    tools,
+                    session_factory=self.tinker_session_factory,
+                ):
+                    yield event
+            except Exception as e:
+                logger.warning("Tinker LLM turn failed: %s", e)
+                yield ErrorEvent(str(e))
             return
         build = (
             build_anthropic_request if self.config.provider == "anthropic" else build_openai_request

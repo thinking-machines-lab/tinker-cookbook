@@ -126,6 +126,10 @@ LOAD_TOKENIZER_KEY = web.AppKey("load_tokenizer", bool)
 # Chat agent: provider/model/api_key held in server memory only (never persisted).
 AGENT_STATE_KEY: web.AppKey[dict[str, Any]] = web.AppKey("agent_state")
 LLM_TRANSPORT_KEY: web.AppKey[SSETransport | None] = web.AppKey("llm_transport")
+# Tinker model list: fetched lazily from server capabilities and cached.
+TINKER_MODELS_TTL_S = 300.0
+TINKER_MODELS_FETCHER_KEY: web.AppKey[Any] = web.AppKey("tinker_models_fetcher")
+TINKER_MODELS_CACHE_KEY: web.AppKey[dict[str, Any]] = web.AppKey("tinker_models_cache")
 
 
 def _json_response(data: Any, status: int = 200) -> web.Response:
@@ -766,21 +770,63 @@ def _chat_scope(request: web.Request, *, include_prompt: bool = False) -> ChatSc
     )
 
 
+async def _get_tinker_models(
+    app: web.Application, state: dict[str, Any]
+) -> tuple[list[str], str | None]:
+    """The tinker supported-model list, cached for TINKER_MODELS_TTL_S.
+
+    Returns ``(models, error)``. No key configured means an empty list with
+    an explanatory error; fetch failures are cached too, so a flapping
+    service is not hammered on every config poll.
+    """
+    api_key = LLMConfig(provider="tinker", api_key=state["api_key"]).resolve_api_key()
+    if not api_key:
+        return [], "TINKER_API_KEY is not set on the server (and no runtime key is configured)."
+    cache = app[TINKER_MODELS_CACHE_KEY]
+    now = time.monotonic()
+    if cache.get("api_key") == api_key and now - cache.get("ts", 0.0) < TINKER_MODELS_TTL_S:
+        return cache["models"], cache["error"]
+    from tinker_cookbook.tokendb.tinker_llm import fetch_tinker_models
+
+    fetcher = app[TINKER_MODELS_FETCHER_KEY] or fetch_tinker_models
+    models: list[str] = []
+    error: str | None = None
+    try:
+        models = list(await asyncio.to_thread(fetcher, api_key))
+    except Exception as e:
+        logger.warning("Fetching tinker supported models failed: %s", e)
+        error = str(e)
+    cache.clear()
+    cache.update({"api_key": api_key, "ts": now, "models": models, "error": error})
+    return models, error
+
+
 async def _handle_agent_config_get(request: web.Request) -> web.Response:
     state = request.app[AGENT_STATE_KEY]
     config = LLMConfig(provider=state["provider"], model=state["model"], api_key=state["api_key"])
+    # Per-provider curated suggestions + defaults so the UI can prefill its
+    # model dropdown without hardcoding model ids. The tinker list is fetched
+    # from server capabilities, but only when the tinker provider is actually
+    # in play (configured, or requested via ?provider=tinker) so the config
+    # GET never blocks on it otherwise.
+    models = dict(KNOWN_MODELS)
+    default_model = dict(DEFAULT_MODELS)
     # The key itself is never returned, only whether one is available.
-    return _json_response(
-        {
-            "provider": config.provider,
-            "model": config.resolved_model(),
-            "has_key": config.resolve_api_key() is not None,
-            # Per-provider curated suggestions + defaults so the UI can
-            # prefill its model dropdown without hardcoding model ids.
-            "models": KNOWN_MODELS,
-            "default_model": DEFAULT_MODELS,
-        }
-    )
+    payload: dict[str, Any] = {
+        "provider": config.provider,
+        "model": config.resolved_model(),
+        "has_key": config.resolve_api_key() is not None,
+        "models": models,
+        "default_model": default_model,
+    }
+    if config.provider == "tinker" or request.query.get("provider") == "tinker":
+        from tinker_cookbook.tokendb.tinker_llm import pick_default_model
+
+        tinker_models, tinker_error = await _get_tinker_models(request.app, state)
+        models["tinker"] = tinker_models
+        default_model["tinker"] = pick_default_model(tinker_models) or DEFAULT_MODELS["tinker"]
+        payload["tinker_models_error"] = tinker_error
+    return _json_response(payload)
 
 
 async def _handle_agent_config_post(request: web.Request) -> web.Response:
@@ -793,7 +839,7 @@ async def _handle_agent_config_post(request: web.Request) -> web.Response:
             provider = str(body["provider"])
             if provider not in API_KEY_ENV_VARS:
                 raise ValueError(
-                    f"unknown provider {provider!r} (expected 'anthropic' or 'openai')"
+                    f"unknown provider {provider!r} (expected 'anthropic', 'openai', or 'tinker')"
                 )
             state["provider"] = provider
         if "model" in body:
@@ -1019,6 +1065,7 @@ def build_app(
     dashboard_ttl_s: float = DEFAULT_DASHBOARD_TTL_S,
     live_window_s: float = DEFAULT_LIVE_WINDOW_S,
     llm_transport: SSETransport | None = None,
+    tinker_models_fetcher: Any = None,
 ) -> web.Application:
     """Build the viewer application.
 
@@ -1040,6 +1087,9 @@ def build_app(
             this many seconds.
         llm_transport: Override for the chat agent's LLM HTTP transport
             (tests inject a scripted transport; ``None`` uses aiohttp).
+        tinker_models_fetcher: Override for the tinker supported-model
+            fetch, a blocking ``(api_key) -> list[str]`` callable (tests
+            inject a stub; ``None`` uses the tinker SDK).
     """
     app = web.Application()
     app[LOAD_TOKENIZER_KEY] = load_tokenizer
@@ -1050,6 +1100,8 @@ def build_app(
     app[REGISTRY_DIR_KEY] = registry_dir
     app[AGENT_STATE_KEY] = {"provider": "anthropic", "model": None, "api_key": None}
     app[LLM_TRANSPORT_KEY] = llm_transport
+    app[TINKER_MODELS_FETCHER_KEY] = tinker_models_fetcher
+    app[TINKER_MODELS_CACHE_KEY] = {}
     app.router.add_get("/api/agent/config", _handle_agent_config_get)
     app.router.add_post("/api/agent/config", _handle_agent_config_post)
 

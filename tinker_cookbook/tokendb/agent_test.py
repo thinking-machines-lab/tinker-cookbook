@@ -4,6 +4,7 @@ provider APIs."""
 
 import asyncio
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,7 @@ def _no_ambient_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keys must come from the test, never the developer's environment."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TINKER_API_KEY", raising=False)
 
 
 def make_row(**overrides) -> TokenRow:
@@ -83,7 +85,7 @@ class ScriptedTransport:
 
 
 def anthropic_script(
-    text: str | None = None, tool_calls: tuple[tuple[str, str, dict], ...] = ()
+    text: str | None = None, tool_calls: Sequence[tuple[str, str, dict]] = ()
 ) -> list[tuple[str | None, dict]]:
     """Anthropic-shaped SSE events for one model turn."""
     events: list[tuple[str | None, dict]] = [("message_start", {"type": "message_start"})]
