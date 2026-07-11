@@ -128,7 +128,8 @@ class ParquetSegmentReader:
     # --- Connection / registration ---
 
     def _connection(self) -> duckdb.DuckDBPyConnection:
-        if self._conn is None:
+        conn = self._conn
+        if conn is None:
             duckdb = _require_duckdb()
             import pyarrow as pa
 
@@ -141,7 +142,7 @@ class ParquetSegmentReader:
             conn.unregister("_empty_segment")
             self._create_views(conn)
             self._conn = conn
-        return self._conn
+        return conn
 
     def _create_views(self, conn: duckdb.DuckDBPyConnection) -> None:
         # All rows, tagged: `superseded` is true when a later run_attempt
