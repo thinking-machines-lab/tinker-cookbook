@@ -62,6 +62,19 @@ In registry mode the server exposes:
 
 Pointing the server at a specific `log_path` still works exactly as before and does not need the registry.
 
+## Chat
+
+The viewer has a chat mode: ask questions about your training data in plain language and an LLM agent answers by querying the token DB for you. No SQL required. The agent can run read-only DuckDB queries (`sql`), search by regex or token-ID subsequence (`search`), pull whole trajectories (`get_rollout`), and publish self-contained HTML visuals (`publish_visual`) that render inline in the chat and in a gallery. In registry mode there is also a global cross-run chat (with `list_runs` and `dashboard` tools for comparing experiments) alongside the per-run chats.
+
+To enable it, give the server an API key for one of the supported providers:
+
+- Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the server's environment, or
+- Configure the provider, model, and key at runtime in the UI settings (backed by `POST /api/agent/config`; the key is held in server memory only and is never written to disk or returned by the API).
+
+Published visuals are single HTML files with inline JS/SVG (no external CDNs). For live views the visual polls the read-only SQL endpoint on an interval and re-renders in place, so a chart of, say, reward by iteration keeps updating while training runs. The files are standalone and shareable.
+
+On-disk layout: conversations are appended as JSONL to `{log_path}/tokens/chats/{conversation_id}.jsonl` and visuals are written to `{log_path}/tokens/visuals/`. The registry-level chat stores both under the registry directory (`chats/` and `visuals/`) instead. Like everything else, this goes through the `Storage` protocol, so cloud `log_path`s work.
+
 ## Python API
 
 No server needed. `TokenDB` reads the segment files directly:

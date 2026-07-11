@@ -536,3 +536,239 @@ def test_registry_mode_requires_registry(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TINKER_TOKENDB_REGISTRY", "")
     with pytest.raises(ValueError, match="registry is disabled"):
         build_app(None, static_dir=None, load_tokenizer=False)
+
+
+# --- Chat agent endpoints (websocket chat, config, visuals) ---
+
+from tinker_cookbook.tokendb.agent_test import ScriptedTransport, anthropic_script  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Chat tests must control key presence themselves."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
+async def _chat_frames(ws, text: str, conversation_id: str | None = None) -> list[dict]:
+    """Send a user_message and collect frames through the terminal one."""
+    message: dict = {"type": "user_message", "text": text}
+    if conversation_id is not None:
+        message["conversation_id"] = conversation_id
+    await ws.send_str(json.dumps(message))
+    frames = []
+    while True:
+        frames.append(json.loads((await ws.receive(timeout=10.0)).data))
+        if frames[-1]["type"] in ("done", "error", "cancelled"):
+            return frames
+
+
+def test_chat_ws_end_to_end(populated_store: Path):
+    transport = ScriptedTransport(
+        [
+            anthropic_script(
+                text="Checking.",
+                tool_calls=[("t1", "sql", {"query": "SELECT count(*) AS n FROM rollouts"})],
+            ),
+            anthropic_script(text="There are 6 rows."),
+        ]
+    )
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, llm_transport=transport
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            assert (await resp.json())["has_key"] is True
+            async with client.ws_connect("/api/chat") as ws:
+                frames = await _chat_frames(ws, "how many rows?")
+            assert frames[0]["type"] == "conversation"
+            conversation_id = frames[0]["conversation_id"]
+            types = [f["type"] for f in frames]
+            assert types == [
+                "conversation",
+                "text_delta",
+                "tool_call",
+                "tool_result",
+                "text_delta",
+                "done",
+            ]
+            assert frames[1]["text"] == "Checking."
+            assert frames[2]["name"] == "sql"
+            assert not frames[3]["is_error"]
+            assert frames[4]["text"] == "There are 6 rows."
+
+            # The system prompt carried the run's SQL endpoint and schema docs.
+            system = transport.requests[0][2]["system"]
+            assert "/api/sql" in system
+            assert "ob_is_delta" in system
+
+            # Transcript endpoints.
+            resp = await client.get("/api/chats")
+            conversations = (await resp.json())["conversations"]
+            assert [c["conversation_id"] for c in conversations] == [conversation_id]
+            assert conversations[0]["title"] == "how many rows?"
+            resp = await client.get(f"/api/chats/{conversation_id}")
+            records = (await resp.json())["records"]
+            assert [r.get("role") for r in records if r["kind"] == "message"] == [
+                "user",
+                "assistant",
+                "tool",
+                "assistant",
+            ]
+            resp = await client.get("/api/chats/nope-id")
+            assert resp.status == 404
+
+    asyncio.run(main())
+
+
+def test_chat_ws_missing_key_error_frame(populated_store: Path):
+    async def fn(client):
+        async with client.ws_connect("/api/chat") as ws:
+            frames = await _chat_frames(ws, "hello?")
+        assert len(frames) == 1
+        assert frames[0]["type"] == "error"
+        assert frames[0]["code"] == "no_api_key"
+        assert "ANTHROPIC_API_KEY" in frames[0]["error"]
+
+    run_with_client(populated_store, fn)
+
+
+def test_agent_config_endpoint_never_leaks_key(populated_store: Path):
+    async def fn(client):
+        resp = await client.get("/api/agent/config")
+        assert await resp.json() == {
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-6",
+            "has_key": False,
+        }
+        resp = await client.post(
+            "/api/agent/config",
+            json={"provider": "openai", "model": "my-model", "api_key": "sk-supersecret"},
+        )
+        payload = await resp.json()
+        assert payload == {"provider": "openai", "model": "my-model", "has_key": True}
+        resp = await client.get("/api/agent/config")
+        assert "sk-supersecret" not in await resp.text()
+        assert (await resp.json())["has_key"] is True
+        # Clearing the key and rejecting unknown providers.
+        resp = await client.post("/api/agent/config", json={"api_key": ""})
+        assert (await resp.json())["has_key"] is False
+        resp = await client.post("/api/agent/config", json={"provider": "nope"})
+        assert resp.status == 400
+
+    run_with_client(populated_store, fn)
+
+
+def test_visuals_publish_list_and_serve(populated_store: Path):
+    html = "<!doctype html><html><body><svg></svg></body></html>"
+    transport = ScriptedTransport(
+        [
+            anthropic_script(
+                tool_calls=[
+                    ("t1", "publish_visual", {"title": "Reward", "description": "d", "html": html})
+                ]
+            ),
+            anthropic_script(text="Published."),
+        ]
+    )
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, llm_transport=transport
+        )
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            async with client.ws_connect("/api/chat") as ws:
+                frames = await _chat_frames(ws, "chart the reward")
+            visual = next(f for f in frames if f["type"] == "visual_published")
+            assert visual["title"] == "Reward"
+            assert visual["url"].startswith("/visuals/reward-")
+
+            resp = await client.get("/api/visuals")
+            visuals = (await resp.json())["visuals"]
+            assert [v["name"] for v in visuals] == [visual["name"]]
+
+            resp = await client.get(visual["url"])
+            assert resp.status == 200
+            assert resp.headers["Content-Type"].startswith("text/html")
+            assert resp.headers["X-Content-Type-Options"] == "nosniff"
+            assert resp.headers["Cache-Control"] == "no-cache"
+            assert await resp.text() == html
+
+            resp = await client.get("/visuals/does-not-exist.html")
+            assert resp.status == 404
+            resp = await client.get("/visuals/..%2Frun.json")
+            assert resp.status == 404
+
+    asyncio.run(main())
+
+
+def test_registry_global_chat_lists_runs(registry_stores: dict):
+    live_id = registry_stores["live_id"]
+    transport = ScriptedTransport(
+        [
+            anthropic_script(text="Looking.", tool_calls=[("t1", "list_runs", {})]),
+            anthropic_script(
+                tool_calls=[
+                    (
+                        "t2",
+                        "sql",
+                        {"run_id": live_id, "query": "SELECT count(*) AS n FROM rollouts"},
+                    )
+                ]
+            ),
+            anthropic_script(text="The live run has 3 rows."),
+        ]
+    )
+
+    async def main():
+        app = build_app(None, static_dir=None, load_tokenizer=False, llm_transport=transport)
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            async with client.ws_connect("/api/chat") as ws:
+                frames = await _chat_frames(ws, "what runs exist?")
+            assert frames[-1]["type"] == "done"
+            list_result = next(
+                f for f in frames if f["type"] == "tool_result" and f["name"] == "list_runs"
+            )
+            assert '"runs"' in list_result["preview"]
+            # The model saw the full (untruncated-by-preview) run listing.
+            conversation_id = frames[0]["conversation_id"]
+            records = (await (await client.get(f"/api/chats/{conversation_id}")).json())["records"]
+            list_runs_record = next(
+                r for r in records if r["kind"] == "message" and r.get("role") == "tool"
+            )
+            assert live_id in list_runs_record["content"]
+            sql_result = next(
+                f for f in frames if f["type"] == "tool_result" and f["name"] == "sql"
+            )
+            assert '"n": 3' in sql_result["preview"]
+            # Registry-mode prompt teaches the per-run SQL endpoint template.
+            assert "/api/runs/{run_id}/sql" in transport.requests[0][2]["system"]
+
+            # The conversation is stored under the registry directory.
+            registry_dir = Path(os.environ["TINKER_TOKENDB_REGISTRY"])
+            assert list((registry_dir / "chats").glob("*.jsonl"))
+
+            # Per-run chat endpoints are mounted too.
+            resp = await client.get(f"/api/runs/{live_id}/chats")
+            assert resp.status == 200
+            assert (await resp.json())["conversations"] == []
+
+    asyncio.run(main())
+
+
+def test_chat_ws_cancel(populated_store: Path):
+    """A cancel frame while no turn is running is a no-op; bad frames error."""
+
+    async def fn(client):
+        async with client.ws_connect("/api/chat") as ws:
+            await ws.send_str(json.dumps({"type": "cancel"}))
+            await ws.send_str(json.dumps({"type": "bogus"}))
+            msg = json.loads((await ws.receive(timeout=5.0)).data)
+            assert msg["type"] == "error"
+            assert "bogus" in msg["error"]
+
+    run_with_client(populated_store, fn)

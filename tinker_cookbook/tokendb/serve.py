@@ -34,6 +34,7 @@ text plus raw token IDs (both stored, so nothing is lost).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import functools
 import json
@@ -47,7 +48,19 @@ from typing import Any
 import chz
 from aiohttp import WSMsgType, web
 
-from tinker_cookbook.stores.storage import storage_from_uri
+from tinker_cookbook.stores.storage import Storage, storage_from_uri
+from tinker_cookbook.tokendb.agent import (
+    ChatStore,
+    RegistryToolbox,
+    RunToolbox,
+    ToolExecutionError,
+    VisualStore,
+    new_conversation_id,
+    run_chat_turn,
+    valid_conversation_id,
+)
+from tinker_cookbook.tokendb.agent_prompt import build_system_prompt
+from tinker_cookbook.tokendb.llm import API_KEY_ENV_VARS, LLMClient, LLMConfig, SSETransport
 from tinker_cookbook.tokendb.reader import (
     LABELS_PATH,
     ParquetSegmentReader,
@@ -87,6 +100,10 @@ class RunContext:
     tokenizer_error: str = "not loaded"
     tokenizer_task: asyncio.Task[None] | None = None
     tokenizer_started: bool = False
+    # Chat tools run in a worker thread (asyncio.to_thread) and DuckDB
+    # connections are not thread-safe, so the chat gets its own reader
+    # instead of sharing `reader` with the event-loop HTTP handlers.
+    chat_reader: ParquetSegmentReader | None = None
 
 
 # Typed application-state keys (aiohttp's recommended alternative to str keys).
@@ -99,6 +116,9 @@ DASHBOARD_CACHE_KEY: web.AppKey[dict[str, tuple[float, dict[str, Any]]]] = web.A
 DASHBOARD_TTL_KEY = web.AppKey("dashboard_ttl_s", float)
 LIVE_WINDOW_KEY = web.AppKey("live_window_s", float)
 LOAD_TOKENIZER_KEY = web.AppKey("load_tokenizer", bool)
+# Chat agent: provider/model/api_key held in server memory only (never persisted).
+AGENT_STATE_KEY: web.AppKey[dict[str, Any]] = web.AppKey("agent_state")
+LLM_TRANSPORT_KEY: web.AppKey[SSETransport | None] = web.AppKey("llm_transport")
 
 
 def _json_response(data: Any, status: int = 200) -> web.Response:
@@ -645,6 +665,307 @@ async def _handle_ws_dashboard(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+# --- Chat agent: scope resolution, config, chats, visuals, websocket ---
+
+
+@dataclasses.dataclass
+class ChatScope:
+    """Everything one chat (or its chats/visuals endpoints) is bound to."""
+
+    toolbox: RunToolbox | RegistryToolbox
+    chat_store: ChatStore
+    visual_store: VisualStore
+    system_prompt: str = ""
+
+
+def _registry_storage(app: web.Application) -> Storage:
+    directory = resolve_registry_dir(app[REGISTRY_DIR_KEY])
+    if directory is None:  # build_app rejects this configuration up front
+        raise web.HTTPNotFound(
+            text=_json_dumps({"error": "run registry is disabled"}),
+            content_type="application/json",
+        )
+    return storage_from_uri(str(directory))
+
+
+def _chat_reader(ctx: RunContext) -> ParquetSegmentReader:
+    """The run's chat-dedicated reader (see the ``chat_reader`` field note)."""
+    if ctx.chat_reader is None:
+        ctx.chat_reader = ParquetSegmentReader(ctx.log_path)
+    return ctx.chat_reader
+
+
+def _run_info(ctx: RunContext) -> dict[str, Any] | None:
+    """Best-effort ``run.json`` content for the system prompt."""
+    try:
+        if ctx.storage.exists(RUN_JSON_PATH):
+            return json.loads(ctx.storage.read(RUN_JSON_PATH).decode())
+    except Exception:
+        logger.warning("Could not read %s for the chat prompt", RUN_JSON_PATH, exc_info=True)
+    return None
+
+
+def _chat_scope(request: web.Request, *, include_prompt: bool = False) -> ChatScope:
+    """Resolve the chat scope for this request.
+
+    Single-run mode and the registry per-run mount bind to that run's reader
+    and store the conversation/visuals under the run's ``tokens/`` directory.
+    The registry-level chat (no ``run_id``) spans every run: cross-run tools,
+    with conversations/visuals stored under the registry directory.
+    """
+    app = request.app
+    ctx = app[SINGLE_CTX_KEY]
+    run_id = request.match_info.get("run_id")
+    if ctx is None and run_id is not None:
+        ctx = _get_or_create_ctx(app, run_id)
+    if ctx is not None:
+        api_base = f"/api/runs/{run_id}" if run_id is not None else "/api"
+        visuals_base = f"{api_base}/visuals" if run_id is not None else "/visuals"
+        prompt = ""
+        if include_prompt:
+            prompt = build_system_prompt(
+                sql_url=f"{api_base}/sql", mode="run", run_info=_run_info(ctx)
+            )
+        return ChatScope(
+            toolbox=RunToolbox(_chat_reader(ctx), VisualStore(ctx.storage, url_base=visuals_base)),
+            chat_store=ChatStore(ctx.storage),
+            visual_store=VisualStore(ctx.storage, url_base=visuals_base),
+            system_prompt=prompt,
+        )
+    # Registry-level (cross-run) chat.
+    storage = _registry_storage(app)
+    visual_store = VisualStore(storage, url_base="/visuals", prefix="visuals")
+
+    def _resolve_reader(rid: str) -> ParquetSegmentReader:
+        try:
+            return _chat_reader(_get_or_create_ctx(app, rid))
+        except web.HTTPNotFound as e:
+            raise ToolExecutionError(f"unknown run_id {rid!r} (see list_runs)") from e
+
+    toolbox = RegistryToolbox(
+        list_runs_fn=lambda: list_runs(app[REGISTRY_DIR_KEY], live_window_s=app[LIVE_WINDOW_KEY]),
+        dashboard_fn=lambda: _dashboard_rows(app),
+        resolve_reader=_resolve_reader,
+        visual_store=visual_store,
+    )
+    prompt = ""
+    if include_prompt:
+        prompt = build_system_prompt(sql_url="/api/runs/{run_id}/sql", mode="registry")
+    return ChatScope(
+        toolbox=toolbox,
+        chat_store=ChatStore(storage, prefix="chats"),
+        visual_store=visual_store,
+        system_prompt=prompt,
+    )
+
+
+async def _handle_agent_config_get(request: web.Request) -> web.Response:
+    state = request.app[AGENT_STATE_KEY]
+    config = LLMConfig(provider=state["provider"], model=state["model"], api_key=state["api_key"])
+    # The key itself is never returned, only whether one is available.
+    return _json_response(
+        {
+            "provider": config.provider,
+            "model": config.resolved_model(),
+            "has_key": config.resolve_api_key() is not None,
+        }
+    )
+
+
+async def _handle_agent_config_post(request: web.Request) -> web.Response:
+    state = request.app[AGENT_STATE_KEY]
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("body must be an object")
+        if "provider" in body:
+            provider = str(body["provider"])
+            if provider not in API_KEY_ENV_VARS:
+                raise ValueError(
+                    f"unknown provider {provider!r} (expected 'anthropic' or 'openai')"
+                )
+            state["provider"] = provider
+        if "model" in body:
+            state["model"] = str(body["model"]) or None
+        if "api_key" in body:
+            # In server memory only; empty string clears the runtime key.
+            state["api_key"] = str(body["api_key"]) or None
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        return _error_response(str(e), 400)
+    return await _handle_agent_config_get(request)
+
+
+async def _handle_chats_list(request: web.Request) -> web.Response:
+    scope = _chat_scope(request)
+    return _json_response(
+        {"conversations": await asyncio.to_thread(scope.chat_store.list_conversations)}
+    )
+
+
+async def _handle_chat_detail(request: web.Request) -> web.Response:
+    scope = _chat_scope(request)
+    conversation_id = request.match_info["conversation_id"]
+    if not valid_conversation_id(conversation_id):
+        return _error_response(f"bad conversation id {conversation_id!r}", 400)
+    records = await asyncio.to_thread(scope.chat_store.load_records, conversation_id)
+    if not records:
+        return _error_response("conversation not found", 404)
+    return _json_response({"conversation_id": conversation_id, "records": records})
+
+
+async def _handle_visuals_list(request: web.Request) -> web.Response:
+    scope = _chat_scope(request)
+    return _json_response({"visuals": await asyncio.to_thread(scope.visual_store.list)})
+
+
+async def _handle_visual_file(request: web.Request) -> web.Response:
+    scope = _chat_scope(request)
+    name = request.match_info["name"]
+    try:
+        data = await asyncio.to_thread(scope.visual_store.read, name)
+    except FileNotFoundError:
+        return _error_response("visual not found", 404)
+    # Rendered in sandboxed iframes by the UI; still pin the content type and
+    # keep caches out of the way so live-updating visuals stay fresh.
+    return web.Response(
+        body=data,
+        content_type="text/html",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache"},
+    )
+
+
+async def _pump_chat_turn(
+    ws: web.WebSocketResponse,
+    client: LLMClient,
+    scope: ChatScope,
+    conversation_id: str,
+    text: str,
+) -> None:
+    try:
+        async for frame in run_chat_turn(
+            client, scope.toolbox, scope.chat_store, conversation_id, text, scope.system_prompt
+        ):
+            await ws.send_str(_json_dumps(frame))
+    except asyncio.CancelledError:
+        with contextlib.suppress(Exception):
+            await ws.send_str(
+                _json_dumps({"type": "cancelled", "conversation_id": conversation_id})
+            )
+        raise
+    except Exception as e:
+        logger.warning("Chat turn failed: %s", e, exc_info=True)
+        with contextlib.suppress(Exception):
+            await ws.send_str(_json_dumps({"type": "error", "error": str(e)}))
+
+
+async def _handle_chat_ws(request: web.Request) -> web.WebSocketResponse:
+    """Chat websocket.
+
+    Client frames: ``{"type": "user_message", "conversation_id"?: str,
+    "text": str}`` starts a turn; ``{"type": "cancel"}`` cancels the running
+    turn. Server frames are the agent's event stream (``conversation``,
+    ``text_delta``, ``tool_call``, ``tool_result``, ``visual_published``,
+    ``done`` / ``error`` / ``cancelled``). Missing API key yields a structured
+    ``{"type": "error", "code": "no_api_key"}`` frame the UI can render as a
+    setup hint.
+    """
+    ws = web.WebSocketResponse(heartbeat=30)
+    await ws.prepare(request)
+    turn_task: asyncio.Task[None] | None = None
+    try:
+        async for msg in ws:
+            if msg.type != WSMsgType.TEXT:
+                continue
+            try:
+                data = json.loads(msg.data)
+            except json.JSONDecodeError as e:
+                await ws.send_str(_json_dumps({"type": "error", "error": str(e)}))
+                continue
+            msg_type = data.get("type")
+            if msg_type == "cancel":
+                if turn_task is not None and not turn_task.done():
+                    turn_task.cancel()
+                continue
+            if msg_type != "user_message":
+                await ws.send_str(
+                    _json_dumps({"type": "error", "error": f"unknown message type {msg_type!r}"})
+                )
+                continue
+            if turn_task is not None and not turn_task.done():
+                await ws.send_str(
+                    _json_dumps({"type": "error", "error": "a turn is already running"})
+                )
+                continue
+            text = data.get("text")
+            conversation_id = data.get("conversation_id") or new_conversation_id()
+            if (
+                not text
+                or not isinstance(text, str)
+                or not valid_conversation_id(str(conversation_id))
+            ):
+                await ws.send_str(
+                    _json_dumps(
+                        {
+                            "type": "error",
+                            "error": "user_message needs non-empty 'text' (and a well-formed conversation_id)",
+                        }
+                    )
+                )
+                continue
+            state = request.app[AGENT_STATE_KEY]
+            config = LLMConfig(
+                provider=state["provider"], model=state["model"], api_key=state["api_key"]
+            )
+            if config.resolve_api_key() is None:
+                env_var = API_KEY_ENV_VARS[config.provider]
+                await ws.send_str(
+                    _json_dumps(
+                        {
+                            "type": "error",
+                            "code": "no_api_key",
+                            "provider": config.provider,
+                            "error": (
+                                f"No API key configured for {config.provider!r}. Set {env_var} "
+                                "in the server environment or add a key in the viewer settings."
+                            ),
+                        }
+                    )
+                )
+                continue
+            try:
+                scope = _chat_scope(request, include_prompt=True)
+            except web.HTTPNotFound as e:
+                await ws.send_str(_json_dumps({"type": "error", "error": e.text or "not found"}))
+                continue
+            client = LLMClient(config, transport=request.app[LLM_TRANSPORT_KEY])
+            await ws.send_str(
+                _json_dumps({"type": "conversation", "conversation_id": str(conversation_id)})
+            )
+            turn_task = asyncio.create_task(
+                _pump_chat_turn(ws, client, scope, str(conversation_id), text)
+            )
+    finally:
+        if turn_task is not None:
+            turn_task.cancel()
+    return ws
+
+
+def _add_chat_routes(
+    app: web.Application, api_base: str, visuals_file_path: str | None = None
+) -> None:
+    """Mount the chat/transcript/visuals endpoints under ``api_base``.
+
+    Visual files are served at ``{api_base}/visuals/{name}`` unless
+    ``visuals_file_path`` overrides it (the top-level chats use the shorter
+    ``/visuals/{name}``).
+    """
+    app.router.add_get(f"{api_base}/chat", _handle_chat_ws)
+    app.router.add_get(f"{api_base}/chats", _handle_chats_list)
+    app.router.add_get(f"{api_base}/chats/{{conversation_id}}", _handle_chat_detail)
+    app.router.add_get(f"{api_base}/visuals", _handle_visuals_list)
+    app.router.add_get(visuals_file_path or f"{api_base}/visuals/{{name}}", _handle_visual_file)
+
+
 # --- Tokenizer (best-effort, background) ---
 
 
@@ -686,6 +1007,7 @@ def build_app(
     load_tokenizer: bool = True,
     dashboard_ttl_s: float = DEFAULT_DASHBOARD_TTL_S,
     live_window_s: float = DEFAULT_LIVE_WINDOW_S,
+    llm_transport: SSETransport | None = None,
 ) -> web.Application:
     """Build the viewer application.
 
@@ -705,6 +1027,8 @@ def build_app(
             cache.
         live_window_s: A run is "live" if a manifest was modified within
             this many seconds.
+        llm_transport: Override for the chat agent's LLM HTTP transport
+            (tests inject a scripted transport; ``None`` uses aiohttp).
     """
     app = web.Application()
     app[LOAD_TOKENIZER_KEY] = load_tokenizer
@@ -713,6 +1037,10 @@ def build_app(
     app[DASHBOARD_TTL_KEY] = dashboard_ttl_s
     app[LIVE_WINDOW_KEY] = live_window_s
     app[REGISTRY_DIR_KEY] = registry_dir
+    app[AGENT_STATE_KEY] = {"provider": "anthropic", "model": None, "api_key": None}
+    app[LLM_TRANSPORT_KEY] = llm_transport
+    app.router.add_get("/api/agent/config", _handle_agent_config_get)
+    app.router.add_post("/api/agent/config", _handle_agent_config_post)
 
     if log_path is not None:
         # Single-run mode: endpoints at their original paths.
@@ -728,6 +1056,7 @@ def build_app(
         app.router.add_post("/api/labels", _handle_labels_post)
         app.router.add_post("/api/tokens/decode", _handle_decode)
         app.router.add_get("/ws", _handle_ws)
+        _add_chat_routes(app, "/api", visuals_file_path="/visuals/{name}")
         if load_tokenizer:
             app.on_startup.append(_start_tokenizer_load)
     else:
@@ -755,6 +1084,9 @@ def build_app(
         app.router.add_get(f"{prefix}/ws", _handle_ws)
         app.router.add_get("/ws", _handle_ws)
         app.router.add_get("/ws/dashboard", _handle_ws_dashboard)
+        # Chat: a registry-level cross-run chat at /api/chat plus per-run chats.
+        _add_chat_routes(app, "/api", visuals_file_path="/visuals/{name}")
+        _add_chat_routes(app, prefix)
 
     if static_dir is not None and (static_dir / "index.html").is_file():
         index_path = static_dir / "index.html"
