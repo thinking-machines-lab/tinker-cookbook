@@ -22,6 +22,17 @@ export function detailPath(row: {
   return row.run_attempt !== undefined ? `${base}?run_attempt=${row.run_attempt}` : base;
 }
 
+/** Run ids can be long (timestamps + entropy); breadcrumbs show a prefix. */
+export function shortRunId(runId: string): string {
+  return runId.length > 14 ? `${runId.slice(0, 12)}…` : runId;
+}
+
+/** Fallback title for visual cards: the slug part of the visual's filename. */
+export function visualTitle(visual: { name: string }): string {
+  const slug = visual.name.replace(/\.html$/, "").replace(/-\d{8}-\d{6}-[0-9a-f]{6}$/, "");
+  return slug.replace(/-/g, " ") || visual.name;
+}
+
 /**
  * Map a logprob to a red/yellow/green span color (prob 1 -> green, prob 0 -> red),
  * interpolating within the semantic palette.

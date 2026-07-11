@@ -76,7 +76,16 @@ export interface RolloutDetail {
 export interface RunInfo {
   run_id: string;
   run_attempt: number;
-  context?: { model_name?: string };
+  context?: { model_name?: string; recipe_name?: string };
+}
+
+/** One /api/runs record (registry mode): registry entry + liveness probe. */
+export interface RegistryRun {
+  run_id: string;
+  run_attempt: number;
+  model_name: string | null;
+  recipe_name: string | null;
+  status?: { live: boolean };
 }
 
 export interface RewardPoint {

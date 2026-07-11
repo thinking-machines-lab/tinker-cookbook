@@ -1,9 +1,9 @@
-// Chat screen: the primary interface. A conversation sidebar (with a visuals
-// gallery tab), a streaming message thread over the chat websocket, tool
-// calls as collapsible steps, and published visuals rendered inline as
-// sandboxed iframes. `scope="run"` chats are bound to one run (rollout keys
-// in answers link to the detail screen); `scope="global"` is the registry's
-// cross-run chat.
+// Chat screen: the primary interface. A conversation sidebar, a streaming
+// message thread over the chat websocket, tool calls as collapsible steps,
+// and published visuals rendered inline as sandboxed iframes (the full
+// gallery lives on the run's Visuals tab). `scope="run"` chats are bound to
+// one run (rollout keys in answers link to the detail screen);
+// `scope="global"` is the registry's cross-run chat.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -14,11 +14,10 @@ import {
   type AgentConfig,
   type ChatRecord,
   type ConversationSummary,
-  type VisualInfo,
 } from "../api";
 import { AgentSettings } from "../components/AgentSettings";
 import { MarkdownLite } from "../components/Markdown";
-import { VisualFrame, VisualOverlay } from "../components/VisualFrame";
+import { VisualFrame } from "../components/VisualFrame";
 import { useApi } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { fmtRelative } from "../util";
@@ -105,7 +104,7 @@ function ToolStep({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
   );
 }
 
-/** Sidebar placeholder rows, sized like real conversation/visual rows, shown
+/** Sidebar placeholder rows, sized like real conversation rows, shown
  * while the list is loading so it doesn't pop in and reflow. */
 function SidebarSkeleton() {
   return (
@@ -124,14 +123,6 @@ function SidebarSkeleton() {
   );
 }
 
-/** Fallback title for gallery cards: the slug part of the visual's filename. */
-function visualTitle(visual: VisualInfo): string {
-  const slug = visual.name
-    .replace(/\.html$/, "")
-    .replace(/-\d{8}-\d{6}-[0-9a-f]{6}$/, "");
-  return slug.replace(/-/g, " ") || visual.name;
-}
-
 export function Chat({ scope }: { scope: "run" | "global" }) {
   const { runId } = useParams();
   const base = apiBase(runId);
@@ -141,8 +132,6 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [draft, setDraft] = useState("");
-  const [tab, setTab] = useState<"chats" | "visuals">("chats");
-  const [overlay, setOverlay] = useState<VisualInfo | null>(null);
   const streamingRef = useRef(streaming);
   streamingRef.current = streaming;
 
@@ -151,7 +140,6 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
     () => getJSON<{ conversations: ConversationSummary[] }>(`${base}/chats`),
     [base],
   );
-  const visuals = useApi(() => getJSON<{ visuals: VisualInfo[] }>(`${base}/visuals`), [base]);
 
   // Reset the thread when navigating to a different run's chat.
   useEffect(() => {
@@ -204,7 +192,6 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
             description: String(msg.description ?? ""),
           },
         ]);
-        visuals.reload();
       } else if (type === "done") {
         setStreaming(false);
         conversations.reload();
@@ -224,7 +211,7 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
         }
       }
     },
-    [conversations, visuals, config],
+    [conversations, config],
   );
 
   const { status, send } = useWebSocket(chatWsPath(runId), { onMessage });
@@ -283,62 +270,32 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
   };
 
   const conversationList = conversations.data?.conversations ?? [];
-  const visualList = visuals.data?.visuals ?? [];
 
   return (
     <div className="chat-layout">
       <aside className="chat-sidebar">
-        <div className="chat-sidebar-tabs">
-          <button className={tab === "chats" ? "active" : undefined} onClick={() => setTab("chats")}>
-            Chats
-          </button>
-          <button
-            className={tab === "visuals" ? "active" : undefined}
-            onClick={() => setTab("visuals")}
-          >
-            Visuals
-          </button>
-        </div>
-        {tab === "chats" ? (
-          <>
-            <button className="new-chat" onClick={newChat}>
-              + New chat
-            </button>
-            <div className="chat-sidebar-list">
-              {conversations.data === null && !conversations.error && <SidebarSkeleton />}
-              {conversationList.map((conversation) => (
-                <div
-                  key={conversation.conversation_id}
-                  className={
-                    conversation.conversation_id === activeId ? "chat-convo active" : "chat-convo"
-                  }
-                  onClick={() => void openConversation(conversation.conversation_id)}
-                >
-                  <div className="chat-convo-title">{conversation.title || "(empty chat)"}</div>
-                  <div className="chat-convo-time muted">{fmtRelative(conversation.mtime)}</div>
-                </div>
-              ))}
-              {conversations.data !== null && conversationList.length === 0 && (
-                <p className="muted small chat-sidebar-empty">no conversations yet</p>
-              )}
+        <div className="chat-sidebar-label turn-label">Conversations</div>
+        <button className="new-chat" onClick={newChat}>
+          + New chat
+        </button>
+        <div className="chat-sidebar-list">
+          {conversations.data === null && !conversations.error && <SidebarSkeleton />}
+          {conversationList.map((conversation) => (
+            <div
+              key={conversation.conversation_id}
+              className={
+                conversation.conversation_id === activeId ? "chat-convo active" : "chat-convo"
+              }
+              onClick={() => void openConversation(conversation.conversation_id)}
+            >
+              <div className="chat-convo-title">{conversation.title || "(empty chat)"}</div>
+              <div className="chat-convo-time muted">{fmtRelative(conversation.mtime)}</div>
             </div>
-          </>
-        ) : (
-          <div className="chat-sidebar-list">
-            {visuals.data === null && !visuals.error && <SidebarSkeleton />}
-            {visualList.map((visual) => (
-              <div key={visual.name} className="visual-card" onClick={() => setOverlay(visual)}>
-                <div className="chat-convo-title">{visualTitle(visual)}</div>
-                <div className="chat-convo-time muted">{fmtRelative(visual.mtime)}</div>
-              </div>
-            ))}
-            {visuals.data !== null && visualList.length === 0 && (
-              <p className="muted small chat-sidebar-empty">
-                no visuals yet: ask the chat for a chart and it will appear here
-              </p>
-            )}
-          </div>
-        )}
+          ))}
+          {conversations.data !== null && conversationList.length === 0 && (
+            <p className="muted small chat-sidebar-empty">no conversations yet</p>
+          )}
+        </div>
       </aside>
 
       <section className="chat-main">
@@ -441,14 +398,6 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
           </div>
         </div>
       </section>
-
-      {overlay !== null && (
-        <VisualOverlay
-          url={overlay.url}
-          title={visualTitle(overlay)}
-          onClose={() => setOverlay(null)}
-        />
-      )}
     </div>
   );
 }

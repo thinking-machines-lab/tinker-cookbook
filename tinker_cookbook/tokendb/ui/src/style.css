@@ -59,6 +59,11 @@ a {
 a:hover {
   text-decoration: underline;
 }
+a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
 h2 {
   font-size: 15px;
@@ -115,14 +120,19 @@ h2 {
   min-width: 2.5em;
 }
 
-/* --- Header --- */
+/* --- Navigation ---
+   Two levels, two bars. Level 1 (.app-header) holds the brand/home link and
+   the app-wide destinations; level 2 (.context-bar) exists only inside a run
+   and holds the breadcrumb, the run identity chips, and the run tabs. Both
+   levels use the same underline-tab pattern (.tab/.tab-current): the current
+   location is plain text with an accent underline, never a link. */
 
 .app-header {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 20px;
-  min-height: 52px;
+  padding: 0 20px;
+  height: 52px;
   box-sizing: border-box;
   background: var(--surface);
   border-bottom: 1px solid var(--hairline);
@@ -133,17 +143,93 @@ h2 {
   align-items: center;
   gap: 12px;
 }
-.app-header .brand {
+a.brand {
+  color: var(--text);
   font-weight: 700;
   font-size: 14px;
 }
-.app-header nav {
+a.brand:hover {
+  text-decoration: none;
+  opacity: 0.7;
+}
+.app-nav,
+.run-tabs {
   display: flex;
+  gap: 4px;
+  align-self: stretch;
+}
+
+/* Underline tabs: inactive tabs are quiet links, the current one is a
+   non-interactive span carrying aria-current and the accent underline. */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+a.tab:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+span.tab-current {
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Level-2 context bar (inside a run only). */
+.context-bar {
+  display: flex;
+  align-items: center;
   gap: 12px;
+  padding: 0 20px;
+  height: 41px;
+  box-sizing: border-box;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
 }
-.app-header nav .nav-current {
-  font-weight: 500;
+.context-bar .crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
 }
+.crumb-sep {
+  color: var(--text-placeholder);
+}
+.crumb-current {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.run-tabs {
+  margin-left: auto;
+}
+
+/* Scope heading for full-page screens without a context bar (all-runs chat);
+   its 41px footprint matches .context-bar so chat heights line up. */
+.page-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  height: 33px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.page-heading h1 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+
 main {
   padding: 16px 20px 40px;
   max-width: 1500px;
@@ -564,11 +650,14 @@ table.facts td {
 
 /* --- Chat --- */
 
+/* Height: viewport minus the two nav bars (52 + 41), main's top padding (16)
+   and bottom breathing room (32). The all-runs chat has a .page-heading of
+   the same 41px footprint instead of a context bar, so one value fits both. */
 .chat-layout {
   display: flex;
   gap: 16px;
   align-items: stretch;
-  height: calc(100vh - 100px);
+  height: calc(100vh - 141px);
 }
 .chat-sidebar {
   width: 240px;
@@ -580,23 +669,8 @@ table.facts td {
   border-radius: 10px;
   overflow: hidden;
 }
-.chat-sidebar-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--hairline);
-}
-.chat-sidebar-tabs button {
-  flex: 1;
-  height: 34px;
-  border: none;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-  color: var(--text-secondary);
-}
-.chat-sidebar-tabs button.active {
-  color: var(--text);
-  font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--accent);
+.chat-sidebar-label {
+  margin: 10px 10px 0;
 }
 button.new-chat {
   margin: 8px 8px 0;
@@ -612,14 +686,12 @@ button.new-chat {
   padding: 7px 9px;
   margin: 0;
 }
-.chat-convo,
-.visual-card {
+.chat-convo {
   padding: 7px 9px;
   border-radius: 8px;
   cursor: pointer;
 }
-.chat-convo:hover,
-.visual-card:hover {
+.chat-convo:hover {
   background: rgba(0, 0, 0, 0.04);
 }
 .chat-convo.active {
@@ -780,7 +852,20 @@ button.new-chat {
   }
 }
 
-/* Inline visuals + gallery overlay */
+/* Inline visuals, the Visuals-tab gallery, and the full-screen overlay */
+.visual-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 12px;
+}
+.visual-grid .visual-frame {
+  margin: 0;
+  background: var(--surface);
+}
+.visual-frame-skeleton-body {
+  height: 320px;
+  background: rgba(0, 0, 0, 0.03);
+}
 .visual-frame {
   border: 1px solid var(--hairline);
   border-radius: 10px;

@@ -128,12 +128,7 @@ export function Dashboard() {
   return (
     <>
       <AppHeader
-        nav={
-          <>
-            <span className="nav-current">Dashboard</span>
-            <Link to="/chat">Chat across runs</Link>
-          </>
-        }
+        mode="registry"
         right={
           wsStatus === "live" ? (
             <Badge variant="success">live</Badge>
@@ -155,7 +150,9 @@ export function Dashboard() {
         </div>
         <div className="dashboard-actions">
           <Link to="/chat">
-            <button className="primary">Chat across all runs</button>
+            <button className="primary" tabIndex={-1}>
+              Open all-runs chat
+            </button>
           </Link>
           <span className="muted small">
             or click a run to chat about it: ask about reward trends, failure modes, specific

@@ -461,9 +461,6 @@ export function Detail() {
     <div className="detail-layout">
       <div className="transcript">
         <div className="detail-header">
-          <Link to="../chat" relative="route">
-            ← chat
-          </Link>
           <h2>
             {params.split} · iteration {params.iteration} · group {params.group_idx} · traj{" "}
             {params.traj_idx}
