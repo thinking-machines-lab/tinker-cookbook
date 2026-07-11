@@ -7,6 +7,7 @@ import { getJSON, type DashboardRun } from "../api";
 import { Badge } from "../components/Badge";
 import { CellValue, DataTable } from "../components/DataTable";
 import { Sparkline } from "../components/Sparkline";
+import { AppHeader } from "../components/AppHeader";
 import { StatCard } from "../components/StatCard";
 import { useApi } from "../hooks/useApi";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -93,18 +94,21 @@ export function Dashboard() {
 
   return (
     <>
-      <header className="app-header">
-        <span className="brand">Token DB</span>
-        <nav>
-          <span className="nav-current">Dashboard</span>
-          <Link to="/chat">Chat across runs</Link>
-        </nav>
-        {wsStatus === "live" ? (
-          <Badge variant="success">live</Badge>
-        ) : (
-          <Badge variant="neutral">offline</Badge>
-        )}
-      </header>
+      <AppHeader
+        nav={
+          <>
+            <span className="nav-current">Dashboard</span>
+            <Link to="/chat">Chat across runs</Link>
+          </>
+        }
+        right={
+          wsStatus === "live" ? (
+            <Badge variant="success">live</Badge>
+          ) : (
+            <Badge variant="neutral">offline</Badge>
+          )
+        }
+      />
       <main>
         <div className="stat-grid">
           <StatCard title="Runs" value={fmtCount(sorted.length)} description="registered runs" />

@@ -93,6 +93,10 @@ export interface AgentConfig {
   provider: string;
   model: string;
   has_key: boolean;
+  /** Curated model suggestions per provider (the dropdown options). */
+  models: Record<string, string[]>;
+  /** The server-side default model per provider. */
+  default_model: Record<string, string>;
 }
 
 export interface ConversationSummary {

@@ -181,7 +181,7 @@ def test_anthropic_request_shape():
     assert url == "https://api.anthropic.com/v1/messages"
     assert headers["x-api-key"] == "sk-test"
     assert headers["anthropic-version"]
-    assert payload["model"] == "claude-sonnet-4-6"
+    assert payload["model"] == "claude-fable-5"
     assert payload["max_tokens"] == 1234
     assert payload["system"] == "SYSTEM"
     assert payload["stream"] is True

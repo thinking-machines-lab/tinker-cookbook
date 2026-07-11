@@ -94,8 +94,16 @@ h2 {
   align-items: center;
   gap: 16px;
   padding: 10px 20px;
+  min-height: 52px;
+  box-sizing: border-box;
   background: var(--surface);
   border-bottom: 1px solid var(--hairline);
+}
+.app-header .app-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .app-header .brand {
   font-weight: 700;
@@ -108,10 +116,6 @@ h2 {
 .app-header nav .nav-current {
   font-weight: 500;
 }
-.app-header > .muted {
-  margin-left: auto;
-}
-
 main {
   padding: 16px 20px 40px;
   max-width: 1500px;

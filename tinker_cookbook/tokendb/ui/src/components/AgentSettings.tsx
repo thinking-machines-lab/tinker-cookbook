@@ -6,15 +6,34 @@ import { useState } from "react";
 import { getJSON, postJSON, type AgentConfig } from "../api";
 import { useApi } from "../hooks/useApi";
 
+const CUSTOM = "__custom__";
+
 export function AgentSettings({ onSaved }: { onSaved?: () => void }) {
   const config = useApi(() => getJSON<AgentConfig>("/api/agent/config"), []);
   const [provider, setProvider] = useState<string | null>(null); // null = unchanged
-  const [model, setModel] = useState("");
+  const [modelChoice, setModelChoice] = useState<string | null>(null); // null = unchanged
+  const [customModel, setCustomModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const current = config.data;
+
+  const activeProvider = provider ?? current?.provider ?? "anthropic";
+  const knownModels = current?.models?.[activeProvider] ?? [];
+  // Untouched dropdown reflects the server's current model; a configured
+  // model outside the curated list shows as "custom".
+  const selectedModel =
+    modelChoice ??
+    (current === null || knownModels.includes(current.model) ? current?.model ?? "" : CUSTOM);
+  const customValue =
+    modelChoice === null && selectedModel === CUSTOM ? current?.model ?? "" : customModel;
+
+  const changeProvider = (next: string) => {
+    setProvider(next);
+    // Each provider gets its own default preselected.
+    setModelChoice(current?.default_model?.[next] ?? null);
+  };
 
   const save = async () => {
     setSaving(true);
@@ -22,7 +41,9 @@ export function AgentSettings({ onSaved }: { onSaved?: () => void }) {
     try {
       const body: Record<string, string> = {};
       if (provider !== null) body.provider = provider;
-      if (model.trim()) body.model = model.trim();
+      if (modelChoice !== null) {
+        body.model = modelChoice === CUSTOM ? customModel.trim() : modelChoice;
+      }
       if (apiKey) body.api_key = apiKey;
       await postJSON<AgentConfig>("/api/agent/config", body);
       setApiKey("");
@@ -41,22 +62,35 @@ export function AgentSettings({ onSaved }: { onSaved?: () => void }) {
     <div className="agent-settings">
       <label>
         <span>provider</span>
-        <select
-          value={provider ?? current?.provider ?? "anthropic"}
-          onChange={(event) => setProvider(event.target.value)}
-        >
+        <select value={activeProvider} onChange={(event) => changeProvider(event.target.value)}>
           <option value="anthropic">anthropic</option>
           <option value="openai">openai</option>
         </select>
       </label>
       <label>
         <span>model</span>
-        <input
-          placeholder={current?.model ?? "default"}
-          value={model}
-          onChange={(event) => setModel(event.target.value)}
-        />
+        <select value={selectedModel} onChange={(event) => setModelChoice(event.target.value)}>
+          {knownModels.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+          <option value={CUSTOM}>Custom…</option>
+        </select>
       </label>
+      {selectedModel === CUSTOM && (
+        <label>
+          <span>custom model</span>
+          <input
+            placeholder="model id"
+            value={customValue}
+            onChange={(event) => {
+              setModelChoice(CUSTOM);
+              setCustomModel(event.target.value);
+            }}
+          />
+        </label>
+      )}
       <label>
         <span>API key</span>
         <input

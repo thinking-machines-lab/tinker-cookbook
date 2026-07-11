@@ -1,6 +1,7 @@
 import { HashRouter, Link, Navigate, Outlet, Route, Routes, useParams } from "react-router-dom";
 import { apiBase, getJSON, type Mode, type RunInfo } from "./api";
 import { SettingsButton } from "./components/AgentSettings";
+import { AppHeader } from "./components/AppHeader";
 import { useApi } from "./hooks/useApi";
 import { Chat } from "./screens/Chat";
 import { Dashboard } from "./screens/Dashboard";
@@ -13,21 +14,26 @@ function RunLayout({ mode }: { mode: Mode }) {
   const model = run.data?.context?.model_name ?? "unknown model";
   return (
     <>
-      <header className="app-header">
-        <span className="brand">Token DB</span>
-        <nav>
-          {mode === "registry" && <Link to="/">Dashboard</Link>}
-          <Link to="chat">Chat</Link>
-        </nav>
-        <span className="muted small mono">
-          {run.data
-            ? `${model} · run ${run.data.run_id} · attempt ${run.data.run_attempt}`
-            : run.error
-              ? "run.json not found"
-              : ""}
-        </span>
-        <SettingsButton />
-      </header>
+      <AppHeader
+        nav={
+          <>
+            {mode === "registry" && <Link to="/">Dashboard</Link>}
+            <Link to="chat">Chat</Link>
+          </>
+        }
+        right={
+          <>
+            <span className="muted small mono">
+              {run.data
+                ? `${model} · run ${run.data.run_id} · attempt ${run.data.run_attempt}`
+                : run.error
+                  ? "run.json not found"
+                  : ""}
+            </span>
+            <SettingsButton />
+          </>
+        }
+      />
       <main>
         <Outlet />
       </main>
@@ -39,15 +45,15 @@ function RunLayout({ mode }: { mode: Mode }) {
 function GlobalChatLayout() {
   return (
     <>
-      <header className="app-header">
-        <span className="brand">Token DB</span>
-        <nav>
-          <Link to="/">Dashboard</Link>
-          <span className="nav-current">Chat across runs</span>
-        </nav>
-        <span className="muted small mono" />
-        <SettingsButton />
-      </header>
+      <AppHeader
+        nav={
+          <>
+            <Link to="/">Dashboard</Link>
+            <span className="nav-current">Chat across runs</span>
+          </>
+        }
+        right={<SettingsButton />}
+      />
       <main>
         <Chat scope="global" />
       </main>
