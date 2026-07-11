@@ -87,6 +87,34 @@ h2 {
   color: var(--text-secondary);
 }
 
+/* --- Loading skeletons ---
+   Pre-data placeholders sized to match the loaded content, so data arriving
+   never shifts the layout. */
+
+.skeleton {
+  display: inline-block;
+  background: rgba(0, 0, 0, 0.07);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.skeleton-line {
+  height: 1em;
+  width: 100%;
+  vertical-align: middle;
+}
+.skeleton-row .skeleton-line {
+  min-width: 2.5em;
+}
+
 /* --- Header --- */
 
 .app-header {
@@ -567,8 +595,11 @@ button.new-chat {
   overflow-y: auto;
   padding: 8px;
 }
+/* Empty states occupy the same box as one list row, so an empty list and a
+   loading list render at the same height. */
 .chat-sidebar-empty {
-  padding: 4px;
+  padding: 7px 9px;
+  margin: 0;
 }
 .chat-convo,
 .visual-card {
@@ -813,6 +844,14 @@ button.new-chat {
   font-family: var(--font-sans);
   font-size: 13px;
   resize: none;
+}
+/* Always-present connection strip below the composer: fixed height in every
+   state so the composer never moves when the socket connects or drops. */
+.composer-status {
+  height: 18px;
+  line-height: 18px;
+  margin-top: 6px;
+  overflow: hidden;
 }
 .setup-card {
   border: 1px solid var(--hairline);

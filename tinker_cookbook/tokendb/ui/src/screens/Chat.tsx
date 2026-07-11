@@ -105,6 +105,25 @@ function ToolStep({ item }: { item: Extract<ChatItem, { kind: "tool" }> }) {
   );
 }
 
+/** Sidebar placeholder rows, sized like real conversation/visual rows, shown
+ * while the list is loading so it doesn't pop in and reflow. */
+function SidebarSkeleton() {
+  return (
+    <>
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} aria-hidden="true" className="chat-convo">
+          <div className="chat-convo-title">
+            <span className="skeleton skeleton-line" style={{ width: `${72 - i * 9}%` }} />
+          </div>
+          <div className="chat-convo-time">
+            <span className="skeleton skeleton-line" style={{ width: "40%" }} />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** Fallback title for gallery cards: the slug part of the visual's filename. */
 function visualTitle(visual: VisualInfo): string {
   const slug = visual.name
@@ -286,6 +305,7 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
               + New chat
             </button>
             <div className="chat-sidebar-list">
+              {conversations.data === null && !conversations.error && <SidebarSkeleton />}
               {conversationList.map((conversation) => (
                 <div
                   key={conversation.conversation_id}
@@ -305,6 +325,7 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
           </>
         ) : (
           <div className="chat-sidebar-list">
+            {visuals.data === null && !visuals.error && <SidebarSkeleton />}
             {visualList.map((visual) => (
               <div key={visual.name} className="visual-card" onClick={() => setOverlay(visual)}>
                 <div className="chat-convo-title">{visualTitle(visual)}</div>
@@ -411,11 +432,12 @@ export function Chat({ scope }: { scope: "run" | "global" }) {
                 </button>
               )}
             </div>
-            {status !== "live" && (
-              <p className="muted small">
-                {status === "connecting" ? "connecting…" : "offline: is the viewer server running?"}
-              </p>
-            )}
+            {/* Fixed-height strip in every state so the composer never moves
+                when the socket connects or drops. */}
+            <div className="composer-status muted small">
+              {status === "connecting" && "connecting…"}
+              {status === "offline" && "offline: is the viewer server running?"}
+            </div>
           </div>
         </div>
       </section>

@@ -332,7 +332,52 @@ export function Detail() {
   const detail = useRolloutDetail(base, params, paramsKey);
 
   if (detail.error) return <p className="error">{detail.error}</p>;
-  if (!detail.data) return <p className="muted">loading…</p>;
+  if (!detail.data) {
+    // Skeleton mirroring the loaded layout (header, step cards, facts
+    // sidebar) so the page doesn't jump when the rollout arrives.
+    return (
+      <div className="detail-layout" aria-hidden="true">
+        <div className="transcript">
+          <div className="detail-header">
+            <h2>
+              <span className="skeleton skeleton-line" style={{ width: "22em" }} />
+            </h2>
+          </div>
+          {[0, 1].map((i) => (
+            <div key={i} className="step-card">
+              <div className="step-meta">
+                <span className="skeleton skeleton-line" style={{ width: "12em" }} />
+              </div>
+              <div className="turn-label">
+                <span className="skeleton skeleton-line" style={{ width: "8em" }} />
+              </div>
+              <div className="ob-body">
+                <span className="skeleton skeleton-line" />
+                <span className="skeleton skeleton-line" style={{ width: "85%" }} />
+                <span className="skeleton skeleton-line" style={{ width: "60%" }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="sidebar">
+          <table className="facts">
+            <tbody>
+              {Array.from({ length: 11 }, (_, i) => (
+                <tr key={i}>
+                  <th>
+                    <span className="skeleton skeleton-line" style={{ width: "5em" }} />
+                  </th>
+                  <td>
+                    <span className="skeleton skeleton-line" style={{ width: "60%" }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="detail-layout">

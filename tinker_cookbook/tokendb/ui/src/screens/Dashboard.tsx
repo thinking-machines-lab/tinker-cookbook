@@ -72,6 +72,33 @@ function RunRow({ run }: { run: DashboardRun }) {
   );
 }
 
+const TABLE_HEAD = [
+  "status",
+  "run",
+  "model",
+  "recipe",
+  "started",
+  "last activity",
+  "iteration",
+  "rows",
+  "filtered",
+  "recent reward",
+  "reward (last 50 iterations)",
+];
+
+/** Placeholder row matching the height of a real run row while loading. */
+function SkeletonRow() {
+  return (
+    <tr aria-hidden="true" className="skeleton-row">
+      {TABLE_HEAD.map((_, i) => (
+        <td key={i}>
+          <span className="skeleton skeleton-line" />
+        </td>
+      ))}
+    </tr>
+  );
+}
+
 export function Dashboard() {
   const [runs, setRuns] = useState<DashboardRun[] | null>(null);
 
@@ -92,6 +119,12 @@ export function Dashboard() {
   const totalRows = sorted.reduce((sum, run) => sum + (run.n_rows ?? 0), 0);
   const totalFiltered = sorted.reduce((sum, run) => sum + (run.n_filtered_rows ?? 0), 0);
 
+  // While loading, the stat tiles and table keep their loaded dimensions
+  // (skeleton values/rows) so data arriving doesn't shift the layout.
+  const isLoading = runs === null && !initial.error;
+  const stat = (value: string) =>
+    isLoading ? <span className="skeleton skeleton-line" style={{ width: "2em" }} /> : value;
+
   return (
     <>
       <AppHeader
@@ -111,16 +144,15 @@ export function Dashboard() {
       />
       <main>
         <div className="stat-grid">
-          <StatCard title="Runs" value={fmtCount(sorted.length)} description="registered runs" />
-          <StatCard title="Live" value={fmtCount(nLive)} description="active in the last 2 minutes" />
-          <StatCard title="Rows" value={fmtCount(totalRows)} description="rollout rows across runs" />
+          <StatCard title="Runs" value={stat(fmtCount(sorted.length))} description="registered runs" />
+          <StatCard title="Live" value={stat(fmtCount(nLive))} description="active in the last 2 minutes" />
+          <StatCard title="Rows" value={stat(fmtCount(totalRows))} description="rollout rows across runs" />
           <StatCard
             title="Filtered"
-            value={fmtCount(totalFiltered)}
+            value={stat(fmtCount(totalFiltered))}
             description="rows dropped by filters"
           />
         </div>
-        {initial.error && runs === null && <p className="error">{initial.error}</p>}
         <div className="dashboard-actions">
           <Link to="/chat">
             <button className="primary">Chat across all runs</button>
@@ -130,32 +162,27 @@ export function Dashboard() {
             rollouts
           </span>
         </div>
-        <DataTable
-          head={[
-            "status",
-            "run",
-            "model",
-            "recipe",
-            "started",
-            "last activity",
-            "iteration",
-            "rows",
-            "filtered",
-            "recent reward",
-            "reward (last 50 iterations)",
-          ]}
-        >
+        <DataTable head={TABLE_HEAD}>
+          {isLoading && [0, 1, 2].map((i) => <SkeletonRow key={i} />)}
+          {initial.error && runs === null && (
+            <tr>
+              <td colSpan={TABLE_HEAD.length} className="error">
+                {initial.error}
+              </td>
+            </tr>
+          )}
+          {runs !== null && sorted.length === 0 && (
+            <tr>
+              <td colSpan={TABLE_HEAD.length} className="muted">
+                no registered runs yet: start a training run with token DB capture enabled and it
+                will appear here
+              </td>
+            </tr>
+          )}
           {sorted.map((run) => (
             <RunRow key={`${run.run_id}/${run.run_attempt}`} run={run} />
           ))}
         </DataTable>
-        {runs !== null && sorted.length === 0 && (
-          <p className="muted">
-            no registered runs yet: start a training run with token DB capture enabled and it will
-            appear here
-          </p>
-        )}
-        {runs === null && !initial.error && <p className="muted">loading…</p>}
       </main>
     </>
   );
