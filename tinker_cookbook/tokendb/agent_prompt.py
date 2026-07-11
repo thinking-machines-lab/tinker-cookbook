@@ -58,9 +58,23 @@ Key columns of the `rollouts` view:
 - `split` ('train', 'test', ...), `iteration` (training step; -1 can appear
   for out-of-loop captures), `sampling_client_step`, `tags` (list<string>),
   `env_row_id` (dataset row identity, useful for comparing the same problem
-  across iterations), `ts` (UTC timestamp), `metrics` / `logs` / `extra`
-  (JSON strings; parse with DuckDB's JSON functions, e.g.
-  `json_extract_string(metrics, '$.foo')`).
+  across iterations), `ts` (UTC timestamp).
+- `metrics` (map<varchar, float>): numeric per-row values. Access entries with
+  map syntax: `metrics['acc']` (NULL when the key is absent). Group-level
+  metrics are under a `group/` prefix (e.g. `metrics['group/rubric/score']`),
+  denormalized onto every row of the trajectory. Discover keys with
+  `SELECT DISTINCT unnest(map_keys(metrics)) FROM rollouts`. Values can be
+  NaN (filter with `isnan(...)` where it matters).
+- `attrs` (map<varchar, varchar>): categorical dimensions (dataset, task
+  name, ...), e.g. `attrs['dataset'] = 'gsm8k'`; keys via `map_keys(attrs)`.
+- `token_metrics` (map<varchar, list<float>>): named per-token float arrays
+  parallel to `ac_tokens` (e.g. distillation teacher logprobs under
+  `teacher/logprobs`, per-token KL, token-level rewards). Empty for most
+  runs; keys via `map_keys(token_metrics)`.
+- `tool_calls` (list<struct(name, args_json, error_type, should_stop)>,
+  nullable): structured per-turn tool calls; explode with `unnest(tool_calls)`.
+- `logs` / `extra` (JSON strings; parse with DuckDB's JSON functions, e.g.
+  `json_extract_string(logs, '$.foo')`).
 
 ## Views
 

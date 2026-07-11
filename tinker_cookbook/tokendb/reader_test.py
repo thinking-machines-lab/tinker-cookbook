@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -471,3 +472,167 @@ class TestSubscribe:
         received = asyncio.run(run())
         assert [row["ac_text"] for row in received] == ["live row 1", "live row 2"]
         assert all(row["split"] == "train" for row in received)
+
+
+# --- v1 segment normalization ---
+
+
+def v1_arrow_schema():
+    """The schema_version=1 arrow schema shape (metrics/logs/extra as JSON
+    strings; no attrs / tool_calls columns), as old writers produced it."""
+    import pyarrow as pa
+
+    return pa.schema(
+        [
+            pa.field("run_id", pa.string(), nullable=False),
+            pa.field("run_attempt", pa.int32(), nullable=False),
+            pa.field("writer_id", pa.string(), nullable=False),
+            pa.field("split", pa.string(), nullable=False),
+            pa.field("iteration", pa.int32(), nullable=False),
+            pa.field("sampling_client_step", pa.int32(), nullable=True),
+            pa.field("group_idx", pa.int32(), nullable=False),
+            pa.field("traj_idx", pa.int32(), nullable=False),
+            pa.field("step_idx", pa.int32(), nullable=False),
+            pa.field("tags", pa.list_(pa.string()), nullable=False),
+            pa.field("env_row_id", pa.string(), nullable=True),
+            pa.field("ts", pa.timestamp("us", tz="UTC"), nullable=False),
+            pa.field("source", pa.string(), nullable=False),
+            pa.field("ob_tokens", pa.list_(pa.int32()), nullable=False),
+            pa.field("ob_is_delta", pa.bool_(), nullable=False),
+            pa.field("ac_tokens", pa.list_(pa.int32()), nullable=False),
+            pa.field("ac_logprobs", pa.list_(pa.float32()), nullable=True),
+            pa.field("stop_reason", pa.string(), nullable=True),
+            pa.field("has_images", pa.bool_(), nullable=False),
+            pa.field("reward", pa.float32(), nullable=False),
+            pa.field("episode_done", pa.bool_(), nullable=False),
+            pa.field("total_reward", pa.float32(), nullable=False),
+            pa.field("final_reward", pa.float32(), nullable=False),
+            pa.field("ob_text", pa.string(), nullable=True),
+            pa.field("ac_text", pa.string(), nullable=True),
+            pa.field("metrics", pa.string(), nullable=False),
+            pa.field("logs", pa.string(), nullable=False),
+            pa.field("extra", pa.string(), nullable=False),
+            pa.field("filtered_reason", pa.string(), nullable=True),
+        ]
+    )
+
+
+def write_v1_segment(log_path: Path, rows: list[dict], name: str = "seg-v1host-1-000000.parquet"):
+    """Write a v1-shaped segment with raw pyarrow, as an old writer would."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    defaults = {
+        "run_id": "v1run",
+        "run_attempt": 1,
+        "writer_id": "v1host-1",
+        "split": "train",
+        "iteration": 0,
+        "sampling_client_step": None,
+        "group_idx": 0,
+        "traj_idx": 0,
+        "step_idx": 0,
+        "tags": [],
+        "env_row_id": None,
+        "ts": datetime.now(UTC),
+        "source": "rollout",
+        "ob_tokens": [1, 2],
+        "ob_is_delta": False,
+        "ac_tokens": [3],
+        "ac_logprobs": None,
+        "stop_reason": "stop",
+        "has_images": False,
+        "reward": 0.0,
+        "episode_done": True,
+        "total_reward": 0.0,
+        "final_reward": 0.0,
+        "ob_text": None,
+        "ac_text": None,
+        "metrics": "{}",
+        "logs": "{}",
+        "extra": "{}",
+        "filtered_reason": None,
+    }
+    table = pa.Table.from_pylist([{**defaults, **row} for row in rows], schema=v1_arrow_schema())
+    segments_dir = log_path / "tokens" / "segments"
+    segments_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, segments_dir / name, compression="zstd")
+
+
+class TestTokenMetricsReadback:
+    def test_token_metrics_roundtrip_through_reader(self, tmp_path: Path):
+        with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [
+                    make_row(
+                        ac_tokens=[4, 5],
+                        token_metrics={
+                            "teacher/logprobs": [-0.5, float("nan")],
+                            "advantage": [1.0, -1.0],
+                        },
+                    )
+                ]
+            )
+        db = TokenDB(tmp_path)
+        (row,) = db.query()
+        assert row["token_metrics"]["advantage"] == [pytest.approx(1.0), pytest.approx(-1.0)]
+        assert row["token_metrics"]["teacher/logprobs"][0] == pytest.approx(-0.5)
+        assert math.isnan(row["token_metrics"]["teacher/logprobs"][1])
+        # Map access works in SQL over the list-valued map.
+        hits = db.sql("SELECT token_metrics['advantage'][1] AS a0 FROM rollouts")
+        assert hits[0]["a0"] == pytest.approx(1.0)
+
+
+class TestV1Normalization:
+    def test_v1_segment_loads_and_queries_as_v2(self, tmp_path: Path):
+        # v1's json.dumps emits a bare NaN token (invalid JSON) for NaN
+        # metrics; the lenient parse must map it to float('nan').
+        write_v1_segment(
+            tmp_path,
+            [
+                {
+                    "metrics": json.dumps({"acc": float("nan"), "score": 1, "note": "skip-me"}),
+                    "ac_text": "v1 row",
+                },
+                {"step_idx": 1, "metrics": "not json at all"},
+            ],
+        )
+        db = TokenDB(tmp_path)
+        rows = db.query(split="train")
+        assert len(rows) == 2
+        got = {row["step_idx"]: row for row in rows}
+        assert got[0]["metrics"]["score"] == pytest.approx(1.0)
+        assert math.isnan(got[0]["metrics"]["acc"])
+        assert "note" not in got[0]["metrics"]  # non-float-coercible dropped
+        assert got[1]["metrics"] == {}  # unparseable payload -> empty map
+        assert all(row["attrs"] == {} for row in rows)
+        assert all(row["token_metrics"] == {} for row in rows)  # v1: empty column
+        assert all(row["tool_calls"] is None for row in rows)
+        # Typed-map SQL works over normalized v1 rows.
+        hits = db.sql("SELECT step_idx FROM rollouts WHERE metrics['score'] = 1.0")
+        assert [row["step_idx"] for row in hits] == [0]
+
+    def test_mixed_v1_and_v2_store(self, tmp_path: Path):
+        write_v1_segment(
+            tmp_path, [{"iteration": 0, "metrics": json.dumps({"acc": 0.5}), "ac_text": "old"}]
+        )
+        with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [
+                    make_row(
+                        iteration=1,
+                        metrics={"acc": 1.0},
+                        attrs={"dataset": "gsm8k"},
+                        ac_text="new",
+                    )
+                ]
+            )
+        db = TokenDB(tmp_path)
+        rows = db.query()
+        assert [row["ac_text"] for row in rows] == ["old", "new"]
+        assert [row["metrics"]["acc"] for row in rows] == [pytest.approx(0.5), pytest.approx(1.0)]
+        assert rows[0]["attrs"] == {}
+        assert rows[1]["attrs"] == {"dataset": "gsm8k"}
+        # Aggregate across both schema generations in one SQL query.
+        agg = db.sql("SELECT avg(metrics['acc']) AS mean_acc FROM rollouts")
+        assert agg[0]["mean_acc"] == pytest.approx(0.75)

@@ -105,6 +105,15 @@ def record_groups(
     - ``ac_tokens`` / ``ac_logprobs`` / ``stop_reason`` come from the
       transition's ``ac``.
     - ``total_reward`` / ``final_reward`` are denormalized per trajectory.
+    - ``metrics`` merges ``Transition.metrics`` with the trajectory's
+      group-level metrics (``TrajectoryGroup.metrics_G``) under a ``group/``
+      key prefix, denormalized onto every row of the trajectory (like
+      ``final_reward``). Values are float-coerced at row construction
+      (:func:`~tinker_cookbook.tokendb.schema.coerce_metrics`).
+    - ``token_metrics`` (named per-token float arrays parallel to
+      ``ac_tokens``: teacher logprobs, per-token KL, token-level rewards,
+      per-token entropy) is passed through when a transition carries a
+      ``token_metrics`` mapping; the built-in envs do not emit one yet.
     - ``logs["env/row_id"]`` is promoted to the ``env_row_id`` column.
     - ``ob_text`` / ``ac_text`` are decoded when *store_text* and *tokenizer*
       are given; for delta rows only the delta portion is decoded.
@@ -139,13 +148,27 @@ def record_groups(
             group_step = sampling_client_step
         total_rewards_G = trajectory_group.get_total_rewards()
 
+        metrics_G = trajectory_group.metrics_G
+
         for traj_idx, trajectory in enumerate(trajectory_group.trajectories_G):
+            group_metrics = {
+                f"group/{key}": value
+                for key, value in (metrics_G[traj_idx] if traj_idx < len(metrics_G) else {}).items()
+            }
             prev_sequence: list[int] = []
             for step_idx, transition in enumerate(trajectory.transitions):
                 ob_tokens, has_images = extract_ob_tokens(transition.ob)
                 stored_ob, ob_is_delta = compute_ob_delta(prev_sequence, ob_tokens)
                 ac_tokens = list(transition.ac.tokens)
                 prev_sequence = ob_tokens + ac_tokens
+                # Third-party env adapters (e.g. verifiers) can leave the stop
+                # reason unset despite the declared type; store NULL rather
+                # than fail capture.
+                stop_reason: Any = transition.ac.stop_reason
+                # Forward-compat plumb: Transition does not declare a
+                # token_metrics field yet, but a transition (or subclass)
+                # carrying one gets its per-token arrays captured.
+                token_metrics = getattr(transition, "token_metrics", None)
 
                 ob_text: str | None = None
                 ac_text: str | None = None
@@ -169,7 +192,7 @@ def record_groups(
                             if transition.ac.maybe_logprobs is not None
                             else None
                         ),
-                        stop_reason=transition.ac.stop_reason,
+                        stop_reason=str(stop_reason) if stop_reason is not None else None,
                         has_images=has_images,
                         reward=transition.reward,
                         episode_done=transition.episode_done,
@@ -177,7 +200,8 @@ def record_groups(
                         final_reward=trajectory_group.final_rewards_G[traj_idx],
                         ob_text=ob_text,
                         ac_text=ac_text,
-                        metrics=dict(transition.metrics),
+                        metrics={**transition.metrics, **group_metrics},
+                        token_metrics=dict(token_metrics) if token_metrics else {},
                         logs=dict(transition.logs),
                         env_row_id=str(env_row_id) if env_row_id is not None else None,
                         sampling_client_step=group_step,

@@ -49,6 +49,19 @@ RUN_JSON_PATH = f"{TOKENS_DIR}/run.json"
 DEFAULT_BUFFER_ROWS = 2048
 DEFAULT_FLUSH_INTERVAL_S = 5.0
 
+# Observed-keys manifest lists are capped so a manifest line stays well under
+# the 4KB append-atomicity budget even for pathological key cardinalities.
+MANIFEST_MAX_KEYS = 200
+
+
+def _observed_keys(values: set[str]) -> tuple[list[str], bool]:
+    """Sorted observed-keys list for a manifest line, capped at
+    :data:`MANIFEST_MAX_KEYS` (returns ``(keys, truncated)``)."""
+    keys = sorted(values)
+    if len(keys) > MANIFEST_MAX_KEYS:
+        return keys[:MANIFEST_MAX_KEYS], True
+    return keys, False
+
 
 def make_writer_id() -> str:
     """Return a writer ID unique across processes and hosts.
@@ -279,6 +292,17 @@ class TokenDbWriter:
             # Segment fully written BEFORE its manifest line: a crash between
             # the two leaves an orphan segment, never a dangling manifest entry.
             self._storage.write(f"{SEGMENTS_DIR}/{segment_name}", data)
+            # Observed-keys manifest: the sorted unique metrics/attrs/
+            # token_metrics keys and tags seen in this flush, so readers can
+            # build a per-run schema card without scanning segment bytes.
+            metrics_keys, metrics_truncated = _observed_keys(
+                {key for row in rows for key in row.metrics}
+            )
+            attrs_keys, attrs_truncated = _observed_keys({key for row in rows for key in row.attrs})
+            token_metrics_keys, token_metrics_truncated = _observed_keys(
+                {key for row in rows for key in row.token_metrics}
+            )
+            tags, tags_truncated = _observed_keys({tag for row in rows for tag in row.tags})
             manifest_line = {
                 "path": f"segments/{segment_name}",
                 "n_rows": len(rows),
@@ -289,6 +313,14 @@ class TokenDbWriter:
                 "run_attempt": self.run_attempt,
                 "writer_id": self.writer_id,
                 "schema_version": SCHEMA_VERSION,
+                "metrics_keys": metrics_keys,
+                "attrs_keys": attrs_keys,
+                "token_metrics_keys": token_metrics_keys,
+                "tags": tags,
+                "keys_truncated": metrics_truncated
+                or attrs_truncated
+                or token_metrics_truncated
+                or tags_truncated,
             }
             self._storage.append(self._manifest_path, (json.dumps(manifest_line) + "\n").encode())
 

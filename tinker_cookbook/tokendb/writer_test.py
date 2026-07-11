@@ -1,6 +1,8 @@
 """Tests for the token DB schema and parquet segment writer."""
 
 import json
+import logging
+import math
 import threading
 import time
 from pathlib import Path
@@ -13,8 +15,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from tinker_cookbook.stores.storage import LocalStorage
-from tinker_cookbook.tokendb.schema import SCHEMA_VERSION, TokenRow, compute_ob_delta
+from tinker_cookbook.tokendb.schema import (
+    SCHEMA_VERSION,
+    TokenRow,
+    coerce_attrs,
+    coerce_metrics,
+    coerce_token_metrics,
+    compute_ob_delta,
+)
 from tinker_cookbook.tokendb.writer import (
+    MANIFEST_MAX_KEYS,
     RUN_JSON_PATH,
     SEGMENTS_DIR,
     TOKENS_DIR,
@@ -115,7 +125,10 @@ class TestRoundtrip:
         assert got["final_reward"] == pytest.approx(1.0)
         assert got["ob_text"] == "hello"
         assert got["ac_text"] == "world"
-        assert json.loads(got["metrics"]) == {"format_ok": 1}
+        assert dict(got["metrics"]) == {"format_ok": 1.0}
+        assert dict(got["attrs"]) == {}
+        assert dict(got["token_metrics"]) == {}
+        assert got["tool_calls"] is None
         assert json.loads(got["logs"]) == {"env/row_id": "gsm8k-42"}
         assert json.loads(got["extra"]) == {}
         assert got["tags"] == ["gsm", "math"]
@@ -131,6 +144,46 @@ class TestRoundtrip:
         assert got["run_attempt"] == 1
         assert got["writer_id"] == writer.writer_id
 
+    def test_v2_map_columns_roundtrip(self, tmp_path: Path):
+        row = make_row(
+            metrics={"reward/format": 0.5, "acc": float("nan")},
+            attrs={"dataset": "gsm8k", "task_name": "algebra"},
+            # Parallel to ac_tokens (len 2); NaN entries must survive parquet.
+            token_metrics={"teacher/logprobs": [-1.5, float("nan")]},
+            tool_calls=[
+                {
+                    "name": "bash",
+                    "args_json": '{"cmd": "ls"}',
+                    "error_type": None,
+                    "should_stop": False,
+                },
+                {
+                    "name": "submit",
+                    "args_json": "{}",
+                    "error_type": "timeout",
+                    "should_stop": True,
+                },
+            ],
+        )
+        with TokenDbWriter(tmp_path) as writer:
+            writer.append_rows([row])
+        got = read_all_segments(tmp_path).to_pylist(maps_as_pydicts="strict")[0]
+        assert got["metrics"]["reward/format"] == pytest.approx(0.5)
+        # A literal NaN metrics value survives parquet as a real float NaN.
+        assert math.isnan(got["metrics"]["acc"])
+        assert got["attrs"] == {"dataset": "gsm8k", "task_name": "algebra"}
+        assert got["token_metrics"]["teacher/logprobs"][0] == pytest.approx(-1.5)
+        assert math.isnan(got["token_metrics"]["teacher/logprobs"][1])
+        assert got["tool_calls"] == [
+            {
+                "name": "bash",
+                "args_json": '{"cmd": "ls"}',
+                "error_type": None,
+                "should_stop": False,
+            },
+            {"name": "submit", "args_json": "{}", "error_type": "timeout", "should_stop": True},
+        ]
+
     def test_nullable_columns_roundtrip_as_none(self, tmp_path: Path):
         row = make_row(ac_logprobs=None, ob_text=None, ac_text=None)
         with TokenDbWriter(tmp_path) as writer:
@@ -141,6 +194,78 @@ class TestRoundtrip:
         assert got["ac_text"] is None
         assert got["env_row_id"] is None
         assert got["sampling_client_step"] is None
+
+
+class TestCoercion:
+    def test_metrics_coerced_to_float(self):
+        out = coerce_metrics({"a": 1, "b": 2.5, "c": True, "d": "3.5"})
+        assert out == {"a": 1.0, "b": 2.5, "c": 1.0, "d": 3.5}
+        assert all(isinstance(v, float) for v in out.values())
+
+    def test_nan_passes_through(self):
+        out = coerce_metrics({"acc": float("nan")})
+        assert math.isnan(out["acc"])
+
+    def test_non_coercible_dropped_with_single_warning(self, caplog):
+        key = "coercion_test/unique_bad_key"
+        with caplog.at_level(logging.WARNING, logger="tinker_cookbook.tokendb.schema"):
+            assert coerce_metrics({key: object(), "ok": 1}) == {"ok": 1.0}
+            assert coerce_metrics({key: [1, 2]}) == {}
+        warnings = [r for r in caplog.records if key in r.getMessage()]
+        assert len(warnings) == 1  # warn once per key, not per value
+
+    def test_large_exact_int_warns_once_but_is_stored(self, caplog):
+        key = "coercion_test/unique_big_int"
+        big = 2**24 + 1
+        with caplog.at_level(logging.WARNING, logger="tinker_cookbook.tokendb.schema"):
+            assert coerce_metrics({key: big}) == {key: float(big)}
+            coerce_metrics({key: big + 1})
+        warnings = [r for r in caplog.records if key in r.getMessage()]
+        assert len(warnings) == 1
+
+    def test_attrs_values_stringified(self):
+        assert coerce_attrs({"dataset": "math", "level": 5, "flag": True}) == {
+            "dataset": "math",
+            "level": "5",
+            "flag": "True",
+        }
+
+    def test_token_metrics_coerced_with_nan(self):
+        out = coerce_token_metrics(
+            {"teacher/logprobs": [-0.5, float("nan")], "kl": (0.1, 0.2)}, n_ac_tokens=2
+        )
+        assert out["teacher/logprobs"][0] == pytest.approx(-0.5)
+        assert math.isnan(out["teacher/logprobs"][1])
+        assert out["kl"] == [pytest.approx(0.1), pytest.approx(0.2)]
+        assert all(isinstance(v, float) for arr in out.values() for v in arr)
+
+    def test_token_metrics_length_mismatch_dropped_with_single_warning(self, caplog):
+        key = "token_metrics_test/unique_short_key"
+        with caplog.at_level(logging.WARNING, logger="tinker_cookbook.tokendb.schema"):
+            out = coerce_token_metrics({key: [0.1], "ok": [0.1, 0.2]}, n_ac_tokens=2)
+            assert out == {"ok": [pytest.approx(0.1), pytest.approx(0.2)]}
+            coerce_token_metrics({key: [0.1, 0.2, 0.3]}, n_ac_tokens=2)
+        warnings = [r for r in caplog.records if key in r.getMessage()]
+        assert len(warnings) == 1  # warn once per key, not per array
+        # The first warning names the key and both lengths.
+        assert "1" in warnings[0].getMessage() and "2" in warnings[0].getMessage()
+
+    def test_token_metrics_non_coercible_element_drops_whole_array(self, caplog):
+        key = "token_metrics_test/unique_bad_element"
+        with caplog.at_level(logging.WARNING, logger="tinker_cookbook.tokendb.schema"):
+            out = coerce_token_metrics({key: [0.1, object()]}, n_ac_tokens=2)
+        assert out == {}
+        assert any(key in r.getMessage() for r in caplog.records)
+
+    def test_token_row_coerces_at_construction(self):
+        # Coercion happens when the row is built (caller's thread), so a bad
+        # value never reaches the flush thread's parquet encode.
+        row = make_row(
+            metrics={"good": "1.5", "bad": object()},
+            attrs={"n": 3},
+        )
+        assert row.metrics == {"good": 1.5}
+        assert row.attrs == {"n": "3"}
 
 
 class TestFlushTriggers:
@@ -237,6 +362,46 @@ class TestSegmentManifestOrdering:
         assert entry["max_iteration"] == 5
         assert entry["writer_id"] == writer.writer_id
         assert entry["schema_version"] == SCHEMA_VERSION
+
+
+def read_manifest_lines(log_path: Path, writer_id: str) -> list[dict]:
+    manifest_path = log_path / TOKENS_DIR / f"manifest-{writer_id}.jsonl"
+    return [json.loads(line) for line in manifest_path.read_text().splitlines()]
+
+
+class TestManifestObservedKeys:
+    def test_manifest_records_observed_keys(self, tmp_path: Path):
+        with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [
+                    make_row(metrics={"acc": 1.0, "group/win": 0.5}, tags=["gsm"]),
+                    make_row(
+                        step_idx=1,
+                        metrics={"acc": 0.0},
+                        attrs={"dataset": "math"},
+                        token_metrics={"teacher/logprobs": [-0.1, -0.2]},
+                        tags=["gsm", "hard"],
+                    ),
+                ]
+            )
+        (entry,) = read_manifest_lines(tmp_path, writer.writer_id)
+        assert entry["metrics_keys"] == ["acc", "group/win"]
+        assert entry["attrs_keys"] == ["dataset"]
+        assert entry["token_metrics_keys"] == ["teacher/logprobs"]
+        assert entry["tags"] == ["gsm", "hard"]
+        assert entry["keys_truncated"] is False
+
+    def test_manifest_key_lists_are_capped(self, tmp_path: Path):
+        n_keys = MANIFEST_MAX_KEYS + 50
+        rows = [make_row(step_idx=i, metrics={f"metric_{i:04d}": float(i)}) for i in range(n_keys)]
+        with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(rows)
+        (entry,) = read_manifest_lines(tmp_path, writer.writer_id)
+        assert len(entry["metrics_keys"]) == MANIFEST_MAX_KEYS
+        assert entry["metrics_keys"] == sorted(entry["metrics_keys"])
+        assert entry["keys_truncated"] is True
+        # Even a truncated line stays small enough for atomic appends.
+        assert len(json.dumps(entry)) < 4096
 
 
 class TestMultiWriter:

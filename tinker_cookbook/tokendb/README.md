@@ -133,6 +133,35 @@ rows = db.sql(
 
 Token IDs are canonical; text columns are a decoded convenience. Search for special tokens by ID (`list_contains`), since their decodings can be unstable.
 
+## Row schema
+
+One row per turn (`schema_version = 2`):
+
+| Column | Type | Notes |
+|---|---|---|
+| `run_id`, `run_attempt`, `writer_id` | string, int32, string | stamped by the writer |
+| `split`, `iteration`, `group_idx`, `traj_idx`, `step_idx` | string, int32 ×4 | row identity, 1:1 with rollout-summary JSONL keys |
+| `sampling_client_step` | int32, nullable | sampler weight version |
+| `tags` | list\<string\> | logging tags |
+| `env_row_id` | string, nullable | dataset row identity (promoted from `logs["env/row_id"]`) |
+| `ts`, `source` | timestamp(us, UTC), string | `source` is `rollout` / `filtered` / `sample` |
+| `ob_tokens`, `ob_is_delta` | list\<int32\>, bool | observation tokens, delta-encoded per trajectory |
+| `ac_tokens`, `ac_logprobs` | list\<int32\>, list\<float32\> nullable | sampled action |
+| `stop_reason` | string, nullable | null tolerated (some env adapters never set it) |
+| `has_images` | bool | image chunks flagged, not stored |
+| `reward`, `episode_done`, `total_reward`, `final_reward` | float32, bool, float32, float32 | trajectory-level rewards denormalized onto every row |
+| `ob_text`, `ac_text` | string, nullable | decoded conveniences; token IDs are canonical |
+| `metrics` | map\<string, float32\> | numeric per-row values: `Transition.metrics` keys, group-level metrics under a `group/` prefix (denormalized onto every row of the trajectory), per-turn scalar tool aggregates under `tool/`. Values are float-coerced at capture (non-coercible values dropped with a warning); NaN is stored as a real NaN. Numeric dimensions (difficulty, level, counts) belong here even when used as dimensions. |
+| `attrs` | map\<string, string\> | categorical dimensions (dataset, task name, player id, ...) |
+| `token_metrics` | map\<string, list\<float32\>\> | named per-token float arrays parallel to `ac_tokens`: on-policy distillation teacher logprobs (`teacher/logprobs`, multi-teacher as `teacher/<name>/logprobs`), per-token KL, token-level rewards/advantages, per-token entropy. Arrays whose length differs from `len(ac_tokens)` are dropped at capture with a warning. Empty by default. |
+| `tool_calls` | list\<struct\>, nullable | per-turn tool calls: `name`, `args_json`, `error_type` (nullable), `should_stop`. No result payload: tool results are part of the next turn's observation. |
+| `logs`, `extra` | string (JSON) | free-form escape hatches |
+| `filtered_reason` | string, nullable | why a `filtered` row was dropped |
+
+Query the maps directly in DuckDB: `metrics['group/rubric/score']`, `attrs['dataset'] = 'gsm8k'`.
+
+Old stores keep working: v1 segments (`metrics` as a JSON string, no `attrs` / `token_metrics` / `tool_calls`) are normalized to the v2 shape when the reader loads them, so mixed-version stores query uniformly. v1 files are never rewritten.
+
 ## Capturing synthetic-data / sampling runs
 
 Two opt-in paths for code outside the RL loop:
@@ -162,7 +191,7 @@ See `recipes/prompt_distillation/create_data.py` (`token_db_path=...`) for a wor
 {log_path}/tokens/
   run.json                                    # run identity (run_id, run_attempt, model_name)
   segments/seg-{writer_id}-{seq:06d}.parquet  # immutable, one file per writer flush
-  manifest-{writer_id}.jsonl                  # one line per segment
+  manifest-{writer_id}.jsonl                  # one line per segment (row counts, iteration/ts ranges, observed metrics/attrs/tag keys)
   labels.jsonl                                # annotations, appended by readers/agents
 ```
 

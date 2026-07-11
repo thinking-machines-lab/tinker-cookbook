@@ -56,11 +56,66 @@ _LABEL_COLUMNS_SQL = (
 
 def _result_to_dicts(result: Any) -> list[dict[str, Any]]:
     """Fetch a DuckDB result as a list of dicts (via arrow, so list/ts columns
-    come back as Python lists / datetimes). Tolerates the
-    ``fetch_arrow_table`` -> ``to_arrow_table`` rename across duckdb versions."""
+    come back as Python lists / datetimes, and map columns as dicts).
+    Tolerates the ``fetch_arrow_table`` -> ``to_arrow_table`` rename across
+    duckdb versions."""
     to_arrow = getattr(result, "to_arrow_table", None)
     table = to_arrow() if to_arrow is not None else result.fetch_arrow_table()
-    return table.to_pylist()
+    return table.to_pylist(maps_as_pydicts="strict")
+
+
+def _parse_v1_metrics(raw: str | None) -> dict[str, float]:
+    """Parse a v1 JSON ``metrics`` string into v2 map entries.
+
+    Lenient by design: v1 serialized with ``json.dumps``, which emits bare
+    ``NaN`` / ``Infinity`` tokens (invalid JSON) for those float values;
+    Python's ``json.loads`` reads them back as the real floats. Only
+    float-coercible values become map entries; everything else (strings,
+    nested objects, unparseable payloads) is silently dropped — this is
+    read-time normalization of historical data, not a validation gate.
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in parsed.items():
+        try:
+            out[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _normalize_segment_table(table: Any) -> Any:
+    """Normalize a segment's arrow table to the v2 schema shape.
+
+    Per-segment version detection sniffs the parquet file's own arrow schema
+    (self-describing; covers orphan segments with no manifest line and
+    mixed-version stores from a ``run_attempt`` resume after an upgrade). v1
+    segments (``metrics`` is a JSON string column) are rewritten in Python:
+    ``metrics`` parsed into map entries (:func:`_parse_v1_metrics`), ``attrs``
+    and ``token_metrics`` empty, ``tool_calls`` NULL. The DuckDB connection
+    only ever sees v2 shape, so the positional ``INSERT INTO ... SELECT *``
+    stays valid.
+    """
+    import pyarrow as pa
+
+    from tinker_cookbook.tokendb.schema import arrow_schema
+
+    if not pa.types.is_string(table.schema.field("metrics").type):
+        return table  # already v2
+    rows = table.to_pylist()
+    for row in rows:
+        row["metrics"] = _parse_v1_metrics(row["metrics"])
+        row["attrs"] = {}
+        row["token_metrics"] = {}
+        row["tool_calls"] = None
+    return pa.Table.from_pylist(rows, schema=arrow_schema())
 
 
 def _require_duckdb() -> Any:
@@ -188,7 +243,7 @@ class ParquetSegmentReader:
         import pyarrow.parquet as pq
 
         data = self._storage.read(f"{SEGMENTS_DIR}/{name}")
-        return pq.read_table(io.BytesIO(data))
+        return _normalize_segment_table(pq.read_table(io.BytesIO(data)))
 
     def refresh(self) -> list[str]:
         """Register segment files that appeared since the last refresh.

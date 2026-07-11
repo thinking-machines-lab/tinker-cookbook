@@ -73,14 +73,16 @@ def make_transition(
 
 
 def make_group(
-    trajectories: list[Trajectory], final_rewards: list[float] | None = None
+    trajectories: list[Trajectory],
+    final_rewards: list[float] | None = None,
+    metrics_G: list[dict] | None = None,
 ) -> TrajectoryGroup:
     if final_rewards is None:
         final_rewards = [0.0] * len(trajectories)
     return TrajectoryGroup(
         trajectories_G=trajectories,
         final_rewards_G=final_rewards,
-        metrics_G=[{} for _ in trajectories],
+        metrics_G=metrics_G if metrics_G is not None else [{} for _ in trajectories],
     )
 
 
@@ -249,7 +251,7 @@ class TestLogsAndMetrics:
         rows = record_groups(ListWriter(), [make_group([traj])], split="train", iteration=0)
         assert rows[0].env_row_id is None
 
-    def test_metrics_logs_json_roundtrip_with_non_serializable(self, tmp_path: Path):
+    def test_metrics_map_and_logs_json_roundtrip(self, tmp_path: Path):
         class Weird:
             def __repr__(self) -> str:
                 return "<weird>"
@@ -263,10 +265,46 @@ class TestLogsAndMetrics:
         with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
             record_groups(writer, [make_group([traj])], split="train", iteration=0)
         got = read_all_segments(tmp_path).to_pylist()[0]
-        assert json.loads(got["metrics"]) == {"format_ok": 1}
+        assert dict(got["metrics"]) == {"format_ok": 1.0}
         logs = json.loads(got["logs"])
         assert logs["env/row_id"] == "r-1"
         assert logs["obj"] == "<weird>"  # default=str fallback
+
+
+class TestGroupMetrics:
+    def test_metrics_g_merged_under_group_prefix_on_every_row(self):
+        # Two-step trajectory + one-step trajectory, each with its own
+        # group-level metrics dict.
+        traj_a = Trajectory(
+            transitions=[
+                make_transition([1], [2], metrics={"turn_acc": 1.0}),
+                make_transition([1, 2, 3], [4], episode_done=True),
+            ],
+            final_ob=tinker.ModelInput.from_ints([]),
+        )
+        traj_b = single_step_trajectory([9], [8])
+        group = make_group(
+            [traj_a, traj_b],
+            metrics_G=[{"rubric/score": 0.75}, {"rubric/score": 0.25}],
+        )
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        # Denormalized onto EVERY row of the trajectory, like final_reward.
+        assert rows[0].metrics == {"turn_acc": 1.0, "group/rubric/score": 0.75}
+        assert rows[1].metrics == {"group/rubric/score": 0.75}
+        assert rows[2].metrics == {"group/rubric/score": 0.25}
+
+    def test_transition_metrics_win_nothing_without_group_metrics(self):
+        traj = single_step_trajectory([1], [2], metrics={"acc": 1})
+        rows = record_groups(ListWriter(), [make_group([traj])], split="train", iteration=0)
+        assert rows[0].metrics == {"acc": 1.0}
+        assert rows[0].attrs == {}
+        assert rows[0].tool_calls is None
+
+    def test_non_coercible_group_metric_dropped(self):
+        traj = single_step_trajectory([1], [2])
+        group = make_group([traj], metrics_G=[{"note": "not-a-number", "score": 1}])
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert rows[0].metrics == {"group/score": 1.0}
 
 
 class TestTextDecode:
