@@ -31,7 +31,7 @@ function acTokenSpans(step: StepRow, mode: ViewMode): HTMLElement {
   if (mode === "text" && strs === null) {
     // Tokenizer unavailable: fall back to the stored whole-turn text.
     container.append(
-      step.ac_text ?? "(no ac_text stored; switch to raw token IDs)",
+      step.ac_text ?? "(no action text stored; switch to raw token IDs)",
     );
     return container;
   }
@@ -44,13 +44,16 @@ function acTokenSpans(step: StepRow, mode: ViewMode): HTMLElement {
 
 function obSection(step: StepRow, mode: ViewMode): HTMLElement {
   const section = el("div", { class: "ob" });
-  const heading = step.ob_is_delta ? "ob (delta: new tokens since last turn)" : "ob";
+  const heading = step.ob_is_delta
+    ? "observation (delta: new tokens since last turn)"
+    : "observation";
   section.append(el("div", { class: "turn-label" }, [heading]));
   const body = el("div", { class: "ob-body" });
   if (mode === "ids") {
     body.textContent = step.ob_tokens.join(" ");
   } else {
-    body.textContent = step.ob_text ?? `(no ob_text stored: ${step.ob_tokens.length} tokens)`;
+    body.textContent =
+      step.ob_text ?? `(no observation text stored: ${step.ob_tokens.length} tokens)`;
   }
   section.append(body);
 
@@ -94,7 +97,7 @@ function stepCard(step: StepRow, mode: ViewMode): HTMLElement {
   const card = el("div", { class: "step-card" }, [
     el("div", { class: "step-meta" }, [meta]),
     obSection(step, mode),
-    el("div", { class: "turn-label" }, ["ac (colored by logprob)"]),
+    el("div", { class: "turn-label" }, ["action (colored by logprob)"]),
     acTokenSpans(step, mode),
   ]);
   const logs = prettyJSON(step.logs);
