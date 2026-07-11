@@ -32,6 +32,7 @@ python -m tinker_cookbook.recipes.search_tool.train
 ```
 
 With the default hyperparameters, you can expect performance like:
+
 | | Natural Questions | Trivia QA | HotpotQA | 2WikiMultihopQA |
 |---|---|---|---|---|
 | Qwen3-4B-Instruct-2507 | 51.8 | 70.2 | 52.0 | 47.7 |
