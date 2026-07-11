@@ -182,6 +182,60 @@ class TokenDbWriter:
         if should_flush:
             self.flush()
 
+    def record_sample(
+        self,
+        model_input: Any,
+        sequence: Any,
+        *,
+        split: str = "sample",
+        iteration: int = -1,
+        group_idx: int = 0,
+        traj_idx: int = 0,
+        tags: Sequence[str] = (),
+        tokenizer: Any = None,
+        store_text: bool = True,
+        **metadata: Any,
+    ) -> TokenRow:
+        """Record one directly sampled sequence as a ``source="sample"`` row.
+
+        Explicit capture API for code that calls ``sample_async`` itself
+        (bypassing the completers, and therefore the
+        ``capture_samples`` sink). Thin wrapper: builds the row with
+        :func:`~tinker_cookbook.tokendb.capture.sample_to_row` and buffers it.
+
+        Args:
+            model_input: The ``tinker.ModelInput`` prompt.
+            sequence: The sampled sequence (``tinker.SampledSequence`` or
+                anything with ``tokens`` / ``logprobs`` / ``stop_reason``).
+            split: Row split; defaults to ``"sample"``.
+            iteration: Row iteration; defaults to ``-1`` (no training step).
+            group_idx: Caller-chosen grouping index (e.g. prompt index).
+            traj_idx: Index of this sequence within its sample call.
+            tags: Logging tags for the row.
+            tokenizer: Optional ``decode(list[int]) -> str`` for text columns.
+            store_text: Store decoded text when *tokenizer* is given.
+            **metadata: Recorded in the row's ``extra`` JSON column.
+
+        Returns:
+            The buffered :class:`TokenRow`.
+        """
+        from tinker_cookbook.tokendb.capture import sample_to_row
+
+        row = sample_to_row(
+            model_input,
+            sequence,
+            split=split,
+            iteration=iteration,
+            group_idx=group_idx,
+            traj_idx=traj_idx,
+            tags=tags,
+            tokenizer=tokenizer,
+            store_text=store_text,
+            extra=metadata,
+        )
+        self.append_rows([row])
+        return row
+
     def flush(self) -> None:
         """Write buffered rows to a new segment, then append its manifest line.
 

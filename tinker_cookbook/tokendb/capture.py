@@ -15,16 +15,20 @@ Also here:
   for a callback invoked when the rollout pipeline drops a group (constant
   reward, rollout error) before it reaches the main export funnel. Follows
   the ``set_rollout_executor`` pattern in ``rl/rollouts.py``.
+- :func:`sample_to_row` / :func:`capture_samples`: capture of raw samples
+  made through the Tinker completers (``source="sample"`` rows), via the
+  ``set_sample_sink`` registry in ``completers.py``.
 """
 
 from __future__ import annotations
 
+import itertools
 import logging
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import tinker
 
@@ -340,3 +344,164 @@ def active_capture_filtered_sink(
         source="filtered",
         filtered_reason=reason,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sample capture — raw completer samples as source="sample" rows, via the
+# set_sample_sink registry in completers.py. Purely opt-in: the RL train
+# loop does NOT register this (rollout tokens already reach the DB through
+# record_groups; a sample sink there would duplicate them).
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SupportsSampledSequence(Protocol):
+    """Minimal sampled-sequence surface needed by :func:`sample_to_row`.
+
+    Matched by ``tinker.SampledSequence`` and by
+    :class:`~tinker_cookbook.completers.TokensWithLogprobs` (whose
+    ``maybe_logprobs`` is preferred when present, since its ``logprobs``
+    property raises when logprobs are absent).
+    """
+
+    @property
+    def tokens(self) -> list[int]: ...
+
+    @property
+    def stop_reason(self) -> Any: ...
+
+
+def _sequence_logprobs(sequence: SupportsSampledSequence) -> list[float] | None:
+    """Best-effort logprob extraction across sampled-sequence flavors."""
+    logprobs = getattr(sequence, "maybe_logprobs", None)
+    if logprobs is None:
+        try:
+            logprobs = getattr(sequence, "logprobs", None)
+        except Exception:
+            logprobs = None
+    return list(logprobs) if logprobs is not None else None
+
+
+def sample_to_row(
+    model_input: tinker.ModelInput,
+    sequence: SupportsSampledSequence,
+    *,
+    split: str = "sample",
+    iteration: int = -1,
+    group_idx: int = 0,
+    traj_idx: int = 0,
+    step_idx: int = 0,
+    sampling_client_step: int | None = None,
+    tags: Sequence[str] = (),
+    tokenizer: SupportsDecode | None = None,
+    store_text: bool = True,
+    extra: Mapping[str, Any] | None = None,
+) -> TokenRow:
+    """Build a ``source="sample"`` :class:`TokenRow` from one sampled sequence.
+
+    The prompt's text-chunk tokens become ``ob_tokens`` (full, never
+    delta-encoded; image chunks set ``has_images``), and the sampled tokens /
+    logprobs / stop reason become the ``ac`` fields. *extra* lands in the
+    row's ``extra`` JSON column.
+    """
+    ob_tokens, has_images = extract_ob_tokens(model_input)
+    ac_tokens = list(sequence.tokens)
+    ob_text: str | None = None
+    ac_text: str | None = None
+    if store_text and tokenizer is not None:
+        ob_text = _decode(tokenizer, ob_tokens)
+        ac_text = _decode(tokenizer, ac_tokens)
+    stop_reason = sequence.stop_reason
+    return TokenRow(
+        split=split,
+        iteration=iteration,
+        group_idx=group_idx,
+        traj_idx=traj_idx,
+        step_idx=step_idx,
+        ob_tokens=ob_tokens,
+        ob_is_delta=False,
+        ac_tokens=ac_tokens,
+        ac_logprobs=_sequence_logprobs(sequence),
+        stop_reason=str(stop_reason) if stop_reason is not None else None,
+        has_images=has_images,
+        ob_text=ob_text,
+        ac_text=ac_text,
+        extra=dict(extra or {}),
+        sampling_client_step=sampling_client_step,
+        tags=list(tags),
+        source="sample",
+    )
+
+
+@contextmanager
+def capture_samples(
+    writer_or_active: TokenWriter | ActiveCapture,
+    **metadata: Any,
+) -> Iterator[None]:
+    """Capture every completer sample in the ``with`` block to the token DB.
+
+    Registers a sample sink (:func:`~tinker_cookbook.completers.set_sample_sink`)
+    that converts each successful ``TinkerTokenCompleter`` /
+    ``TinkerMessageCompleter`` sample into ``source="sample"`` rows on
+    *writer_or_active* (an :class:`ActiveCapture` also supplies the tokenizer
+    and ``store_text`` for text denormalization).
+
+    Row identity: split / iteration / step / tags come from
+    :data:`capture_context` when set (falling back to ``split="sample"``,
+    ``iteration=-1``); ``group_idx`` is a per-``capture_samples`` counter over
+    sample calls and ``traj_idx`` indexes the sequences within one call. The
+    keyword *metadata* plus the completer's sampling metadata land in the
+    ``extra`` column.
+
+    The sink never raises (capture failures are logged), and the previous
+    sink is restored on exit. Purely opt-in: nothing registers this
+    automatically, including the RL train loop (whose rollout rows would
+    otherwise be duplicated).
+    """
+    from tinker_cookbook import completers
+
+    if isinstance(writer_or_active, ActiveCapture):
+        writer = writer_or_active.writer
+        tokenizer = writer_or_active.tokenizer
+        store_text = writer_or_active.store_text
+    else:
+        writer = writer_or_active
+        tokenizer = None
+        store_text = True
+    group_counter = itertools.count()
+
+    def _sink(
+        model_input: tinker.ModelInput,
+        sequences: Sequence[Any],
+        sink_metadata: dict[str, Any],
+    ) -> None:
+        try:
+            ctx = get_capture_context()
+            group_idx = next(group_counter)
+            extra = {**metadata, **sink_metadata}
+            rows = [
+                sample_to_row(
+                    model_input,
+                    sequence,
+                    split=ctx.split if ctx is not None else "sample",
+                    iteration=ctx.iteration if ctx is not None else -1,
+                    group_idx=group_idx,
+                    traj_idx=traj_idx,
+                    sampling_client_step=ctx.sampling_client_step if ctx is not None else None,
+                    tags=ctx.tags if ctx is not None else (),
+                    tokenizer=tokenizer,
+                    store_text=store_text,
+                    extra=extra,
+                )
+                for traj_idx, sequence in enumerate(sequences)
+            ]
+            writer.append_rows(rows)
+        except Exception:
+            logger.exception("Token DB sample capture failed; continuing without capture")
+
+    previous = completers.get_sample_sink()
+    completers.set_sample_sink(_sink)
+    try:
+        yield
+    finally:
+        completers.set_sample_sink(previous)
