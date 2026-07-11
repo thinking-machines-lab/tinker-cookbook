@@ -226,6 +226,7 @@ class TestExportFunnelTee:
             log_path.mkdir()
             config = make_config(log_path, token_db=token_db)
             store = TrainingRunStore(LocalStorage(log_path))
+            writer: TokenDbWriter | None = None
             if token_db is not None:
                 writer = TokenDbWriter(log_path, flush_interval_s=3600)
                 set_active_capture(ActiveCapture(writer=writer, tokenizer=FakeTokenizer()))
@@ -237,7 +238,7 @@ class TestExportFunnelTee:
                 groups_P=groups,
                 store=store,
             )
-            if token_db is not None:
+            if writer is not None:
                 writer.close()
                 set_active_capture(None)
             outputs[name] = summary_jsonl_path(log_path, 2).read_bytes()
