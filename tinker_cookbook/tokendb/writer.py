@@ -254,8 +254,9 @@ class ParquetSegmentBackend:
     """Parquet-segments-through-``Storage`` implementation of ``TokenStoreBackend``.
 
     The default (v1) backend: the writer is a buffered segment flusher
-    (:class:`TokenDbWriter`); the read half (DuckDB over the segment glob)
-    arrives in a later phase.
+    (:class:`TokenDbWriter`); the read half is a DuckDB reader over the
+    segment files (:class:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader`,
+    constructed lazily so the write path never needs duckdb).
     """
 
     def __init__(
@@ -271,6 +272,7 @@ class ParquetSegmentBackend:
             self._storage = storage_or_log_path
         self._buffer_rows = buffer_rows
         self._flush_interval_s = flush_interval_s
+        self._reader_instance: Any = None
 
     def open_writer(self, run_context: Mapping[str, Any]) -> TokenDbWriter:
         """See :meth:`TokenStoreBackend.open_writer`."""
@@ -281,23 +283,44 @@ class ParquetSegmentBackend:
             flush_interval_s=self._flush_interval_s,
         )
 
-    # --- Read half: implemented in a later phase. ---
+    # --- Read half: delegates to a lazily constructed DuckDB reader. ---
+
+    def _reader(self) -> Any:
+        """Return the (lazily constructed) DuckDB reader for this store."""
+        if self._reader_instance is None:
+            from tinker_cookbook.tokendb.reader import ParquetSegmentReader
+
+            self._reader_instance = ParquetSegmentReader(self._storage)
+        return self._reader_instance
 
     def query(self, **filters: Any) -> Any:
-        """See :meth:`TokenStoreBackend.query`."""
-        raise NotImplementedError("ParquetSegmentBackend read path is not implemented yet")
+        """See :meth:`TokenStoreBackend.query` and
+        :meth:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader.query`."""
+        return self._reader().query(**filters)
 
-    def get_rollout(self, split: str, iteration: int, group_idx: int, traj_idx: int) -> Any:
+    def get_rollout(
+        self,
+        split: str,
+        iteration: int,
+        group_idx: int,
+        traj_idx: int,
+        run_attempt: int | None = None,
+    ) -> Any:
         """See :meth:`TokenStoreBackend.get_rollout`."""
-        raise NotImplementedError("ParquetSegmentBackend read path is not implemented yet")
+        return self._reader().get_rollout(split, iteration, group_idx, traj_idx, run_attempt)
 
-    def search(self, pattern: str, *, text_field: str = "ac_text") -> Any:
-        """See :meth:`TokenStoreBackend.search`."""
-        raise NotImplementedError("ParquetSegmentBackend read path is not implemented yet")
+    def search(self, **kwargs: Any) -> Any:
+        """See :meth:`TokenStoreBackend.search` and
+        :meth:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader.search`."""
+        return self._reader().search(**kwargs)
+
+    def search_hit_counts(self, **kwargs: Any) -> Any:
+        """Grouped-by-iteration hit counts for a :meth:`search` call."""
+        return self._reader().search_hit_counts(**kwargs)
 
     def subscribe(self, **filters: Any) -> Any:
         """See :meth:`TokenStoreBackend.subscribe`."""
-        raise NotImplementedError("ParquetSegmentBackend read path is not implemented yet")
+        return self._reader().subscribe(**filters)
 
     def add_label(
         self,
@@ -309,8 +332,15 @@ class ParquetSegmentBackend:
         note: str | None = None,
     ) -> None:
         """See :meth:`TokenStoreBackend.add_label`."""
-        raise NotImplementedError("ParquetSegmentBackend read path is not implemented yet")
+        self._reader().add_label(key, label_key, label_value, author=author, note=note)
 
     def labels(self, **filters: Any) -> Any:
         """See :meth:`TokenStoreBackend.labels`."""
-        raise NotImplementedError("ParquetSegmentBackend read path is not implemented yet")
+        return self._reader().labels(**filters)
+
+    # Backend-specific escape hatch, deliberately NOT part of TokenStoreBackend
+    # (SQL dialects differ across backends; the portable surface is above).
+
+    def sql(self, query: str, params: Sequence[Any] | None = None) -> Any:
+        """Read-only (SELECT-only) DuckDB SQL over this store's views."""
+        return self._reader().sql(query, params)

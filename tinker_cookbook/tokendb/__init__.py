@@ -24,6 +24,11 @@ from tinker_cookbook.tokendb.config import (
     check_token_db_dependencies,
 )
 from tinker_cookbook.tokendb.interface import TokenStoreBackend, TokenWriter
+from tinker_cookbook.tokendb.reader import (
+    ParquetSegmentReader,
+    TokenDB,
+    reconstruct_full_ob,
+)
 from tinker_cookbook.tokendb.schema import (
     SCHEMA_VERSION,
     TokenRow,
@@ -37,6 +42,8 @@ __all__ = [
     "ActiveCapture",
     "CaptureContext",
     "ParquetSegmentBackend",
+    "ParquetSegmentReader",
+    "TokenDB",
     "TokenDbConfig",
     "TokenDbWriter",
     "TokenRow",
@@ -51,6 +58,7 @@ __all__ = [
     "get_capture_context",
     "get_filtered_group_sink",
     "make_writer_id",
+    "reconstruct_full_ob",
     "record_groups",
     "record_groups_to_active_capture",
     "set_active_capture",

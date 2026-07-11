@@ -7,11 +7,9 @@ the default implementation (parquet segments through the ``Storage``
 protocol); a hosted backend can implement the same protocol later with no
 changes to callers.
 
-Only the write half (:meth:`TokenStoreBackend.open_writer` and
-:class:`TokenWriter`) is implemented so far; the read-half methods are
-declared here and arrive with the reader in a later phase. Raw SQL is
-deliberately not part of the protocol — it stays a backend-specific escape
-hatch, and the portable surface is the structured methods.
+Raw SQL is deliberately not part of the protocol — it stays a
+backend-specific escape hatch, and the portable surface is the structured
+methods.
 """
 
 from __future__ import annotations
@@ -53,18 +51,25 @@ class TokenStoreBackend(Protocol):
         """
         ...
 
-    # --- Read half: declared here, implemented in a later phase. ---
+    # --- Read half. ---
 
     def query(self, **filters: Any) -> Any:
         """Structured row query (split, iteration range, tags, reward range, ...)."""
         ...
 
-    def get_rollout(self, split: str, iteration: int, group_idx: int, traj_idx: int) -> Any:
-        """Fetch all rows (turns) for one trajectory."""
+    def get_rollout(
+        self,
+        split: str,
+        iteration: int,
+        group_idx: int,
+        traj_idx: int,
+        run_attempt: int | None = None,
+    ) -> Any:
+        """Fetch all rows (turns) for one trajectory (latest attempt by default)."""
         ...
 
-    def search(self, pattern: str, *, text_field: str = "ac_text") -> Any:
-        """Regex search over text columns, or token-ID-subsequence match."""
+    def search(self, **kwargs: Any) -> Any:
+        """Regex search over text columns, and/or token-ID-subsequence match."""
         ...
 
     def subscribe(self, **filters: Any) -> AsyncIterator[Any]:
