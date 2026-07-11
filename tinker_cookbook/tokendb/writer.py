@@ -98,6 +98,12 @@ class TokenDbWriter:
             as a worker and does not touch ``run.json``.
         buffer_rows: Flush when the buffer reaches this many rows.
         flush_interval_s: Background flush period in seconds.
+        registry_dir: Run registry directory for the multi-run viewer
+            (coordinator mode only). ``None`` resolves via the
+            ``TINKER_TOKENDB_REGISTRY`` env var, falling back to
+            ``~/.cache/tinker-cookbook/tokendb/runs``; an explicit ``""``
+            disables registration. Registration is best-effort and never
+            breaks training.
     """
 
     def __init__(
@@ -108,6 +114,7 @@ class TokenDbWriter:
         context: Mapping[str, Any] | None = None,
         buffer_rows: int = DEFAULT_BUFFER_ROWS,
         flush_interval_s: float = DEFAULT_FLUSH_INTERVAL_S,
+        registry_dir: str | None = None,
     ) -> None:
         if isinstance(storage_or_log_path, (str, Path)):
             self._storage: Storage = storage_from_uri(str(storage_or_log_path))
@@ -131,6 +138,9 @@ class TokenDbWriter:
             self.run_attempt = int(self._context["run_attempt"])
         else:
             self.run_id, self.run_attempt = self._init_run_json()
+            # Coordinator-only: record this run in the local run registry so
+            # the multi-run viewer can find it. Best-effort by design.
+            self._register_run(registry_dir)
 
         self._manifest_path = f"{TOKENS_DIR}/manifest-{self.writer_id}.jsonl"
 
@@ -167,6 +177,20 @@ class TokenDbWriter:
         }
         self._storage.write(RUN_JSON_PATH, (json.dumps(payload, default=str) + "\n").encode())
         return run_id, run_attempt
+
+    def _register_run(self, registry_dir: str | None) -> None:
+        """Best-effort record of this run in the multi-run viewer registry."""
+        from tinker_cookbook.tokendb.registry import register_run
+
+        register_run(
+            log_path=self._storage.url(""),
+            run_id=self.run_id,
+            run_attempt=self.run_attempt,
+            model_name=self._context.get("model_name"),
+            recipe_name=self._context.get("recipe_name"),
+            writer_id=self.writer_id,
+            registry_dir=registry_dir,
+        )
 
     def append_rows(self, rows: Sequence[TokenRow]) -> None:
         """Stamp writer identity on *rows* and buffer them for writing."""

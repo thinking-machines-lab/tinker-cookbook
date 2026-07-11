@@ -31,6 +31,12 @@ from tinker_cookbook.tokendb.reader import (
     TokenDB,
     reconstruct_full_ob,
 )
+from tinker_cookbook.tokendb.registry import (
+    list_runs,
+    register_run,
+    resolve_registry_dir,
+    run_status,
+)
 from tinker_cookbook.tokendb.schema import (
     SCHEMA_VERSION,
     TokenRow,
@@ -60,10 +66,14 @@ __all__ = [
     "get_active_capture",
     "get_capture_context",
     "get_filtered_group_sink",
+    "list_runs",
     "make_writer_id",
     "reconstruct_full_ob",
     "record_groups",
     "record_groups_to_active_capture",
+    "register_run",
+    "resolve_registry_dir",
+    "run_status",
     "sample_to_row",
     "set_active_capture",
     "set_capture_context",

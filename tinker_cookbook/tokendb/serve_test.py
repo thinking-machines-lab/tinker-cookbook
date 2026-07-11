@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -308,3 +310,229 @@ def test_websocket_bad_subscription(populated_store: Path):
             assert msg["type"] == "error"
 
     run_with_client(populated_store, fn)
+
+
+# --- Registry mode (no log_path: run listing, dashboard, per-run proxying) ---
+
+
+@pytest.fixture
+def registry_stores(tmp_path: Path) -> dict:
+    """Two registered runs: one live (fresh manifests), one stale (aged mtimes)."""
+    live_path = tmp_path / "live-run"
+    with TokenDbWriter(
+        live_path, context={"model_name": "live-model", "recipe_name": "live-recipe"}
+    ) as writer:
+        writer.append_rows(
+            [
+                make_row(iteration=0, total_reward=1.0, ac_text="the answer is 4"),
+                make_row(iteration=1, total_reward=3.0),
+                make_row(
+                    iteration=1,
+                    group_idx=1,
+                    source="filtered",
+                    filtered_reason="constant_reward",
+                ),
+            ]
+        )
+        live_id = writer.run_id
+    stale_path = tmp_path / "stale-run"
+    with TokenDbWriter(stale_path, context={"model_name": "stale-model"}) as writer:
+        writer.append_rows([make_row(iteration=2, total_reward=-1.0)])
+        stale_id = writer.run_id
+    old = time.time() - 3600
+    for manifest in (stale_path / "tokens").glob("manifest-*.jsonl"):
+        os.utime(manifest, (old, old))
+    return {"live_id": live_id, "stale_id": stale_id, "live_path": live_path}
+
+
+def run_registry_client(fn, **build_kwargs):
+    """Run coroutine ``fn(client)`` against a registry-mode (no log_path) app."""
+
+    async def main():
+        app = build_app(None, static_dir=None, load_tokenizer=False, **build_kwargs)
+        async with TestClient(TestServer(app)) as client:
+            return await fn(client)
+
+    return asyncio.run(main())
+
+
+def test_registry_runs_endpoint(registry_stores: dict):
+    async def fn(client):
+        resp = await client.get("/api/runs")
+        assert resp.status == 200
+        runs = {r["run_id"]: r for r in (await resp.json())["runs"]}
+        assert set(runs) == {registry_stores["live_id"], registry_stores["stale_id"]}
+        live = runs[registry_stores["live_id"]]
+        stale = runs[registry_stores["stale_id"]]
+        assert live["model_name"] == "live-model"
+        assert live["recipe_name"] == "live-recipe"
+        assert live["run_attempt"] == 1
+        assert live["status"]["live"] is True
+        assert live["status"]["latest_iteration"] == 1
+        assert stale["status"]["live"] is False
+        assert stale["status"]["latest_iteration"] == 2
+        assert stale["status"]["n_segments"] >= 1
+
+    run_registry_client(fn)
+
+
+def test_registry_dashboard(registry_stores: dict):
+    async def fn(client):
+        resp = await client.get("/api/dashboard")
+        assert resp.status == 200
+        rows = {r["run_id"]: r for r in (await resp.json())["runs"]}
+        live = rows[registry_stores["live_id"]]
+        assert live["live"] is True
+        assert live["model_name"] == "live-model"
+        assert live["recipe_name"] == "live-recipe"
+        assert live["n_rows"] == 3
+        assert live["n_filtered_rows"] == 1
+        assert live["latest_iteration"] == 1
+        assert live["reward_series"] == [
+            {"iteration": 0, "mean_total_reward": 1.0},
+            {"iteration": 1, "mean_total_reward": 3.0},
+        ]
+        assert live["mean_recent_reward"] == pytest.approx(2.0)
+        stale = rows[registry_stores["stale_id"]]
+        assert stale["live"] is False
+        assert stale["n_rows"] == 1
+        assert stale["mean_recent_reward"] == pytest.approx(-1.0)
+        assert stale["last_activity_ts"] is not None
+
+    run_registry_client(fn)
+
+
+def test_registry_dashboard_ttl_cache(registry_stores: dict):
+    async def fn_cached(client):
+        first = {
+            r["run_id"]: r for r in (await (await client.get("/api/dashboard")).json())["runs"]
+        }
+        # New rows written within the TTL are not reflected (consistent polls).
+        with TokenDbWriter(registry_stores["live_path"]) as writer:
+            writer.append_rows([make_row(iteration=9, total_reward=5.0)])
+        second = {
+            r["run_id"]: r for r in (await (await client.get("/api/dashboard")).json())["runs"]
+        }
+        assert second == first
+
+    run_registry_client(fn_cached, dashboard_ttl_s=300.0)
+
+    async def fn_fresh(client):
+        rows = {r["run_id"]: r for r in (await (await client.get("/api/dashboard")).json())["runs"]}
+        live = rows[registry_stores["live_id"]]
+        # TTL 0 recomputes: sees the extra row (and the resume's new attempt).
+        assert live["n_rows"] == 4
+        assert live["latest_iteration"] == 9
+
+    run_registry_client(fn_fresh, dashboard_ttl_s=0.0)
+
+
+def test_registry_per_run_endpoints(registry_stores: dict):
+    live_id = registry_stores["live_id"]
+
+    async def fn(client):
+        resp = await client.get(f"/api/runs/{live_id}/run")
+        assert resp.status == 200
+        payload = await resp.json()
+        assert payload["run_id"] == live_id
+        assert payload["context"]["model_name"] == "live-model"
+
+        resp = await client.get(f"/api/runs/{live_id}/rollouts")
+        assert resp.status == 200
+        assert len((await resp.json())["rows"]) == 3
+
+        resp = await client.get(f"/api/runs/{live_id}/rollout/train/1/0/0")
+        assert resp.status == 200
+        steps = (await resp.json())["steps"]
+        assert len(steps) == 1 and steps[0]["total_reward"] == 3.0
+
+        resp = await client.post(f"/api/runs/{live_id}/search", json={"regex": "answer"})
+        assert resp.status == 200
+        assert len((await resp.json())["rows"]) == 1
+
+        resp = await client.post(
+            f"/api/runs/{live_id}/sql", json={"query": "SELECT count(*) AS n FROM rollouts"}
+        )
+        assert (await resp.json())["rows"][0]["n"] == 3
+
+        resp = await client.post(
+            f"/api/runs/{live_id}/labels",
+            json={
+                "key": {"split": "train", "iteration": 0, "group_idx": 0, "traj_idx": 0},
+                "label_key": "quality",
+                "label_value": "good",
+                "author": "tester",
+            },
+        )
+        assert resp.status == 200
+        resp = await client.get(f"/api/runs/{live_id}/labels")
+        assert len((await resp.json())["labels"]) == 1
+
+        resp = await client.post(f"/api/runs/{live_id}/tokens/decode", json={"tokens": [1]})
+        assert resp.status == 503  # tokenizer loads disabled in tests
+
+        # Unknown run IDs 404 with a JSON error body.
+        resp = await client.get("/api/runs/doesnotexist/rollouts")
+        assert resp.status == 404
+        assert "unknown run_id" in (await resp.json())["error"]
+
+    run_registry_client(fn)
+
+
+def test_registry_websocket_run_subscription(registry_stores: dict):
+    live_id = registry_stores["live_id"]
+    live_path = registry_stores["live_path"]
+
+    async def fn(client):
+        async with client.ws_connect("/ws") as ws:
+            # Registry mode: a subscription must name a run.
+            await ws.send_str(json.dumps({"type": "subscribe", "filters": {}}))
+            msg = json.loads((await ws.receive(timeout=5.0)).data)
+            assert msg["type"] == "error"
+            assert "run_id" in msg["error"]
+
+            await ws.send_str(json.dumps({"type": "subscribe", "run_id": "doesnotexist"}))
+            msg = json.loads((await ws.receive(timeout=5.0)).data)
+            assert msg["type"] == "error"
+
+            await ws.send_str(
+                json.dumps({"type": "subscribe", "run_id": live_id, "poll_interval_s": 0.05})
+            )
+            msg = json.loads((await ws.receive(timeout=5.0)).data)
+            assert msg["type"] == "subscribed"
+
+            await asyncio.sleep(0.2)
+            with TokenDbWriter(live_path) as writer:
+                writer.append_rows([make_row(iteration=5, ac_text="fresh row")])
+            row = None
+            for _ in range(10):
+                msg = json.loads((await ws.receive(timeout=5.0)).data)
+                if msg["type"] == "row":
+                    row = msg["row"]
+                    break
+            assert row is not None and row["iteration"] == 5
+
+        # The per-run mount needs no run_id in the message.
+        async with client.ws_connect(f"/api/runs/{live_id}/ws") as ws:
+            await ws.send_str(json.dumps({"type": "subscribe", "filters": {"split": "train"}}))
+            msg = json.loads((await ws.receive(timeout=5.0)).data)
+            assert msg["type"] == "subscribed"
+
+    run_registry_client(fn)
+
+
+def test_registry_websocket_dashboard(registry_stores: dict):
+    async def fn(client):
+        async with client.ws_connect("/ws/dashboard?poll_interval_s=60") as ws:
+            msg = json.loads((await ws.receive(timeout=10.0)).data)
+            assert msg["type"] == "dashboard"
+            run_ids = {r["run_id"] for r in msg["runs"]}
+            assert run_ids == {registry_stores["live_id"], registry_stores["stale_id"]}
+
+    run_registry_client(fn)
+
+
+def test_registry_mode_requires_registry(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("TINKER_TOKENDB_REGISTRY", "")
+    with pytest.raises(ValueError, match="registry is disabled"):
+        build_app(None, static_dir=None, load_tokenizer=False)

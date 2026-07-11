@@ -35,12 +35,18 @@ class TokenDbConfig:
             ``source="filtered"`` rows. Note: with a cross-process rollout
             executor, filtered groups are dropped inside worker processes
             and are not captured (known v1 gap).
+        registry_dir (str | None): Run registry directory for the multi-run
+            viewer. ``None`` (default) resolves via the
+            ``TINKER_TOKENDB_REGISTRY`` env var, falling back to
+            ``~/.cache/tinker-cookbook/tokendb/runs``; an explicit ``""``
+            disables registration for this run.
     """
 
     store_text: bool = True
     flush_interval_s: float = 5.0
     buffer_rows: int = 2048
     capture_filtered: bool = True
+    registry_dir: str | None = None
 
 
 def check_token_db_dependencies() -> None:
@@ -100,4 +106,5 @@ def build_token_db_writer(
         context=context,
         buffer_rows=config.buffer_rows,
         flush_interval_s=config.flush_interval_s,
+        registry_dir=config.registry_dir,
     )

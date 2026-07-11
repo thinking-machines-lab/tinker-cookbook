@@ -37,6 +37,31 @@ python -m tinker_cookbook.tokendb.serve log_path=~/runs/my-run  # http://127.0.0
 
 Serves a live feed of trajectories (updates pushed over a websocket as new segments land), a per-rollout detail view with tokens colored by logprob and a raw-token-ID toggle, regex and token-ID search, and a read-only SQL console.
 
+## Multi-run dashboard and run registry
+
+Start the server with no `log_path` to see every run, including concurrently running experiments, in one dashboard:
+
+```bash
+python -m tinker_cookbook.tokendb.serve  # registry mode, http://127.0.0.1:7423
+```
+
+This works because every coordinator `TokenDbWriter` registers its run in a local **run registry**: one JSON file per run (so concurrent jobs never share an append target) recording `run_id`, `log_path`, `model_name`, `recipe_name`, `started_at`, `pid`, and `hostname`.
+
+- Default location: `~/.cache/tinker-cookbook/tokendb/runs/`
+- Override with the `TINKER_TOKENDB_REGISTRY` environment variable, or per run via `TokenDbConfig(registry_dir=...)` / `TokenDbWriter(..., registry_dir=...)`
+- Disable by setting either to an empty string (`TINKER_TOKENDB_REGISTRY=""` or `registry_dir=""`)
+
+Registration is best-effort: a broken registry logs a warning and never breaks training. Worker-mode writers (explicit `run_id` / `run_attempt` in context) never register; only the coordinator does.
+
+In registry mode the server exposes:
+
+- `GET /api/runs`: registered runs with a cheap liveness probe (a run is live if any `manifest-*.jsonl` was modified within the last 120 seconds)
+- `GET /api/dashboard`: per-run aggregates (row counts, filtered-row count, latest iteration, mean recent reward, a reward-per-iteration sparkline series), TTL-cached so the dashboard can poll cheaply
+- All single-run endpoints per run under `/api/runs/{run_id}/...` (rollouts, rollout detail, search, sql, labels, decode, ws), with per-run readers constructed lazily and LRU-cached
+- `/ws` (subscribe messages carry a `run_id`) and `/ws/dashboard` (pushes dashboard rows on a poll interval)
+
+Pointing the server at a specific `log_path` still works exactly as before and does not need the registry.
+
 ## Python API
 
 No server needed. `TokenDB` reads the segment files directly:
