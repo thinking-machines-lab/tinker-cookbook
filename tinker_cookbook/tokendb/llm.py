@@ -37,8 +37,15 @@ OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 # Plain-constant defaults; override via LLMConfig(model=...) or the viewer's
 # agent-config endpoint.
 DEFAULT_MODELS = {
-    "anthropic": "claude-sonnet-4-6",
-    "openai": "gpt-5.2",
+    "anthropic": "claude-fable-5",
+    "openai": "gpt-5.6-sol",
+}
+# Curated per-provider suggestions surfaced by the viewer's settings UI.
+# Not exhaustive; any model id the provider accepts still works via the
+# "custom" option / LLMConfig(model=...).
+KNOWN_MODELS = {
+    "anthropic": ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
+    "openai": ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
 }
 API_KEY_ENV_VARS = {
     "anthropic": "ANTHROPIC_API_KEY",
