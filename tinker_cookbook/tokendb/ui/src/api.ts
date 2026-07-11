@@ -7,6 +7,14 @@
 // `detectMode()` probes once at app start; `apiBase(runId)` / `chatWsPath(runId)`
 // pick the right prefix for data calls.
 
+/** One structured tool call of a turn (schema v2 `tool_calls` entry). */
+export interface ToolCallEntry {
+  name: string;
+  args_json: string;
+  error_type: string | null;
+  should_stop: boolean;
+}
+
 export interface StepRow {
   run_id: string;
   run_attempt: number;
@@ -31,7 +39,11 @@ export interface StepRow {
   final_reward: number;
   ob_text: string | null;
   ac_text: string | null;
-  metrics: string;
+  // Typed maps (schema v2). NaN metric values arrive as null (JSON has no NaN).
+  metrics: Record<string, number | null>;
+  attrs: Record<string, string>;
+  token_metrics: Record<string, (number | null)[]>;
+  tool_calls: ToolCallEntry[] | null;
   logs: string;
   extra: string;
   filtered_reason: string | null;

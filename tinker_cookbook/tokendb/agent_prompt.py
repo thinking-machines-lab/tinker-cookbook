@@ -85,6 +85,23 @@ Key columns of the `rollouts` view:
   `env_row_id`, `ts`.
 - `labels`: human/agent annotations, keyed like rollouts (step_idx null means
   whole trajectory) with `label_key`, `label_value` (JSON), `author`, `note`.
+- `runs`: one row per (run_id, run_attempt) with the run's configuration:
+  typed columns `model_name`, `recipe_name`, `started_at`, `temperature`,
+  `max_tokens`, `renderer_name`, `lora_rank`, `seed`, `group_size`,
+  `loss_fn`, `learning_rate` (NULL when the run didn't record them), and
+  `config_json` (the full recorded config as JSON, secrets redacted). Join
+  to rollouts on (run_id, run_attempt) to slice data by config, e.g. when a
+  resume changed the learning rate.
+
+Promoted convenience views (thin sugar over `rollouts` for hot metrics keys;
+use them before reaching for map syntax):
+
+- `correct`: rows that carry a correctness verdict, with a plain `correct`
+  column (`coalesce(metrics['group/correct'], metrics['correct'])`).
+- `parse_errors`: rows whose response failed renderer parsing
+  (`metrics['parse_error']`).
+- `context_overflows`: rows that hit the max-token limit
+  (`stop_reason = 'length'` or `metrics['max_tokens_reached']`).
 
 ## SQL dialect (DuckDB)
 
@@ -174,11 +191,62 @@ highlight view would explain the answer. Requirements for the HTML:
 """
 
 
+#: Cap per key list in the rendered schema card, so a pathological run cannot
+#: blow up the system prompt.
+_SCHEMA_CARD_MAX_KEYS = 100
+
+_RUNS_TABLE_COLUMNS = (
+    "run_id, run_attempt, model_name, recipe_name, started_at, temperature, "
+    "max_tokens, renderer_name, lora_rank, seed, group_size, loss_fn, "
+    "learning_rate, config_json"
+)
+
+_PROMOTED_VIEWS = "correct, parse_errors, context_overflows"
+
+
+def _format_key_list(keys: list[str]) -> str:
+    if not keys:
+        return "(none)"
+    shown = keys[:_SCHEMA_CARD_MAX_KEYS]
+    suffix = f", ... ({len(keys) - len(shown)} more)" if len(keys) > len(shown) else ""
+    return ", ".join(f"`{key}`" for key in shown) + suffix
+
+
+def format_schema_card(card: dict[str, Any]) -> str:
+    """Render an observed-keys card (``reader.schema_card()``) as prompt text.
+
+    Tells the model exactly which `metrics` / `attrs` / `token_metrics` keys
+    and tags exist in this run, plus the promoted views and `runs` columns,
+    so it writes correct map SQL on the first try instead of probing with
+    ``map_keys`` scans.
+    """
+    lines = [
+        "## This run's observed keys",
+        "",
+        "These are the keys actually present in this run's data. Do not guess",
+        "other keys; a key not listed here is absent (map access returns NULL).",
+        "",
+        f"- `metrics` keys: {_format_key_list(card.get('metrics_keys') or [])}",
+        f"- `attrs` keys: {_format_key_list(card.get('attrs_keys') or [])}",
+        f"- `token_metrics` keys: {_format_key_list(card.get('token_metrics_keys') or [])}",
+        f"- tags: {_format_key_list(card.get('tags') or [])}",
+    ]
+    if card.get("keys_truncated"):
+        lines.append("- note: the key lists were truncated at capture time and may be incomplete.")
+    lines += [
+        "",
+        f"Promoted views available: {_PROMOTED_VIEWS}.",
+        f"`runs` table columns: {_RUNS_TABLE_COLUMNS}.",
+    ]
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     *,
     sql_url: str,
     mode: str = "run",
     run_info: dict[str, Any] | None = None,
+    schema_card: dict[str, Any] | None = None,
 ) -> str:
     """Assemble the system prompt with runtime context injected.
 
@@ -192,6 +260,9 @@ def build_system_prompt(
             tools take a ``run_id``).
         run_info: Optional run metadata (``run.json`` content) shown to the
             model for a single-run chat.
+        schema_card: Optional observed-keys card
+            (:meth:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader.schema_card`)
+            rendered via :func:`format_schema_card` for a single-run chat.
     """
     parts = [_SCHEMA_AND_SEMANTICS, _VISUAL_GUIDE.format(sql_url=sql_url)]
     if mode == "registry":
@@ -209,4 +280,6 @@ def build_system_prompt(
         parts.append(
             "## This run\n\n```json\n" + json.dumps(run_info, indent=2, default=str) + "\n```"
         )
+    if schema_card:
+        parts.append(format_schema_card(schema_card))
     return "\n\n".join(parts)

@@ -189,7 +189,8 @@ See `recipes/prompt_distillation/create_data.py` (`token_db_path=...`) for a wor
 
 ```
 {log_path}/tokens/
-  run.json                                    # run identity (run_id, run_attempt, model_name)
+  run.json                                    # run identity (run_id, run_attempt, model_name); latest attempt
+  run-attempts.jsonl                          # one line appended per attempt (feeds the reader's `runs` view)
   segments/seg-{writer_id}-{seq:06d}.parquet  # immutable, one file per writer flush
   manifest-{writer_id}.jsonl                  # one line per segment (row counts, iteration/ts ranges, observed metrics/attrs/tag keys)
   labels.jsonl                                # annotations, appended by readers/agents

@@ -134,3 +134,66 @@ class TestCompact:
         before = _canonical_records(multi_writer_store)
         compact(multi_writer_store, min_quiet_s=0)
         assert _canonical_records(multi_writer_store) == before
+
+    def test_mixed_generation_store_compacts_to_v2(self, tmp_path: Path):
+        pytest.importorskip("duckdb")
+        import json
+
+        import pyarrow as pa
+
+        from tinker_cookbook.tokendb.reader import TokenDB
+        from tinker_cookbook.tokendb.reader_test import write_v1_segment
+
+        # One v1 segment (metrics as a JSON string) + one v2 segment.
+        write_v1_segment(
+            tmp_path, [{"iteration": 0, "metrics": json.dumps({"acc": 0.5}), "ac_text": "old"}]
+        )
+        with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [
+                    make_row(
+                        iteration=1,
+                        metrics={"acc": 1.0},
+                        attrs={"dataset": "gsm8k"},
+                        ac_text="new",
+                    )
+                ]
+            )
+        plan = compact(tmp_path, min_quiet_s=0)
+        assert plan.n_rows == 2
+        # The compacted segment is uniformly v2: metrics is a typed map now.
+        table = read_all_segments(tmp_path)
+        assert pa.types.is_map(table.schema.field("metrics").type)
+        db = TokenDB(tmp_path)
+        rows = db.query()
+        assert [row["ac_text"] for row in rows] == ["old", "new"]
+        assert [row["metrics"]["acc"] for row in rows] == [pytest.approx(0.5), pytest.approx(1.0)]
+        assert rows[0]["attrs"] == {} and rows[1]["attrs"] == {"dataset": "gsm8k"}
+        agg = db.sql("SELECT avg(metrics['acc']) AS mean_acc FROM rollouts")
+        assert agg[0]["mean_acc"] == pytest.approx(0.75)
+
+    def test_compacted_manifest_keeps_observed_keys(self, tmp_path: Path):
+        import json
+
+        with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [
+                    make_row(
+                        metrics={"acc": 1.0},
+                        attrs={"dataset": "gsm8k"},
+                        token_metrics={"kl": [0.1, 0.2]},
+                        tags=["math"],
+                    )
+                ]
+            )
+        compact(tmp_path, min_quiet_s=0)
+        # Old manifests (the schema card's source) are gone; the compacted
+        # manifest must carry the observed keys forward.
+        (manifest,) = _manifests(tmp_path)
+        (entry,) = [
+            json.loads(line) for line in (tmp_path / TOKENS_DIR / manifest).read_text().splitlines()
+        ]
+        assert entry["metrics_keys"] == ["acc"]
+        assert entry["attrs_keys"] == ["dataset"]
+        assert entry["token_metrics_keys"] == ["kl"]
+        assert entry["tags"] == ["math"]

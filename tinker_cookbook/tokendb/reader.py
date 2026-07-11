@@ -3,9 +3,11 @@
 :class:`ParquetSegmentReader` is the read half of
 :class:`~tinker_cookbook.tokendb.writer.ParquetSegmentBackend`: an in-memory
 DuckDB connection over the immutable segment files, with views for browsing
-(``rollouts`` / ``rollouts_latest`` / ``trajectories`` / ``labels``) and the
-structured ``TokenStoreBackend`` read methods (``query`` / ``get_rollout`` /
-``search`` / ``subscribe`` / ``add_label`` / ``labels``).
+(``rollouts`` / ``rollouts_latest`` / ``trajectories`` / ``labels`` /
+``runs``, plus the promoted ``correct`` / ``parse_errors`` /
+``context_overflows``) and the structured ``TokenStoreBackend`` read methods
+(``query`` / ``get_rollout`` / ``search`` / ``subscribe`` / ``add_label`` /
+``labels``).
 
 Segment registration is incremental: the reader tracks which segment files it
 has loaded and, on refresh, lists the segments directory (the directory
@@ -34,7 +36,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tinker_cookbook.stores.storage import LocalStorage, Storage, storage_from_uri
-from tinker_cookbook.tokendb.writer import SEGMENTS_DIR, TOKENS_DIR, ParquetSegmentBackend
+from tinker_cookbook.tokendb.writer import (
+    RUN_ATTEMPTS_PATH,
+    RUN_JSON_PATH,
+    SEGMENTS_DIR,
+    TOKENS_DIR,
+    ParquetSegmentBackend,
+)
 
 if TYPE_CHECKING:
     import duckdb
@@ -116,6 +124,92 @@ def _normalize_segment_table(table: Any) -> Any:
         row["token_metrics"] = {}
         row["tool_calls"] = None
     return pa.Table.from_pylist(rows, schema=arrow_schema())
+
+
+# --- runs table: per-attempt run records with redacted config ---
+
+#: Case-insensitive key-substring patterns whose values are redacted from
+#: ``config_json`` in the ``runs`` view. Deliberately aggressive (substring,
+#: not exact match): a token store can end up on shared storage, so leaking
+#: an API key is much worse than over-redacting. Known false positives (e.g.
+#: ``max_tokens`` matches ``token``) are acceptable because the hot config
+#: dimensions are promoted to typed columns before redaction.
+CONFIG_REDACT_PATTERNS = ("key", "token", "secret", "password", "credential")
+
+_REDACTED = "[redacted]"
+
+#: Typed columns of the ``runs`` view extracted from the run context/config
+#: (NULL when absent): name -> coercion.
+RUNS_TYPED_COLUMNS: dict[str, type] = {
+    "temperature": float,
+    "max_tokens": int,
+    "renderer_name": str,
+    "lora_rank": int,
+    "seed": int,
+    "group_size": int,
+    "loss_fn": str,
+    "learning_rate": float,
+}
+
+
+def redact_config(value: Any) -> Any:
+    """Recursively redact sensitive values from a config structure.
+
+    Any dict entry whose key contains one of :data:`CONFIG_REDACT_PATTERNS`
+    (case-insensitive substring) has its value replaced with ``"[redacted]"``;
+    nested dicts and lists are walked recursively.
+    """
+    if isinstance(value, dict):
+        return {
+            key: (
+                _REDACTED
+                if any(pattern in str(key).lower() for pattern in CONFIG_REDACT_PATTERNS)
+                else redact_config(entry)
+            )
+            for key, entry in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_config(entry) for entry in value]
+    return value
+
+
+def _find_config_value(config: Any, key: str) -> Any:
+    """Breadth-first search for *key* in a nested dict structure.
+
+    Shallowest match wins, so a top-level ``temperature`` beats one buried in
+    a sub-config. Returns ``None`` when absent.
+    """
+    queue: list[Any] = [config]
+    while queue:
+        next_queue: list[Any] = []
+        for node in queue:
+            if not isinstance(node, dict):
+                continue
+            if key in node:
+                return node[key]
+            next_queue.extend(node.values())
+        queue = next_queue
+    return None
+
+
+def _run_row_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """One ``runs`` row from one run.json / run-attempts.jsonl payload."""
+    context = payload.get("context") or {}
+    row: dict[str, Any] = {
+        "run_id": payload.get("run_id"),
+        "run_attempt": payload.get("run_attempt"),
+        "model_name": context.get("model_name"),
+        "recipe_name": context.get("recipe_name"),
+        "started_at": payload.get("updated_at"),
+    }
+    for column, coerce in RUNS_TYPED_COLUMNS.items():
+        value = _find_config_value(context, column)
+        try:
+            row[column] = coerce(value) if value is not None else None
+        except (TypeError, ValueError):
+            row[column] = None
+    row["config_json"] = json.dumps(redact_config(context), default=str)
+    return row
 
 
 def _require_duckdb() -> Any:
@@ -231,6 +325,154 @@ class ParquetSegmentReader:
             GROUP BY run_id, run_attempt, split, iteration, group_idx, traj_idx
             """
         )
+        # Promoted views: thin CREATE VIEW sugar over `rollouts` for the
+        # hottest metrics keys, so common questions need no map syntax.
+        # Retroactive and reversible (zero write cost); the key choices match
+        # what the cookbook envs actually emit:
+        # - `correct`: ProblemEnv/code_rl/search_tool/eval benchmarks emit
+        #   metrics['correct']; group-level correctness lands as
+        #   metrics['group/correct'] (which wins when both are present).
+        conn.execute(
+            """
+            CREATE VIEW correct AS
+            SELECT *, coalesce(metrics['group/correct'], metrics['correct']) AS correct
+            FROM rollouts
+            WHERE metrics['correct'] IS NOT NULL OR metrics['group/correct'] IS NOT NULL
+            """
+        )
+        # - `parse_errors`: message-env turns whose response failed renderer
+        #   parsing (metrics['parse_error'] = 1.0 in rl/message_env.py).
+        conn.execute(
+            """
+            CREATE VIEW parse_errors AS
+            SELECT * FROM rollouts WHERE metrics['parse_error'] >= 1.0
+            """
+        )
+        # - `context_overflows`: turns that hit max_tokens — stop_reason
+        #   'length', or the message-env's metrics['max_tokens_reached'].
+        conn.execute(
+            """
+            CREATE VIEW context_overflows AS
+            SELECT * FROM rollouts
+            WHERE stop_reason = 'length' OR metrics['max_tokens_reached'] >= 1.0
+            """
+        )
+
+    def _run_attempt_payloads(self) -> list[dict[str, Any]]:
+        """All run-attempt payloads for this store, one per (run_id, run_attempt).
+
+        Reads ``run-attempts.jsonl`` (one line appended per attempt), falling
+        back to ``run.json`` (latest attempt only) for stores written before
+        the append-per-attempt record existed. Deduped by
+        ``(run_id, run_attempt)``, last line wins.
+        """
+        payloads: dict[tuple[Any, Any], dict[str, Any]] = {}
+        if self._storage.exists(RUN_ATTEMPTS_PATH):
+            for line in self._storage.read(RUN_ATTEMPTS_PATH).decode().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    payloads[(payload.get("run_id"), payload.get("run_attempt"))] = payload
+        if not payloads and self._storage.exists(RUN_JSON_PATH):
+            try:
+                payload = json.loads(self._storage.read(RUN_JSON_PATH).decode())
+                if isinstance(payload, dict):
+                    payloads[(payload.get("run_id"), payload.get("run_attempt"))] = payload
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+        return [payloads[key] for key in sorted(payloads, key=lambda k: (str(k[0]), str(k[1])))]
+
+    def _refresh_runs_source(self, conn: duckdb.DuckDBPyConnection) -> None:
+        """(Re)create the ``runs`` view: one row per (run_id, run_attempt).
+
+        Typed columns (:data:`RUNS_TYPED_COLUMNS`, NULL when absent) come from
+        a breadth-first search of the attempt's recorded context; the full
+        context is exposed as ``config_json`` after :func:`redact_config`.
+        Re-resolved on every read (a resume can append an attempt while a
+        reader is open).
+        """
+        import pyarrow as pa
+
+        rows = [_run_row_from_payload(payload) for payload in self._run_attempt_payloads()]
+        schema = pa.schema(
+            [
+                pa.field("run_id", pa.string()),
+                pa.field("run_attempt", pa.int32()),
+                pa.field("model_name", pa.string()),
+                pa.field("recipe_name", pa.string()),
+                pa.field("started_at", pa.string()),
+                pa.field("temperature", pa.float64()),
+                pa.field("max_tokens", pa.int64()),
+                pa.field("renderer_name", pa.string()),
+                pa.field("lora_rank", pa.int64()),
+                pa.field("seed", pa.int64()),
+                pa.field("group_size", pa.int64()),
+                pa.field("loss_fn", pa.string()),
+                pa.field("learning_rate", pa.float64()),
+                pa.field("config_json", pa.string()),
+            ]
+        )
+        table = pa.Table.from_pylist(rows, schema=schema)
+        conn.execute("DROP VIEW IF EXISTS runs")
+        conn.register("_runs_raw", table)
+        conn.execute("CREATE VIEW runs AS SELECT * FROM _runs_raw")
+
+    def runs(self) -> list[dict[str, Any]]:
+        """The ``runs`` view content: one row per (run_id, run_attempt)."""
+        conn = self._connection()
+        self._refresh_runs_source(conn)
+        return self._fetch("SELECT * FROM runs ORDER BY run_id, run_attempt")
+
+    def schema_card(self) -> dict[str, Any]:
+        """Aggregate the observed-keys manifest lines into a per-run card.
+
+        Unions ``metrics_keys`` / ``attrs_keys`` / ``token_metrics_keys`` /
+        ``tags`` across every manifest line of every writer (cheap: manifest
+        lines only, no segment bytes). ``keys_truncated`` is true if any
+        contributing line hit the writer's per-line key cap, i.e. the lists
+        may be incomplete. Lines from writers that predate observed-keys
+        manifests contribute nothing.
+        """
+        union: dict[str, set[str]] = {
+            "metrics_keys": set(),
+            "attrs_keys": set(),
+            "token_metrics_keys": set(),
+            "tags": set(),
+        }
+        truncated = False
+        try:
+            names = [
+                name
+                for name in self._storage.list_dir(TOKENS_DIR)
+                if name.startswith("manifest-") and name.endswith(".jsonl")
+            ]
+        except FileNotFoundError:
+            names = []
+        for name in names:
+            try:
+                lines = self._storage.read(f"{TOKENS_DIR}/{name}").decode().splitlines()
+            except FileNotFoundError:
+                continue
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                for field in union:
+                    values = entry.get(field)
+                    if isinstance(values, list):
+                        union[field].update(str(v) for v in values)
+                truncated = truncated or bool(entry.get("keys_truncated"))
+        return {
+            **{field: sorted(values) for field, values in union.items()},
+            "keys_truncated": truncated,
+        }
 
     def _list_segment_files(self) -> list[str]:
         return sorted(
@@ -283,6 +525,9 @@ class ParquetSegmentReader:
         tag: str | None = None,
         env_row_id: str | None = None,
         text_regex: str | None = None,
+        attr_eq: Mapping[str, str] | None = None,
+        metric_min: Mapping[str, float] | None = None,
+        metric_max: Mapping[str, float] | None = None,
     ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -322,6 +567,19 @@ class ParquetSegmentReader:
                 " OR regexp_matches(coalesce(ac_text, ''), ?))"
             )
             params.extend([text_regex, text_regex])
+        # Structured map filters. Keys bind as parameters (map access on a
+        # missing key yields NULL, so these clauses also drop rows lacking
+        # the key). TRY_CAST guards the numeric comparison; note DuckDB
+        # orders NaN above every number, so a NaN metric passes metric_min.
+        for key, value in (attr_eq or {}).items():
+            clauses.append("attrs[?] = ?")
+            params.extend([str(key), str(value)])
+        for key, value in (metric_min or {}).items():
+            clauses.append("TRY_CAST(metrics[?] AS DOUBLE) >= ?")
+            params.extend([str(key), float(value)])
+        for key, value in (metric_max or {}).items():
+            clauses.append("TRY_CAST(metrics[?] AS DOUBLE) <= ?")
+            params.extend([str(key), float(value)])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return where, params
 
@@ -340,7 +598,10 @@ class ParquetSegmentReader:
         ``traj_idx``, ``min_reward`` / ``max_reward`` (over ``total_reward``),
         ``stop_reason``, ``source``, ``filtered_reason``, ``tag`` (tags list
         contains), ``env_row_id``, ``text_regex`` (over ``ob_text`` /
-        ``ac_text``). ``latest_only=True`` queries ``rollouts_latest``
+        ``ac_text``), plus structured map filters — ``attr_eq`` (dict:
+        ``attrs[key] = value``), ``metric_min`` / ``metric_max`` (dicts:
+        ``metrics[key]`` at least / at most the value; rows lacking the key
+        never match). ``latest_only=True`` queries ``rollouts_latest``
         (dropping attempts superseded by a resume). Rows are ordered by
         ``(iteration, ts)`` and include the computed ``superseded`` flag.
         """
@@ -405,21 +666,35 @@ class ParquetSegmentReader:
     ) -> list[dict[str, Any]]:
         """Search rows by text regex and/or token-ID subsequence.
 
-        ``regex`` matches over the given text ``fields`` (any of ``ac_text``,
-        ``ob_text``, ``metrics``, ``logs``). ``token_subsequence`` matches a
-        contiguous run of token IDs inside ``ac_tokens`` (useful for special
-        tokens with unstable decodings). Additional structured ``filters`` are
-        the same as :meth:`query`. Results are ordered by ``(iteration, ts)``.
+        ``regex`` matches over the given ``fields``: string columns
+        (``ac_text``, ``ob_text``, ``logs``) are regexp'd directly; MAP
+        columns (``metrics``, ``attrs``, ``token_metrics``) are never
+        regexp'd as values — the regex matches their **keys** (via
+        ``map_keys``), which is the useful discovery question for typed maps.
+        ``token_subsequence`` matches a contiguous run of token IDs inside
+        ``ac_tokens`` (useful for special tokens with unstable decodings).
+        Additional structured ``filters`` are the same as :meth:`query`.
+        Results are ordered by ``(iteration, ts)``.
         """
-        allowed_fields = {"ac_text", "ob_text", "metrics", "logs"}
-        bad = set(fields) - allowed_fields
+        string_fields = {"ac_text", "ob_text", "logs"}
+        map_fields = {"metrics", "attrs", "token_metrics"}
+        bad = set(fields) - string_fields - map_fields
         if bad:
             raise ValueError(f"Unsupported search fields: {sorted(bad)}")
         self.refresh()
         where, params = self._build_where(**filters)
         clauses = [where[len("WHERE ") :]] if where else []
         if regex is not None:
-            field_matches = [f"regexp_matches(coalesce({f}, ''), ?)" for f in fields]
+            field_matches = []
+            for f in fields:
+                if f in map_fields:
+                    # regexp_matches on a MAP is a BinderException; match keys.
+                    field_matches.append(
+                        "EXISTS (SELECT 1 FROM unnest(map_keys("
+                        f"{f})) AS _k(key) WHERE regexp_matches(_k.key, ?))"
+                    )
+                else:
+                    field_matches.append(f"regexp_matches(coalesce({f}, ''), ?)")
             clauses.append(f"({' OR '.join(field_matches)})")
             params.extend([regex] * len(fields))
         if token_subsequence:
@@ -630,15 +905,19 @@ class ParquetSegmentReader:
         """Run a read-only DuckDB SQL query over the store's views.
 
         Available relations: ``segment_rows`` (raw), ``rollouts``,
-        ``rollouts_latest``, ``trajectories``, ``labels``. Only a single
-        ``SELECT`` (or ``WITH ... SELECT``) statement is allowed; anything
-        else is rejected. Prefer ``?`` placeholders with *params* over string
+        ``rollouts_latest``, ``trajectories``, ``labels``, ``runs`` (one row
+        per run attempt with typed config columns and redacted
+        ``config_json``), and the promoted views ``correct`` /
+        ``parse_errors`` / ``context_overflows``. Only a single ``SELECT``
+        (or ``WITH ... SELECT``) statement is allowed; anything else is
+        rejected. Prefer ``?`` placeholders with *params* over string
         interpolation.
         """
         duckdb = _require_duckdb()
         conn = self._connection()
         self.refresh()
         self._refresh_labels_source(conn)
+        self._refresh_runs_source(conn)
         statements = conn.extract_statements(query)
         if len(statements) != 1:
             raise ValueError("sql() accepts exactly one statement")
@@ -700,6 +979,14 @@ class TokenDB:
     def labels(self, **filters: Any) -> list[dict[str, Any]]:
         """See :meth:`ParquetSegmentReader.labels`."""
         return self._backend.labels(**filters)
+
+    def runs(self) -> list[dict[str, Any]]:
+        """See :meth:`ParquetSegmentReader.runs`."""
+        return self._backend.runs()
+
+    def schema_card(self) -> dict[str, Any]:
+        """See :meth:`ParquetSegmentReader.schema_card`."""
+        return self._backend.schema_card()
 
     def iter_new(self, **kwargs: Any) -> AsyncIterator[dict[str, Any]]:
         """Async iterator over newly written rows; see

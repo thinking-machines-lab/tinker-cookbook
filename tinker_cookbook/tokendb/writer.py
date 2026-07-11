@@ -4,7 +4,8 @@ Layout under the run's ``log_path`` (all I/O through the ``Storage``
 protocol, so S3/GCS log dirs work)::
 
     {log_path}/tokens/
-      run.json                                   # run identity, coordinator-owned
+      run.json                                   # run identity, coordinator-owned (latest attempt)
+      run-attempts.jsonl                         # 1 line per attempt (appended, never rewritten)
       segments/seg-{writer_id}-{seq:06d}.parquet # immutable, one file per flush
       manifest-{writer_id}.jsonl                 # 1 line per segment (< 4KB appends)
       labels.jsonl                               # annotations (written by readers/agents)
@@ -45,6 +46,7 @@ logger = logging.getLogger(__name__)
 TOKENS_DIR = "tokens"
 SEGMENTS_DIR = f"{TOKENS_DIR}/segments"
 RUN_JSON_PATH = f"{TOKENS_DIR}/run.json"
+RUN_ATTEMPTS_PATH = f"{TOKENS_DIR}/run-attempts.jsonl"
 
 DEFAULT_BUFFER_ROWS = 2048
 DEFAULT_FLUSH_INTERVAL_S = 5.0
@@ -165,7 +167,18 @@ class TokenDbWriter:
         self._flush_thread.start()
 
     def _init_run_json(self) -> tuple[str, int]:
-        """Read/create ``run.json``, incrementing ``run_attempt`` on resume."""
+        """Read/create ``run.json``, incrementing ``run_attempt`` on resume.
+
+        Run identity is recorded twice, by design:
+
+        - ``run.json`` is overwritten each attempt and always holds the
+          **latest** attempt (kept for compatibility: readers use it for
+          quick identity/tokenizer lookup).
+        - ``run-attempts.jsonl`` gets the same payload **appended** as one
+          line per attempt, so per-attempt context (which can change on a
+          resume, e.g. a different learning rate) is never lost. The
+          reader's ``runs`` view is materialized from this file.
+        """
         run_id: str | None = None
         run_attempt = 1
         if self._storage.exists(RUN_JSON_PATH):
@@ -188,7 +201,15 @@ class TokenDbWriter:
             "context": self._context,
             "updated_at": datetime.now(UTC).isoformat(),
         }
-        self._storage.write(RUN_JSON_PATH, (json.dumps(payload, default=str) + "\n").encode())
+        encoded = (json.dumps(payload, default=str) + "\n").encode()
+        self._storage.write(RUN_JSON_PATH, encoded)
+        # Append-per-attempt record (see the docstring). Best-effort: identity
+        # is already durable in run.json, so a failed append must not break
+        # writer construction.
+        try:
+            self._storage.append(RUN_ATTEMPTS_PATH, encoded)
+        except Exception:
+            logger.warning("Failed to append %s (training continues)", RUN_ATTEMPTS_PATH)
         return run_id, run_attempt
 
     def _register_run(self, registry_dir: str | None) -> None:
@@ -427,6 +448,16 @@ class ParquetSegmentBackend:
     def search_hit_counts(self, **kwargs: Any) -> Any:
         """Grouped-by-iteration hit counts for a :meth:`search` call."""
         return self._reader().search_hit_counts(**kwargs)
+
+    def runs(self) -> Any:
+        """One row per (run_id, run_attempt); see
+        :meth:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader.runs`."""
+        return self._reader().runs()
+
+    def schema_card(self) -> Any:
+        """Observed-keys card for this store; see
+        :meth:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader.schema_card`."""
+        return self._reader().schema_card()
 
     def subscribe(self, **filters: Any) -> Any:
         """See :meth:`TokenStoreBackend.subscribe`."""

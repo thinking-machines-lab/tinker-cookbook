@@ -25,6 +25,7 @@ from tinker_cookbook.tokendb.schema import (
 )
 from tinker_cookbook.tokendb.writer import (
     MANIFEST_MAX_KEYS,
+    RUN_ATTEMPTS_PATH,
     RUN_JSON_PATH,
     SEGMENTS_DIR,
     TOKENS_DIR,
@@ -458,6 +459,36 @@ class TestRunAttempt:
         assert run_json["run_attempt"] == 2
         attempts = sorted(row["run_attempt"] for row in read_all_segments(tmp_path).to_pylist())
         assert attempts == [1, 2]
+
+    def test_run_attempts_jsonl_appends_one_line_per_attempt(self, tmp_path: Path):
+        # run.json holds only the latest attempt (overwritten); the
+        # append-per-attempt record preserves each attempt's context.
+        w1 = TokenDbWriter(tmp_path, flush_interval_s=3600.0, context={"learning_rate": 1e-4})
+        w1.append_rows([make_row()])
+        w1.close()
+        w2 = TokenDbWriter(tmp_path, flush_interval_s=3600.0, context={"learning_rate": 5e-5})
+        w2.append_rows([make_row()])
+        w2.close()
+        lines = [
+            json.loads(line)
+            for line in (tmp_path / RUN_ATTEMPTS_PATH).read_text().splitlines()
+            if line.strip()
+        ]
+        assert [line["run_attempt"] for line in lines] == [1, 2]
+        assert all(line["run_id"] == w1.run_id for line in lines)
+        assert [line["context"]["learning_rate"] for line in lines] == [1e-4, 5e-5]
+        # run.json matches the LAST attempts line.
+        assert json.loads((tmp_path / RUN_JSON_PATH).read_text()) == lines[-1]
+
+    def test_worker_context_does_not_touch_run_attempts(self, tmp_path: Path):
+        worker = TokenDbWriter(
+            tmp_path, flush_interval_s=3600.0, context={"run_id": "abc123", "run_attempt": 4}
+        )
+        try:
+            worker.append_rows([make_row()])
+        finally:
+            worker.close()
+        assert not (tmp_path / RUN_ATTEMPTS_PATH).exists()
 
 
 class TestConcurrency:

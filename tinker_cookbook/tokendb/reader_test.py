@@ -559,6 +559,266 @@ def write_v1_segment(log_path: Path, rows: list[dict], name: str = "seg-v1host-1
     pq.write_table(table, segments_dir / name, compression="zstd")
 
 
+class TestStructuredFilters:
+    @pytest.fixture
+    def store(self, tmp_path: Path) -> Path:
+        log_path = tmp_path / "run"
+        with TokenDbWriter(log_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [
+                    make_row(
+                        iteration=0,
+                        attrs={"dataset": "gsm8k"},
+                        metrics={"group/score": 0.9, "acc": 1.0},
+                        ac_text="gsm high",
+                    ),
+                    make_row(
+                        iteration=1,
+                        attrs={"dataset": "gsm8k"},
+                        metrics={"group/score": 0.2},
+                        ac_text="gsm low",
+                    ),
+                    make_row(
+                        iteration=2,
+                        attrs={"dataset": "math"},
+                        metrics={"group/score": 0.7},
+                        ac_text="math mid",
+                    ),
+                    make_row(iteration=3, ac_text="no maps at all"),
+                ]
+            )
+        return log_path
+
+    def test_attr_eq(self, store: Path):
+        db = TokenDB(store)
+        rows = db.query(attr_eq={"dataset": "gsm8k"})
+        assert [row["ac_text"] for row in rows] == ["gsm high", "gsm low"]
+        # Rows lacking the key never match.
+        assert db.query(attr_eq={"dataset": "nope"}) == []
+        assert db.query(attr_eq={"missing_key": "x"}) == []
+
+    def test_metric_min_max(self, store: Path):
+        db = TokenDB(store)
+        rows = db.query(metric_min={"group/score": 0.5})
+        assert [row["ac_text"] for row in rows] == ["gsm high", "math mid"]
+        rows = db.query(metric_max={"group/score": 0.5})
+        assert [row["ac_text"] for row in rows] == ["gsm low"]
+        # Range: min and max on the same key AND together.
+        rows = db.query(metric_min={"group/score": 0.5}, metric_max={"group/score": 0.8})
+        assert [row["ac_text"] for row in rows] == ["math mid"]
+        # A row without the key never matches a metric bound.
+        assert all(row["ac_text"] != "no maps at all" for row in db.query(metric_min={"acc": 0.0}))
+
+    def test_combined_with_scalar_filters(self, store: Path):
+        db = TokenDB(store)
+        rows = db.query(attr_eq={"dataset": "gsm8k"}, metric_min={"group/score": 0.5}, iteration=0)
+        assert [row["ac_text"] for row in rows] == ["gsm high"]
+
+    def test_search_regexes_map_keys_not_values(self, store: Path):
+        db = TokenDB(store)
+        # metrics is a MAP: the regex matches KEYS (group/...), never values.
+        rows = db.search(regex=r"^group/", fields=["metrics"])
+        assert len(rows) == 3
+        assert db.search(regex=r"^acc$", fields=["metrics"]) != []
+        assert db.search(regex=r"0\.9", fields=["metrics"]) == []  # values not regexp'd
+        rows = db.search(regex=r"dataset", fields=["attrs"])
+        assert len(rows) == 3
+        # String fields still regexp text directly.
+        assert len(db.search(regex=r"gsm", fields=["ac_text"])) == 2
+        with pytest.raises(ValueError, match="Unsupported search fields"):
+            db.search(regex="x", fields=["ac_tokens"])
+
+
+class TestRunsTable:
+    def test_one_row_per_attempt_with_typed_columns(self, tmp_path: Path):
+        log_path = tmp_path / "run"
+        context = {
+            "model_name": "test-model",
+            "recipe_name": "math_rl",
+            "config": {
+                "temperature": 0.7,
+                "max_tokens": 512,
+                "renderer_name": "role_colon",
+                "lora_rank": 32,
+                "seed": 7,
+                "group_size": 8,
+                "loss_fn": "importance_sampling",
+                "learning_rate": 1e-4,
+                "wandb_api_key": "SUPER-SECRET",
+                "nested": {"service": {"auth_token": "ALSO-SECRET", "region": "us"}},
+            },
+        }
+        with TokenDbWriter(log_path, context=context) as writer:
+            writer.append_rows([make_row()])
+        # Resume with a changed learning rate: a second attempt line.
+        resumed = {**context, "config": {**context["config"], "learning_rate": 5e-5}}
+        with TokenDbWriter(log_path, context=resumed) as writer:
+            assert writer.run_attempt == 2
+            writer.append_rows([make_row(iteration=1)])
+        db = TokenDB(log_path)
+        rows = db.runs()
+        assert [row["run_attempt"] for row in rows] == [1, 2]
+        first, second = rows
+        assert first["model_name"] == "test-model"
+        assert first["recipe_name"] == "math_rl"
+        assert first["temperature"] == pytest.approx(0.7)
+        assert first["max_tokens"] == 512
+        assert first["renderer_name"] == "role_colon"
+        assert first["lora_rank"] == 32
+        assert first["seed"] == 7
+        assert first["group_size"] == 8
+        assert first["loss_fn"] == "importance_sampling"
+        assert first["learning_rate"] == pytest.approx(1e-4)
+        # Per-attempt config is preserved: the resume's changed LR shows up.
+        assert second["learning_rate"] == pytest.approx(5e-5)
+        # The runs view is queryable via SQL, joined against rollouts.
+        joined = db.sql(
+            "SELECT r.iteration, runs.learning_rate FROM rollouts r "
+            "JOIN runs ON r.run_id = runs.run_id AND r.run_attempt = runs.run_attempt "
+            "ORDER BY r.iteration"
+        )
+        assert [row["learning_rate"] for row in joined] == [
+            pytest.approx(1e-4),
+            pytest.approx(5e-5),
+        ]
+
+    def test_config_json_redaction_is_recursive(self, tmp_path: Path):
+        log_path = tmp_path / "run"
+        context = {
+            "model_name": "m",
+            "config": {
+                "API_KEY": "S1",
+                "wandb_token": "S2",
+                "db_password": "S3",
+                "aws_credentials": {"secret": "S4"},
+                "nested": {"deeper": {"some_secret_thing": "S5", "safe": "keep-me"}},
+                "list_of_dicts": [{"auth_token": "S6", "fine": 1}],
+                "temperature": 0.5,
+            },
+        }
+        with TokenDbWriter(log_path, context=context) as writer:
+            writer.append_rows([make_row()])
+        (row,) = TokenDB(log_path).runs()
+        config_json = row["config_json"]
+        for secret in ("S1", "S2", "S3", "S4", "S5", "S6"):
+            assert secret not in config_json
+        config = json.loads(config_json)
+        assert config["config"]["API_KEY"] == "[redacted]"  # case-insensitive
+        # aws_credentials matches "credential": the whole subtree is redacted.
+        assert config["config"]["aws_credentials"] == "[redacted]"
+        assert config["config"]["nested"]["deeper"]["some_secret_thing"] == "[redacted]"
+        assert config["config"]["nested"]["deeper"]["safe"] == "keep-me"
+        assert config["config"]["list_of_dicts"][0]["auth_token"] == "[redacted]"
+        assert config["config"]["list_of_dicts"][0]["fine"] == 1
+        # Typed columns are extracted before redaction, so max_tokens-style
+        # "token" false positives don't lose the typed value.
+        assert row["temperature"] == pytest.approx(0.5)
+
+    def test_missing_config_dims_are_null(self, tmp_path: Path):
+        log_path = tmp_path / "run"
+        with TokenDbWriter(log_path, context={"model_name": "m"}) as writer:
+            writer.append_rows([make_row()])
+        (row,) = TokenDB(log_path).runs()
+        assert row["temperature"] is None
+        assert row["loss_fn"] is None
+        assert row["learning_rate"] is None
+
+    def test_falls_back_to_run_json_without_attempts_file(self, tmp_path: Path):
+        log_path = tmp_path / "run"
+        with TokenDbWriter(log_path, context={"model_name": "m"}) as writer:
+            writer.append_rows([make_row()])
+        # Simulate a store written before run-attempts.jsonl existed.
+        (log_path / "tokens" / "run-attempts.jsonl").unlink()
+        rows = TokenDB(log_path).runs()
+        assert len(rows) == 1
+        assert rows[0]["model_name"] == "m"
+
+    def test_empty_store_has_empty_runs_view(self, tmp_path: Path):
+        log_path = tmp_path / "run"
+        with TokenDbWriter(log_path) as writer:
+            writer.append_rows([make_row()])
+        (log_path / "tokens" / "run-attempts.jsonl").unlink()
+        (log_path / "tokens" / "run.json").unlink()
+        db = TokenDB(log_path)
+        assert db.runs() == []
+        assert db.sql("SELECT count(*) AS n FROM runs")[0]["n"] == 0
+
+
+class TestSchemaCard:
+    def test_aggregates_manifest_lines_across_flushes(self, tmp_path: Path):
+        log_path = tmp_path / "run"
+        with TokenDbWriter(log_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [make_row(metrics={"acc": 1.0}, attrs={"dataset": "gsm8k"}, tags=["math"])]
+            )
+            writer.flush()
+            writer.append_rows(
+                [
+                    make_row(
+                        step_idx=1,
+                        metrics={"group/score": 0.5},
+                        token_metrics={"teacher/logprobs": [-0.1, -0.2]},
+                        tags=["hard"],
+                    )
+                ]
+            )
+        card = TokenDB(log_path).schema_card()
+        assert card["metrics_keys"] == ["acc", "group/score"]
+        assert card["attrs_keys"] == ["dataset"]
+        assert card["token_metrics_keys"] == ["teacher/logprobs"]
+        assert card["tags"] == ["hard", "math"]
+        assert card["keys_truncated"] is False
+
+    def test_empty_store_card(self, tmp_path: Path):
+        log_path = tmp_path / "run"
+        log_path.mkdir()
+        card = ParquetSegmentReader(log_path).schema_card()
+        assert card["metrics_keys"] == []
+        assert card["keys_truncated"] is False
+
+
+class TestPromotedViews:
+    @pytest.fixture
+    def store(self, tmp_path: Path) -> Path:
+        log_path = tmp_path / "run"
+        with TokenDbWriter(log_path, flush_interval_s=3600.0) as writer:
+            writer.append_rows(
+                [
+                    make_row(iteration=0, metrics={"correct": 1.0}, ac_text="right"),
+                    make_row(
+                        iteration=1,
+                        metrics={"correct": 0.0, "group/correct": 1.0},
+                        ac_text="group overrides",
+                    ),
+                    make_row(iteration=2, metrics={"parse_error": 1.0}, ac_text="garbled"),
+                    make_row(iteration=3, stop_reason="length", ac_text="ran long"),
+                    make_row(
+                        iteration=4, metrics={"max_tokens_reached": 1.0}, ac_text="overflowed"
+                    ),
+                    make_row(iteration=5, ac_text="plain"),
+                ]
+            )
+        return log_path
+
+    def test_correct_view(self, store: Path):
+        db = TokenDB(store)
+        rows = db.sql("SELECT ac_text, correct FROM correct ORDER BY iteration")
+        assert [(row["ac_text"], row["correct"]) for row in rows] == [
+            ("right", 1.0),
+            ("group overrides", 1.0),  # group/correct wins over correct
+        ]
+
+    def test_parse_errors_view(self, store: Path):
+        db = TokenDB(store)
+        rows = db.sql("SELECT ac_text FROM parse_errors")
+        assert [row["ac_text"] for row in rows] == ["garbled"]
+
+    def test_context_overflows_view(self, store: Path):
+        db = TokenDB(store)
+        rows = db.sql("SELECT ac_text FROM context_overflows ORDER BY iteration")
+        assert [row["ac_text"] for row in rows] == ["ran long", "overflowed"]
+
+
 class TestTokenMetricsReadback:
     def test_token_metrics_roundtrip_through_reader(self, tmp_path: Path):
         with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:

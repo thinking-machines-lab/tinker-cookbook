@@ -3,7 +3,14 @@
 
 import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { apiBase, getJSON, postJSON, type RolloutDetail, type StepRow } from "../api";
+import {
+  apiBase,
+  getJSON,
+  postJSON,
+  type RolloutDetail,
+  type StepRow,
+  type ToolCallEntry,
+} from "../api";
 import { Chip } from "../components/Chip";
 import { TokenSpan, type TokenViewMode } from "../components/TokenSpan";
 import { useApi } from "../hooks/useApi";
@@ -100,6 +107,55 @@ function ObservationSection({
   );
 }
 
+/** Render a typed map column (metrics/attrs) as a compact fact table. */
+function MapFacts({ title, entries }: { title: string; entries: [string, string][] }) {
+  if (entries.length === 0) return null;
+  return (
+    <div className="step-map">
+      <div className="turn-label">{title}</div>
+      <table className="facts">
+        <tbody>
+          {entries.map(([key, value]) => (
+            <tr key={key}>
+              <th>{key}</th>
+              <td>{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** NaN metric values arrive as null over JSON; render them as "NaN". */
+function fmtMetric(value: number | null): string {
+  return value === null ? "NaN" : fmtReward(value);
+}
+
+function ToolCalls({ calls }: { calls: ToolCallEntry[] }) {
+  return (
+    <div className="step-map">
+      <div className="turn-label">tool calls</div>
+      <table className="facts">
+        <tbody>
+          {calls.map((call, i) => (
+            <tr key={i}>
+              <th>
+                {call.name}
+                {call.error_type ? ` · error: ${call.error_type}` : ""}
+                {call.should_stop ? " · stops episode" : ""}
+              </th>
+              <td>
+                <code>{call.args_json}</code>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function StepCard({ step, mode, base }: { step: StepRow; mode: TokenViewMode; base: string }) {
   const meta = [
     `step ${step.step_idx}`,
@@ -110,17 +166,39 @@ function StepCard({ step, mode, base }: { step: StepRow; mode: TokenViewMode; ba
     .filter(Boolean)
     .join(" · ");
   const logs = prettyJSON(step.logs);
-  const metrics = prettyJSON(step.metrics);
+  const metricEntries = Object.entries(step.metrics ?? {}).map(
+    ([key, value]) => [key, fmtMetric(value)] as [string, string],
+  );
+  const attrEntries = Object.entries(step.attrs ?? {});
+  const tokenMetricKeys = Object.keys(step.token_metrics ?? {});
   return (
     <div className="step-card">
       <div className="step-meta">{meta}</div>
       <ObservationSection step={step} mode={mode} base={base} />
       <div className="turn-label">action (colored by logprob)</div>
       <ActionTokens step={step} mode={mode} />
-      {(metrics || logs) && (
+      {step.tool_calls && step.tool_calls.length > 0 && <ToolCalls calls={step.tool_calls} />}
+      <MapFacts title="metrics" entries={metricEntries} />
+      <MapFacts title="attrs" entries={attrEntries} />
+      {tokenMetricKeys.length > 0 && (
         <details className="step-json">
-          <summary>metrics / logs</summary>
-          <pre>{[metrics, logs].filter(Boolean).join("\n")}</pre>
+          <summary>token metrics ({tokenMetricKeys.join(", ")})</summary>
+          <pre>
+            {tokenMetricKeys
+              .map(
+                (key) =>
+                  `${key}: [${(step.token_metrics[key] ?? [])
+                    .map((v) => (v === null ? "NaN" : v.toFixed(4)))
+                    .join(", ")}]`,
+              )
+              .join("\n")}
+          </pre>
+        </details>
+      )}
+      {logs && (
+        <details className="step-json">
+          <summary>logs</summary>
+          <pre>{logs}</pre>
         </details>
       )}
     </div>

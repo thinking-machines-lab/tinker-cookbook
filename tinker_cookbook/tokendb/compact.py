@@ -5,7 +5,10 @@ Compaction coalesces them into fewer, larger segments sorted by
 ``(split, iteration, group_idx, traj_idx, step_idx)``, which speeds up reads
 without changing a single row (``run_id`` / ``run_attempt`` / ``writer_id``
 columns and all payload fields are preserved exactly; only the file layout
-changes).
+changes). The one exception is schema generation: v1 segments in a
+mixed-generation store are normalized to the current (v2) shape — the same
+load-time normalization the reader applies — so compacted stores are always
+uniformly current-schema.
 
 Crash-safe ordering (never loses data):
 
@@ -42,7 +45,12 @@ import chz
 
 from tinker_cookbook.stores.storage import Storage, storage_from_uri
 from tinker_cookbook.tokendb.schema import SCHEMA_VERSION
-from tinker_cookbook.tokendb.writer import SEGMENTS_DIR, TOKENS_DIR, make_writer_id
+from tinker_cookbook.tokendb.writer import (
+    SEGMENTS_DIR,
+    TOKENS_DIR,
+    _observed_keys,
+    make_writer_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +74,18 @@ class CompactionPlan:
     new_segments: list[str]  # names the compacted segments will get
     new_manifest: str  # path under tokens/
     dry_run: bool
+
+
+def _map_key_union(chunk: object, column: str) -> set[str]:
+    """The union of map keys in a MAP column of an arrow table chunk.
+
+    Arrow map arrays come back from ``to_pylist`` as lists of ``(key, value)``
+    tuples.
+    """
+    keys: set[str] = set()
+    for entries in chunk.column(column).to_pylist():  # type: ignore[attr-defined]
+        keys.update(str(key) for key, _ in entries)
+    return keys
 
 
 def _list_segment_names(storage: Storage) -> list[str]:
@@ -148,10 +168,15 @@ def compact(
     old_manifests = _list_manifest_paths(storage)
     _check_no_active_writer(storage, old_manifests, min_quiet_s)
 
+    from tinker_cookbook.tokendb.reader import _normalize_segment_table
+
     tables = []
     for name in old_segments:
         data = storage.read(f"{SEGMENTS_DIR}/{name}")
-        tables.append(pq.read_table(io.BytesIO(data)))
+        # Normalize v1 segments to the v2 shape (same load-time normalization
+        # the reader applies), so mixed-generation stores concat cleanly and
+        # compaction always writes current-schema segments.
+        tables.append(_normalize_segment_table(pq.read_table(io.BytesIO(data))))
     table = pa.concat_tables(tables).sort_by([(key, "ascending") for key in SORT_KEYS])
     n_rows = table.num_rows
 
@@ -182,6 +207,17 @@ def compact(
         storage.write(f"{SEGMENTS_DIR}/{name}", sink.getvalue())
         iterations = chunk.column("iteration").to_pylist()
         timestamps = chunk.column("ts").to_pylist()
+        # Recompute the observed-keys manifest fields from the chunk itself:
+        # compaction deletes the old manifests, which are the reader's only
+        # source for the per-run schema card.
+        metrics_keys, metrics_truncated = _observed_keys(_map_key_union(chunk, "metrics"))
+        attrs_keys, attrs_truncated = _observed_keys(_map_key_union(chunk, "attrs"))
+        token_metrics_keys, token_metrics_truncated = _observed_keys(
+            _map_key_union(chunk, "token_metrics")
+        )
+        tags, tags_truncated = _observed_keys(
+            {tag for row_tags in chunk.column("tags").to_pylist() for tag in row_tags}
+        )
         manifest_lines.append(
             json.dumps(
                 {
@@ -195,6 +231,14 @@ def compact(
                     "writer_id": writer_id,
                     "schema_version": SCHEMA_VERSION,
                     "compacted": True,
+                    "metrics_keys": metrics_keys,
+                    "attrs_keys": attrs_keys,
+                    "token_metrics_keys": token_metrics_keys,
+                    "tags": tags,
+                    "keys_truncated": metrics_truncated
+                    or attrs_truncated
+                    or token_metrics_truncated
+                    or tags_truncated,
                 }
             )
         )

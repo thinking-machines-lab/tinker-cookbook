@@ -204,6 +204,123 @@ def test_search_endpoint(populated_store: Path):
     run_with_client(populated_store, fn)
 
 
+@pytest.fixture
+def maps_store(tmp_path: Path) -> Path:
+    """A store exercising the typed map columns (attrs/metrics/token_metrics)."""
+    log_path = tmp_path / "maps-run"
+    with TokenDbWriter(log_path, context={"model_name": "test-model"}) as writer:
+        writer.append_rows(
+            [
+                make_row(
+                    iteration=0,
+                    attrs={"dataset": "gsm8k"},
+                    metrics={"group/score": 0.9, "acc": float("nan")},
+                    token_metrics={"kl": [0.5, float("nan")]},
+                    ac_text="gsm high",
+                ),
+                make_row(
+                    iteration=1,
+                    attrs={"dataset": "math"},
+                    metrics={"group/score": 0.2},
+                    ac_text="math low",
+                ),
+            ]
+        )
+    return log_path
+
+
+def test_structured_filter_query_params(maps_store: Path):
+    async def fn(client):
+        # attr.<key> / metric_min.<key> dotted params (keys may contain "/").
+        resp = await client.get(
+            "/api/rollouts", params={"grain": "rollouts", "attr.dataset": "gsm8k"}
+        )
+        assert resp.status == 200
+        rows = (await resp.json())["rows"]
+        assert [r["ac_text"] for r in rows] == ["gsm high"]
+
+        resp = await client.get(
+            "/api/rollouts", params={"grain": "rollouts", "metric_min.group/score": "0.5"}
+        )
+        rows = (await resp.json())["rows"]
+        assert [r["ac_text"] for r in rows] == ["gsm high"]
+
+        resp = await client.get(
+            "/api/rollouts", params={"grain": "rollouts", "metric_max.group/score": "0.5"}
+        )
+        rows = (await resp.json())["rows"]
+        assert [r["ac_text"] for r in rows] == ["math low"]
+
+        # Structured filters apply at the trajectories grain too.
+        resp = await client.get("/api/rollouts", params={"attr.dataset": "math"})
+        rows = (await resp.json())["rows"]
+        assert len(rows) == 1 and rows[0]["iteration"] == 1
+
+        resp = await client.get("/api/rollouts", params={"metric_min.group/score": "not-a-float"})
+        assert resp.status == 400
+
+    run_with_client(maps_store, fn)
+
+
+def test_structured_filters_in_search_body(maps_store: Path):
+    async def fn(client):
+        resp = await client.post(
+            "/api/search",
+            json={"regex": ".", "filters": {"attr_eq": {"dataset": "gsm8k"}}},
+        )
+        assert resp.status == 200
+        rows = (await resp.json())["rows"]
+        assert [r["ac_text"] for r in rows] == ["gsm high"]
+
+        resp = await client.post(
+            "/api/search",
+            json={"regex": ".", "filters": {"metric_min": {"group/score": 0.5}}},
+        )
+        rows = (await resp.json())["rows"]
+        assert [r["ac_text"] for r in rows] == ["gsm high"]
+
+        resp = await client.post(
+            "/api/search", json={"regex": ".", "filters": {"attr_eq": "not-a-dict"}}
+        )
+        assert resp.status == 400
+
+    run_with_client(maps_store, fn)
+
+
+def test_map_payload_shape_and_nan_sanitization(maps_store: Path):
+    async def fn(client):
+        resp = await client.get("/api/rollouts", params={"grain": "rollouts", "iteration": "0"})
+        assert resp.status == 200
+        # If NaN leaked into the JSON body, .json() (strict JSON.parse
+        # equivalent) would fail here.
+        body = await resp.text()
+        (row,) = json.loads(body)["rows"]
+        # Maps arrive as JSON objects, not strings.
+        assert row["attrs"] == {"dataset": "gsm8k"}
+        assert row["metrics"]["group/score"] == pytest.approx(0.9)
+        assert row["metrics"]["acc"] is None  # NaN -> null
+        assert row["token_metrics"]["kl"] == [pytest.approx(0.5), None]
+        assert row["tool_calls"] is None
+        assert "NaN" not in body
+
+    run_with_client(maps_store, fn)
+
+
+def test_runs_view_queryable_via_sql(maps_store: Path):
+    async def fn(client):
+        resp = await client.post(
+            "/api/sql",
+            json={"query": "SELECT run_attempt, model_name, config_json FROM runs"},
+        )
+        assert resp.status == 200
+        rows = (await resp.json())["rows"]
+        assert len(rows) == 1
+        assert rows[0]["run_attempt"] == 1
+        assert rows[0]["model_name"] == "test-model"
+
+    run_with_client(maps_store, fn)
+
+
 def test_sql_endpoint_guard(populated_store: Path):
     async def fn(client):
         resp = await client.post(
@@ -623,6 +740,46 @@ def test_chat_ws_end_to_end(populated_store: Path):
             assert resp.status == 404
 
     asyncio.run(main())
+
+
+def test_chat_system_prompt_includes_schema_card(maps_store: Path):
+    """The chat system prompt carries this run's observed-keys card."""
+    transport = ScriptedTransport([anthropic_script(text="hi")])
+
+    async def main():
+        app = build_app(maps_store, static_dir=None, load_tokenizer=False, llm_transport=transport)
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            async with client.ws_connect("/api/chat") as ws:
+                frames = await _chat_frames(ws, "hello")
+            assert frames[-1]["type"] == "done"
+        system = transport.requests[0][2]["system"]
+        assert "This run's observed keys" in system
+        # The exact keys this run's data contains...
+        assert "`group/score`" in system and "`acc`" in system
+        assert "`dataset`" in system
+        assert "`kl`" in system
+        # ...plus the promoted views and runs-table columns.
+        assert "parse_errors" in system and "context_overflows" in system
+        assert "learning_rate" in system and "config_json" in system
+
+    asyncio.run(main())
+
+
+def test_format_schema_card_truncation_note():
+    from tinker_cookbook.tokendb.agent_prompt import format_schema_card
+
+    card = {
+        "metrics_keys": ["acc"],
+        "attrs_keys": [],
+        "token_metrics_keys": [],
+        "tags": [],
+        "keys_truncated": True,
+    }
+    text = format_schema_card(card)
+    assert "`acc`" in text
+    assert "(none)" in text  # empty lists render explicitly
+    assert "truncated" in text
 
 
 def test_chat_ws_missing_key_error_frame(populated_store: Path):

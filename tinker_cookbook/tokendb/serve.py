@@ -13,6 +13,16 @@ their original paths (``/api/rollouts``, ``/ws``, ...)::
 
     python -m tinker_cookbook.tokendb.serve log_path=~/runs/my-run port=7423
 
+Structured map filters over the typed ``attrs`` / ``metrics`` columns use a
+dotted-prefix query-param encoding on ``GET /api/rollouts`` (the map key is
+everything after the first dot, so keys may contain slashes)::
+
+    /api/rollouts?attr.dataset=gsm8k&metric_min.group/score=0.5&metric_max.parse_error=0
+
+JSON bodies (``POST /api/search``, websocket subscribe) pass the equivalent
+dicts directly: ``{"filters": {"attr_eq": {"dataset": "gsm8k"},
+"metric_min": {"group/score": 0.5}}}``.
+
 **Registry mode** (no ``log_path``): serve every run registered in the local
 run registry (see :mod:`tinker_cookbook.tokendb.registry`), so concurrently
 running experiments show up in one dashboard. ``GET /api/runs`` lists the
@@ -36,9 +46,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
-import functools
 import json
 import logging
+import math
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -93,7 +103,25 @@ DASHBOARD_RECENT_ITERATIONS = 5  # K for mean_recent_reward
 REWARD_SERIES_ITERATIONS = 50  # sparkline length
 DEFAULT_DASHBOARD_PUSH_INTERVAL_S = 5.0
 
-_json_dumps = functools.partial(json.dumps, default=str)
+
+def _sanitize_floats(data: Any) -> Any:
+    """Replace NaN/Infinity floats with ``None`` recursively.
+
+    ``json.dumps`` would emit bare ``NaN`` tokens (invalid JSON that
+    ``JSON.parse`` in the browser rejects); typed ``metrics`` /
+    ``token_metrics`` values can legitimately be NaN.
+    """
+    if isinstance(data, float):
+        return None if (math.isnan(data) or math.isinf(data)) else data
+    if isinstance(data, dict):
+        return {key: _sanitize_floats(value) for key, value in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [_sanitize_floats(value) for value in data]
+    return data
+
+
+def _json_dumps(data: Any) -> str:
+    return json.dumps(_sanitize_floats(data), default=str)
 
 
 @dataclasses.dataclass
@@ -232,6 +260,35 @@ npm run build</pre>
 </body></html>"""
 
 
+# Structured map filters over the typed `attrs` / `metrics` columns. Query
+# param encoding: a dotted prefix carries the map key in the param name —
+#   ?attr.dataset=gsm8k            -> attr_eq={"dataset": "gsm8k"}
+#   ?metric_min.group/score=0.5    -> metric_min={"group/score": 0.5}
+#   ?metric_max.parse_error=0      -> metric_max={"parse_error": 0.0}
+# (map keys may contain slashes; everything after the first "." is the key).
+# JSON bodies (search / websocket subscribe) pass the dicts directly:
+#   {"filters": {"attr_eq": {"dataset": "gsm8k"}, "metric_min": {...}}}
+_STRUCTURED_FILTER_PREFIXES: dict[str, tuple[str, type]] = {
+    "attr.": ("attr_eq", str),
+    "metric_min.": ("metric_min", float),
+    "metric_max.": ("metric_max", float),
+}
+
+
+def _parse_structured_filters(query: Mapping[str, str]) -> dict[str, dict[str, Any]]:
+    """Parse dotted-prefix map-filter params (see the encoding note above)."""
+    out: dict[str, dict[str, Any]] = {}
+    for name in query:
+        for prefix, (filter_name, typ) in _STRUCTURED_FILTER_PREFIXES.items():
+            if name.startswith(prefix) and len(name) > len(prefix) and query[name] != "":
+                try:
+                    value = typ(query[name])
+                except (TypeError, ValueError) as e:
+                    raise ValueError(f"Bad value for filter {name!r}: {query[name]!r}") from e
+                out.setdefault(filter_name, {})[name[len(prefix) :]] = value
+    return out
+
+
 def _parse_filters(query: Mapping[str, str], types: Mapping[str, type]) -> dict[str, Any]:
     """Coerce known query params to their filter types; raises ValueError on bad values."""
     out: dict[str, Any] = {}
@@ -245,15 +302,33 @@ def _parse_filters(query: Mapping[str, str], types: Mapping[str, type]) -> dict[
 
 
 def _coerce_body_filters(filters: Any) -> dict[str, Any]:
-    """Validate a JSON-body filter dict against the known rollout filters."""
+    """Validate a JSON-body filter dict against the known rollout filters.
+
+    Structured map filters (``attr_eq`` / ``metric_min`` / ``metric_max``)
+    are passed as nested objects and validated here; everything else must be
+    a known scalar rollout filter.
+    """
     if filters is None:
         return {}
     if not isinstance(filters, dict):
         raise ValueError("filters must be an object")
+    filters = dict(filters)
+    out: dict[str, Any] = {}
+    for _, (filter_name, typ) in _STRUCTURED_FILTER_PREFIXES.items():
+        if filter_name not in filters:
+            continue
+        entries = filters.pop(filter_name)
+        if not isinstance(entries, dict):
+            raise ValueError(f"{filter_name} must be an object of map-key -> value")
+        try:
+            out[filter_name] = {str(key): typ(value) for key, value in entries.items()}
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Bad value in {filter_name}: {entries!r}") from e
     bad = set(filters) - set(_ROLLOUT_FILTER_TYPES)
     if bad:
         raise ValueError(f"Unsupported filters: {sorted(bad)}")
-    return _parse_filters({k: str(v) for k, v in filters.items()}, _ROLLOUT_FILTER_TYPES)
+    out.update(_parse_filters({k: str(v) for k, v in filters.items()}, _ROLLOUT_FILTER_TYPES))
+    return out
 
 
 def _flag(query: Mapping[str, str], name: str, default: bool = False) -> bool:
@@ -330,6 +405,7 @@ async def _handle_rollouts(request: web.Request) -> web.Response:
     q = request.rel_url.query
     try:
         filters = _parse_filters(q, _ROLLOUT_FILTER_TYPES)
+        filters.update(_parse_structured_filters(q))
         grain = q.get("grain", "trajectories")
         latest_only = _flag(q, "latest_only")
         limit = int(q.get("limit", "500"))
@@ -716,6 +792,20 @@ def _run_info(ctx: RunContext) -> dict[str, Any] | None:
     return None
 
 
+def _run_schema_card(ctx: RunContext) -> dict[str, Any] | None:
+    """Best-effort observed-keys card for the system prompt (manifest-only).
+
+    ``schema_card()`` reads manifest lines through ``Storage`` and never
+    touches the reader's DuckDB connection, so sharing ``ctx.reader`` here is
+    thread-safe.
+    """
+    try:
+        return ctx.reader.schema_card()
+    except Exception:
+        logger.warning("Could not build the schema card for the chat prompt", exc_info=True)
+    return None
+
+
 def _chat_scope(request: web.Request, *, include_prompt: bool = False) -> ChatScope:
     """Resolve the chat scope for this request.
 
@@ -735,7 +825,10 @@ def _chat_scope(request: web.Request, *, include_prompt: bool = False) -> ChatSc
         prompt = ""
         if include_prompt:
             prompt = build_system_prompt(
-                sql_url=f"{api_base}/sql", mode="run", run_info=_run_info(ctx)
+                sql_url=f"{api_base}/sql",
+                mode="run",
+                run_info=_run_info(ctx),
+                schema_card=_run_schema_card(ctx),
             )
         return ChatScope(
             toolbox=RunToolbox(_chat_reader(ctx), VisualStore(ctx.storage, url_base=visuals_base)),

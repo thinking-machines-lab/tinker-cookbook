@@ -304,8 +304,12 @@ _SEARCH_SCHEMA = {
         "regex": {"type": "string", "description": "Regex over the decoded text fields."},
         "fields": {
             "type": "array",
-            "items": {"type": "string", "enum": ["ac_text", "ob_text", "metrics", "logs"]},
-            "description": "Text fields the regex applies to (default ac_text and ob_text).",
+            "items": {
+                "type": "string",
+                "enum": ["ac_text", "ob_text", "logs", "metrics", "attrs", "token_metrics"],
+            },
+            "description": "Fields the regex applies to (default ac_text and ob_text). "
+            "For the map columns (metrics/attrs/token_metrics) the regex matches KEYS.",
         },
         "token_subsequence": {
             "type": "array",
@@ -419,7 +423,13 @@ class RunToolbox:
 
     def tool_defs(self) -> list[ToolDef]:
         return [
-            ToolDef("sql", "Run a read-only DuckDB SELECT over this run's token DB.", _SQL_SCHEMA),
+            ToolDef(
+                "sql",
+                "Run a read-only DuckDB SELECT over this run's token DB "
+                "(views: rollouts, rollouts_latest, trajectories, labels, runs, "
+                "correct, parse_errors, context_overflows).",
+                _SQL_SCHEMA,
+            ),
             ToolDef(
                 "search",
                 "Search rollout rows by text regex and/or contiguous token-ID subsequence.",
@@ -480,7 +490,9 @@ class RegistryToolbox:
             ),
             ToolDef(
                 "sql",
-                "Run a read-only DuckDB SELECT over one run's token DB.",
+                "Run a read-only DuckDB SELECT over one run's token DB "
+                "(views: rollouts, rollouts_latest, trajectories, labels, runs, "
+                "correct, parse_errors, context_overflows).",
                 _with_run_id(_SQL_SCHEMA),
             ),
             ToolDef(

@@ -429,6 +429,17 @@ label.toggle {
   background: rgba(0, 0, 0, 0.06);
   border-radius: 2px;
 }
+.step-map {
+  margin-top: 10px;
+}
+.step-map table.facts {
+  width: auto;
+  min-width: 40%;
+}
+.step-map td code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
 .step-json summary {
   cursor: pointer;
   color: var(--text-secondary);
