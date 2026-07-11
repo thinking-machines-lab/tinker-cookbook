@@ -6,16 +6,61 @@ The TokenCompleter operates on tokens. This is the version used by RL algorithms
 Evals and other code should use the appropriate interface.
 """
 
+import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import tinker
 
 from tinker_cookbook import renderers
 
+logger = logging.getLogger(__name__)
+
 # Interfaces
 
 StopCondition: TypeAlias = list[str] | list[int]
+
+# ---------------------------------------------------------------------------
+# Sample sink — an optional observer for every successful sample made through
+# the Tinker completers. Used by the token DB
+# (``tinker_cookbook.tokendb.capture.capture_samples``) to persist sampled
+# tokens; ``None`` (the default) is a single falsy check per call.
+# ---------------------------------------------------------------------------
+
+SampleSink: TypeAlias = Callable[
+    [tinker.ModelInput, Sequence[tinker.types.SampledSequence], dict[str, Any]], None
+]
+"""Callback ``(model_input, sampled_sequences, sampling_metadata)`` invoked
+after each successful sample. Sink exceptions are logged and swallowed so a
+sink can never break sampling."""
+
+_sample_sink: SampleSink | None = None
+
+
+def set_sample_sink(sink: SampleSink | None) -> None:
+    """Register a sink observing every completer sample (``None`` disables)."""
+    global _sample_sink
+    _sample_sink = sink
+
+
+def get_sample_sink() -> SampleSink | None:
+    """Return the registered sample sink, or ``None`` when disabled."""
+    return _sample_sink
+
+
+def _notify_sample_sink(
+    model_input: tinker.ModelInput,
+    sequences: Sequence[tinker.types.SampledSequence],
+    metadata: dict[str, Any],
+) -> None:
+    """Invoke the sample sink if registered; never raises."""
+    if _sample_sink is None:
+        return
+    try:
+        _sample_sink(model_input, sequences, metadata)
+    except Exception:
+        logger.exception("Sample sink failed; continuing without capture")
 
 
 @dataclass
@@ -124,6 +169,16 @@ class TinkerTokenCompleter(TokenCompleter):
             ),
         )
 
+        _notify_sample_sink(
+            model_input,
+            sample_result.sequences,
+            {
+                "completer": "TinkerTokenCompleter",
+                "max_tokens": max_tokens,
+                "temperature": self.temperature,
+            },
+        )
+
         # Extract tokens, logprobs, and stop_reason from the first (and only) sample
         sampled_seq = sample_result.sequences[0]
         assert sampled_seq.logprobs is not None
@@ -187,6 +242,16 @@ class TinkerMessageCompleter(MessageCompleter):
                 max_tokens=self.max_tokens,
                 stop=self.stop_condition,
             ),
+        )
+
+        _notify_sample_sink(
+            model_input,
+            response.sequences,
+            {
+                "completer": "TinkerMessageCompleter",
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+            },
         )
 
         # Decode the response

@@ -10,3 +10,7 @@ tinker-debug-workspace/
 eval_qwen35_35b.md
 run_eval_qwen35.py
 **/__marimo__
+
+# Token DB viewer frontend (tinker_cookbook/tokendb/ui/)
+node_modules/
+tinker_cookbook/tokendb/ui/.vite/
