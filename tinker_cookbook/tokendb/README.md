@@ -68,8 +68,10 @@ The viewer has a chat mode: ask questions about your training data in plain lang
 
 To enable it, give the server an API key for one of the supported providers:
 
-- Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the server's environment, or
+- Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `TINKER_API_KEY` in the server's environment, or
 - Configure the provider, model, and key at runtime in the UI settings (backed by `POST /api/agent/config`; the key is held in server memory only and is never written to disk or returned by the API).
+
+The `tinker` provider runs the agent on any model served by Tinker: the model dropdown is populated from `get_server_capabilities().supported_models` (fetched lazily and cached, so it needs `TINKER_API_KEY`), prompts are built with the model's recommended renderer, and tool calls use the renderer's native tool-call format when it has one (Qwen3, DeepSeek, Kimi, GPT-OSS, ...). For models whose renderer has no tool convention, the agent falls back to a documented JSON-in-text protocol (a fenced ```` ```json {"tool": ..., "arguments": ...}```` block).
 
 Published visuals are single HTML files with inline JS/SVG (no external CDNs). For live views the visual polls the read-only SQL endpoint on an interval and re-renders in place, so a chart of, say, reward by iteration keeps updating while training runs. The files are standalone and shareable.
 

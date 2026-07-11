@@ -93,10 +93,16 @@ export interface AgentConfig {
   provider: string;
   model: string;
   has_key: boolean;
-  /** Curated model suggestions per provider (the dropdown options). */
+  /**
+   * Model suggestions per provider (the dropdown options). The tinker list
+   * comes from server capabilities and is only populated when the config is
+   * fetched with the tinker provider in play (?provider=tinker).
+   */
   models: Record<string, string[]>;
   /** The server-side default model per provider. */
   default_model: Record<string, string>;
+  /** Why the tinker model list is empty (missing TINKER_API_KEY, fetch failure). */
+  tinker_models_error?: string | null;
 }
 
 export interface ConversationSummary {
