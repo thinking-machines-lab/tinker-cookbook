@@ -541,6 +541,7 @@ def test_registry_mode_requires_registry(monkeypatch: pytest.MonkeyPatch):
 # --- Chat agent endpoints (websocket chat, config, visuals) ---
 
 from tinker_cookbook.tokendb.agent_test import ScriptedTransport, anthropic_script  # noqa: E402
+from tinker_cookbook.tokendb.llm import DEFAULT_MODELS, KNOWN_MODELS  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -640,15 +641,19 @@ def test_agent_config_endpoint_never_leaks_key(populated_store: Path):
         resp = await client.get("/api/agent/config")
         assert await resp.json() == {
             "provider": "anthropic",
-            "model": "claude-sonnet-4-6",
+            "model": "claude-fable-5",
             "has_key": False,
+            "models": KNOWN_MODELS,
+            "default_model": DEFAULT_MODELS,
         }
         resp = await client.post(
             "/api/agent/config",
             json={"provider": "openai", "model": "my-model", "api_key": "sk-supersecret"},
         )
         payload = await resp.json()
-        assert payload == {"provider": "openai", "model": "my-model", "has_key": True}
+        assert payload["provider"] == "openai"
+        assert payload["model"] == "my-model"
+        assert payload["has_key"] is True
         resp = await client.get("/api/agent/config")
         assert "sk-supersecret" not in await resp.text()
         assert (await resp.json())["has_key"] is True
@@ -657,6 +662,25 @@ def test_agent_config_endpoint_never_leaks_key(populated_store: Path):
         assert (await resp.json())["has_key"] is False
         resp = await client.post("/api/agent/config", json={"provider": "nope"})
         assert resp.status == 400
+
+    run_with_client(populated_store, fn)
+
+
+def test_agent_config_has_key_from_environment(
+    populated_store: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """An env-var key counts as configured, so the UI skips its setup card."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-env")
+
+    async def fn(client):
+        resp = await client.get("/api/agent/config")
+        payload = await resp.json()
+        assert payload["has_key"] is True
+        assert "sk-from-env" not in await resp.text()
+        # The other provider has no key.
+        await client.post("/api/agent/config", json={"provider": "openai"})
+        resp = await client.get("/api/agent/config")
+        assert (await resp.json())["has_key"] is False
 
     run_with_client(populated_store, fn)
 

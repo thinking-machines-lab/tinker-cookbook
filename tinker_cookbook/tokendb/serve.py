@@ -60,7 +60,14 @@ from tinker_cookbook.tokendb.agent import (
     valid_conversation_id,
 )
 from tinker_cookbook.tokendb.agent_prompt import build_system_prompt
-from tinker_cookbook.tokendb.llm import API_KEY_ENV_VARS, LLMClient, LLMConfig, SSETransport
+from tinker_cookbook.tokendb.llm import (
+    API_KEY_ENV_VARS,
+    DEFAULT_MODELS,
+    KNOWN_MODELS,
+    LLMClient,
+    LLMConfig,
+    SSETransport,
+)
 from tinker_cookbook.tokendb.reader import (
     LABELS_PATH,
     ParquetSegmentReader,
@@ -768,6 +775,10 @@ async def _handle_agent_config_get(request: web.Request) -> web.Response:
             "provider": config.provider,
             "model": config.resolved_model(),
             "has_key": config.resolve_api_key() is not None,
+            # Per-provider curated suggestions + defaults so the UI can
+            # prefill its model dropdown without hardcoding model ids.
+            "models": KNOWN_MODELS,
+            "default_model": DEFAULT_MODELS,
         }
     )
 
