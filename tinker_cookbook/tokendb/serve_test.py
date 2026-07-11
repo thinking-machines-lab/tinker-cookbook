@@ -549,6 +549,7 @@ def _no_ambient_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Chat tests must control key presence themselves."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("TINKER_API_KEY", raising=False)
 
 
 async def _chat_frames(ws, text: str, conversation_id: str | None = None) -> list[dict]:
@@ -683,6 +684,96 @@ def test_agent_config_has_key_from_environment(
         assert (await resp.json())["has_key"] is False
 
     run_with_client(populated_store, fn)
+
+
+class CountingModelsFetcher:
+    """Stub for the tinker supported-models fetch; counts calls."""
+
+    def __init__(self, models=None, error: Exception | None = None) -> None:
+        self.models = models or []
+        self.error = error
+        self.calls: list[str] = []
+
+    def __call__(self, api_key: str) -> list[str]:
+        self.calls.append(api_key)
+        if self.error is not None:
+            raise self.error
+        return list(self.models)
+
+
+def test_agent_config_tinker_models(populated_store: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("TINKER_API_KEY", "tml-test")
+    fetcher = CountingModelsFetcher(
+        models=["meta-llama/Llama-3.1-8B", "Qwen/Qwen3-30B-A3B-Instruct-2507", "Qwen/Qwen3-8B"]
+    )
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, tinker_models_fetcher=fetcher
+        )
+        async with TestClient(TestServer(app)) as client:
+            # Plain GET with a non-tinker provider never touches the fetcher.
+            resp = await client.get("/api/agent/config")
+            payload = await resp.json()
+            assert payload["models"]["tinker"] == []
+            assert "tinker_models_error" not in payload
+            assert fetcher.calls == []
+
+            # ?provider=tinker fetches the list and picks an instruct default.
+            resp = await client.get("/api/agent/config?provider=tinker")
+            payload = await resp.json()
+            assert payload["models"]["tinker"] == fetcher.models
+            assert payload["default_model"]["tinker"] == "Qwen/Qwen3-30B-A3B-Instruct-2507"
+            assert payload["tinker_models_error"] is None
+            assert len(fetcher.calls) == 1
+
+            # Cached: a second GET within the TTL does not refetch. Switching
+            # the configured provider to tinker also serves from the cache.
+            await client.get("/api/agent/config?provider=tinker")
+            resp = await client.post("/api/agent/config", json={"provider": "tinker"})
+            payload = await resp.json()
+            assert payload["models"]["tinker"] == fetcher.models
+            assert payload["has_key"] is True
+            assert len(fetcher.calls) == 1
+
+    asyncio.run(main())
+
+
+def test_agent_config_tinker_without_key(populated_store: Path):
+    fetcher = CountingModelsFetcher(models=["Qwen/Qwen3-8B"])
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, tinker_models_fetcher=fetcher
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/agent/config?provider=tinker")
+            payload = await resp.json()
+            assert payload["models"]["tinker"] == []
+            assert "TINKER_API_KEY" in payload["tinker_models_error"]
+            assert fetcher.calls == []  # no key, nothing to fetch
+
+    asyncio.run(main())
+
+
+def test_agent_config_tinker_fetch_error(populated_store: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("TINKER_API_KEY", "tml-test")
+    fetcher = CountingModelsFetcher(error=RuntimeError("capabilities unavailable"))
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, tinker_models_fetcher=fetcher
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/agent/config?provider=tinker")
+            payload = await resp.json()
+            assert payload["models"]["tinker"] == []
+            assert "capabilities unavailable" in payload["tinker_models_error"]
+            # The failure is cached too (no hammering on config polls).
+            await client.get("/api/agent/config?provider=tinker")
+            assert len(fetcher.calls) == 1
+
+    asyncio.run(main())
 
 
 def test_visuals_publish_list_and_serve(populated_store: Path):
