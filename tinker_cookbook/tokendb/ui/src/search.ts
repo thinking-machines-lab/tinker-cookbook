@@ -6,7 +6,7 @@ import { detailHash, el, fmtReward } from "./util";
 
 function resultsTable(rows: StepRow[]): HTMLElement {
   if (rows.length === 0) return el("p", { class: "muted" }, ["no matches"]);
-  const header = ["iter", "grp/traj", "step", "attempt", "total", "stop", "ac text"];
+  const header = ["iter", "grp/traj", "step", "attempt", "total", "stop", "action text"];
   return el("table", { class: "feed-table" }, [
     el("thead", {}, [el("tr", {}, header.map((h) => el("th", {}, [h])))]),
     el("tbody", {},
@@ -41,10 +41,15 @@ function genericTable(rows: Record<string, unknown>[]): HTMLElement {
 export function renderSearch(root: HTMLElement): () => void {
   // --- Search form ---
   const regexInput = el("input", { placeholder: "regex", style: "width:20em" }) as HTMLInputElement;
-  const fieldChecks = ["ac_text", "ob_text", "logs"].map((field) => {
+  const searchFields = [
+    { field: "ac_text", label: "action text" },
+    { field: "ob_text", label: "observation text" },
+    { field: "logs", label: "logs" },
+  ];
+  const fieldChecks = searchFields.map(({ field, label }) => {
     const check = el("input", { type: "checkbox" }) as HTMLInputElement;
     check.checked = field !== "logs";
-    return { field, check };
+    return { field, label, check };
   });
   const tokensInput = el("input", {
     placeholder: "token ID subsequence, e.g. 128000 882",
@@ -113,7 +118,7 @@ export function renderSearch(root: HTMLElement): () => void {
     el("h2", {}, ["Search"]),
     el("div", { class: "filter-bar" }, [
       regexInput,
-      ...fieldChecks.map(({ field, check }) => el("label", { class: "toggle" }, [check, ` ${field}`])),
+      ...fieldChecks.map(({ label, check }) => el("label", { class: "toggle" }, [check, ` ${label}`])),
       tokensInput,
       searchButton,
     ]),
