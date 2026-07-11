@@ -64,6 +64,7 @@ from tinker_cookbook.rl.types import (
     RLDatasetBuilder,
     TrajectoryGroup,
 )
+from tinker_cookbook.tokendb.config import TokenDbConfig
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
@@ -146,7 +147,16 @@ def _maybe_export_rollout_summary_jsonl(
     groups_P: Sequence[RolloutSummaryGroup],
     store: TrainingRunStore | None,
 ) -> None:
-    """Write per-trajectory rollout summaries via the store when enabled."""
+    """Write per-trajectory rollout summaries via the store when enabled.
+
+    When the token DB is enabled (``config.token_db``), also tees the same
+    groups into the active token DB writer. The JSONL export behavior is
+    unchanged either way.
+    """
+    if config.token_db is not None:
+        from tinker_cookbook.tokendb.capture import record_groups_to_active_capture
+
+        record_groups_to_active_capture(groups_P, split=split, iteration=iteration)
     if not config.rollout_json_export or store is None:
         return
     from tinker_cookbook.rl.rollout_logging import serialize_rollout_summaries_from_groups
@@ -155,6 +165,31 @@ def _maybe_export_rollout_summary_jsonl(
         split=split, iteration=iteration, groups_P=groups_P
     )
     store.write_rollouts(iteration, records, base_name=base_name)
+
+
+@contextmanager
+def _capture_context_scope(
+    config: Config,
+    *,
+    split: str,
+    iteration: int,
+    sampling_client_step: int | None = None,
+) -> Iterator[None]:
+    """Set the token DB capture context around rollout calls.
+
+    Carries split/iteration identity to capture sites that don't receive it
+    as arguments (the filtered-group sink). No-op (one falsy check) when the
+    token DB is disabled.
+    """
+    if config.token_db is None:
+        yield
+        return
+    from tinker_cookbook.tokendb.capture import CaptureContext, set_capture_context
+
+    with set_capture_context(
+        CaptureContext(split=split, iteration=iteration, sampling_client_step=sampling_client_step)
+    ):
+        yield
 
 
 _LOGTREE_EXPLANATION = (
@@ -522,6 +557,9 @@ class Config:
     rolling_ttl_seconds: int = 7200  # 2 hours
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
     rollout_json_export: bool = True
+    # Capture raw rollout tokens to a local token DB (parquet segments under
+    # {log_path}/tokens/). Requires the "tokendb" extra (pyarrow). None = disabled.
+    token_db: TokenDbConfig | None = None
 
     # Maximum number of training iterations. If None, train on the full dataset.
     max_steps: int | None = None
@@ -724,15 +762,18 @@ async def do_sync_training_with_stream_minibatch(
                     worker_metrics: dict[str, Any] = {}
                     t_start = time.time()
                     async with trace.scope_span("trajectory_group_worker"):
-                        trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                            sampling_client,
-                            builder,
-                            max_tokens=config.max_tokens,
-                            temperature=config.temperature,
-                            do_remove_constant_reward_groups=config.remove_constant_reward_groups,
-                            enable_logging=enable_logging,
-                            strategy=strategy,
-                        )
+                        with _capture_context_scope(
+                            config, split="train", iteration=i_batch, sampling_client_step=i_batch
+                        ):
+                            trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                                sampling_client,
+                                builder,
+                                max_tokens=config.max_tokens,
+                                temperature=config.temperature,
+                                do_remove_constant_reward_groups=config.remove_constant_reward_groups,
+                                enable_logging=enable_logging,
+                                strategy=strategy,
+                            )
                     worker_metrics["time/trajectory_group_worker_loop/total"] = (
                         time.time() - t_start
                     )
@@ -994,14 +1035,20 @@ async def do_async_training(
             worker_metrics: dict[str, Any] = {}
             t_start = time.time()
             async with trace.scope_span("trajectory_group_worker"):
-                trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                    sampling_client,
-                    env_group_builder,
-                    max_tokens=config.max_tokens,
-                    temperature=config.temperature,
-                    do_remove_constant_reward_groups=config.remove_constant_reward_groups,
-                    strategy=strategy,
-                )
+                with _capture_context_scope(
+                    config,
+                    split="train",
+                    iteration=sampling_client_step_copy,
+                    sampling_client_step=sampling_client_step_copy,
+                ):
+                    trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                        sampling_client,
+                        env_group_builder,
+                        max_tokens=config.max_tokens,
+                        temperature=config.temperature,
+                        do_remove_constant_reward_groups=config.remove_constant_reward_groups,
+                        strategy=strategy,
+                    )
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             # Ingest error info (safe: same event loop thread)
             if error_counter is not None:
@@ -1719,21 +1766,24 @@ async def do_sync_training(
                 ):
                     # Note: do_remove_constant_reward_groups=False here because we remove
                     # constant reward groups after all rollouts are collected (below)
-                    results_P = await gather_with_progress(
-                        (
-                            do_group_rollout_and_filter_constant_reward(
-                                sampling_client,
-                                builder,
-                                max_tokens=config.max_tokens,
-                                temperature=config.temperature,
-                                do_remove_constant_reward_groups=False,
-                                enable_logging=i < config.num_groups_to_log,
-                                strategy=strategy,
-                            )
-                            for i, builder in enumerate(env_group_builders_P)
-                        ),
-                        desc=f"Sampling batch {i_batch}",
-                    )
+                    with _capture_context_scope(
+                        config, split="train", iteration=i_batch, sampling_client_step=i_batch
+                    ):
+                        results_P = await gather_with_progress(
+                            (
+                                do_group_rollout_and_filter_constant_reward(
+                                    sampling_client,
+                                    builder,
+                                    max_tokens=config.max_tokens,
+                                    temperature=config.temperature,
+                                    do_remove_constant_reward_groups=False,
+                                    enable_logging=i < config.num_groups_to_log,
+                                    strategy=strategy,
+                                )
+                                for i, builder in enumerate(env_group_builders_P)
+                            ),
+                            desc=f"Sampling batch {i_batch}",
+                        )
 
             # Ingest error info from results
             if error_counter is not None:
@@ -1850,6 +1900,11 @@ async def main(
         asyncio.run(main(config=config))
     """
 
+    if config.token_db is not None:
+        # Fail fast on a missing optional dependency, never mid-run.
+        from tinker_cookbook.tokendb.config import check_token_db_dependencies
+
+        check_token_db_dependencies()
     if rollout_executor is not None:
         set_rollout_executor(rollout_executor)
     ml_logger = ml_log.setup_logging(
@@ -1859,6 +1914,16 @@ async def main(
         wandb_name=config.wandb_name,
     )
     store = ml_logger.store
+    token_db_writer = None
+    if config.token_db is not None:
+        from tinker_cookbook.tokendb.config import build_token_db_writer
+
+        token_db_writer = build_token_db_writer(
+            config.token_db,
+            store.storage if store is not None else config.log_path,
+            model_name=config.model_name,
+            recipe_name=config.recipe_name,
+        )
     if config.enable_trace:
         # Get and rename the current (main) task
         current_task = asyncio.current_task()
@@ -1918,6 +1983,27 @@ async def main(
     # Get tokenizer from training client
     tokenizer = training_client.get_tokenizer()
 
+    if token_db_writer is not None:
+        assert config.token_db is not None
+        from tinker_cookbook.tokendb.capture import (
+            ActiveCapture,
+            active_capture_filtered_sink,
+            set_active_capture,
+            set_filtered_group_sink,
+        )
+
+        set_active_capture(
+            ActiveCapture(
+                writer=token_db_writer,
+                tokenizer=tokenizer,
+                store_text=config.token_db.store_text,
+            )
+        )
+        if config.token_db.capture_filtered:
+            # Note: with a cross-process rollout executor, groups are dropped
+            # inside worker processes and this sink does not fire there.
+            set_filtered_group_sink(active_capture_filtered_sink)
+
     # Create dataset from thunk
     dataset, maybe_test_dataset = await config.dataset_builder()
     # Build rollout strategy and error counter from config
@@ -1969,21 +2055,32 @@ async def main(
         training_func = do_sync_training_with_stream_minibatch
     else:
         training_func = do_sync_training
-    await training_func(
-        start_batch=start_batch,
-        end_batch=end_batch,
-        num_batches=end_batch,
-        config=config,
-        training_client=training_client,
-        kl_reference_client=kl_reference_client,
-        evaluators=evaluators,
-        dataset=dataset,
-        ml_logger=ml_logger,
-        tokenizer=tokenizer,
-        error_counter=error_counter,
-        strategy=strategy,
-        checkpoint_mgr=checkpoint_mgr,
-    )
+    try:
+        await training_func(
+            start_batch=start_batch,
+            end_batch=end_batch,
+            num_batches=end_batch,
+            config=config,
+            training_client=training_client,
+            kl_reference_client=kl_reference_client,
+            evaluators=evaluators,
+            dataset=dataset,
+            ml_logger=ml_logger,
+            tokenizer=tokenizer,
+            error_counter=error_counter,
+            strategy=strategy,
+            checkpoint_mgr=checkpoint_mgr,
+        )
+    finally:
+        if token_db_writer is not None:
+            from tinker_cookbook.tokendb.capture import (
+                set_active_capture,
+                set_filtered_group_sink,
+            )
+
+            set_active_capture(None)
+            set_filtered_group_sink(None)
+            token_db_writer.close()
 
     # Save final checkpoint
     if start_batch < end_batch:
