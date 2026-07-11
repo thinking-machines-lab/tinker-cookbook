@@ -83,7 +83,7 @@ class ScriptedTransport:
 
 
 def anthropic_script(
-    text: str | None = None, tool_calls: list[tuple[str, str, dict]] = ()
+    text: str | None = None, tool_calls: tuple[tuple[str, str, dict], ...] = ()
 ) -> list[tuple[str | None, dict]]:
     """Anthropic-shaped SSE events for one model turn."""
     events: list[tuple[str | None, dict]] = [("message_start", {"type": "message_start"})]
@@ -257,7 +257,7 @@ def test_anthropic_stream_normalization():
 
 
 def test_openai_stream_normalization():
-    chunks = [
+    chunks: list[tuple[str | None, dict]] = [
         (None, {"choices": [{"delta": {"content": "Hel"}, "finish_reason": None}]}),
         (None, {"choices": [{"delta": {"content": "lo"}, "finish_reason": None}]}),
         (
