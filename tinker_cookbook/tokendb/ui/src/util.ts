@@ -1,40 +1,41 @@
-// Small DOM/formatting helpers shared by the screens.
-
-export function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (key === "class") node.className = value;
-    else node.setAttribute(key, value);
-  }
-  for (const child of children) node.append(child);
-  return node;
-}
+// Formatting helpers shared by the screens.
 
 export function fmtReward(value: number | null | undefined): string {
   if (value === null || value === undefined) return "";
   return Number(value).toFixed(3).replace(/\.?0+$/, "") || "0";
 }
 
-export function detailHash(row: {
+export function fmtCount(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  return value.toLocaleString("en-US");
+}
+
+/** Route to a rollout detail page, relative to the current run's root. */
+export function detailPath(row: {
   split: string;
   iteration: number;
   group_idx: number;
   traj_idx: number;
   run_attempt?: number;
 }): string {
-  const base = `#/rollout/${encodeURIComponent(row.split)}/${row.iteration}/${row.group_idx}/${row.traj_idx}`;
+  const base = `rollout/${encodeURIComponent(row.split)}/${row.iteration}/${row.group_idx}/${row.traj_idx}`;
   return row.run_attempt !== undefined ? `${base}?run_attempt=${row.run_attempt}` : base;
 }
 
-/** Map a logprob to a green/yellow/red span color (prob 1 -> green, prob 0 -> red). */
+/**
+ * Map a logprob to a red/yellow/green span color (prob 1 -> green, prob 0 -> red),
+ * interpolating within the semantic palette.
+ */
 export function logprobColor(logprob: number): string {
   const prob = Math.exp(Math.max(-20, logprob));
-  const hue = Math.round(120 * prob); // 120 = green, 60 = yellow, 0 = red
-  return `hsl(${hue}, 70%, 62%)`;
+  // Anchors in HSL: red #ff383c, yellow #ffcc00, green #34c759.
+  const red: [number, number, number] = [359, 100, 61];
+  const yellow: [number, number, number] = [48, 100, 50];
+  const green: [number, number, number] = [134, 57, 49];
+  const mix = (a: [number, number, number], b: [number, number, number], t: number) =>
+    a.map((v, i) => v + (b[i] - v) * t) as [number, number, number];
+  const [h, s, l] = prob < 0.5 ? mix(red, yellow, prob * 2) : mix(yellow, green, (prob - 0.5) * 2);
+  return `hsl(${((h % 360) + 360) % 360}, ${s}%, ${l}%)`;
 }
 
 /** Printable repr of a decoded token (make whitespace/control chars visible). */
@@ -52,21 +53,14 @@ export function prettyJSON(raw: string): string {
   }
 }
 
-/** Tiny inline sparkline: draws `values` as a filled line on a canvas. */
-export function drawSparkline(canvas: HTMLCanvasElement, values: number[]): void {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const { width: w, height: h } = canvas;
-  ctx.clearRect(0, 0, w, h);
-  if (values.length < 2) return;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const x = (i: number) => (i / (values.length - 1)) * (w - 2) + 1;
-  const y = (v: number) => h - 2 - ((v - min) / span) * (h - 4);
-  ctx.beginPath();
-  values.forEach((v, i) => (i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v))));
-  ctx.strokeStyle = "#7aa2f7";
-  ctx.lineWidth = 1.25;
-  ctx.stroke();
+/** "3m ago" style relative time from epoch seconds or an ISO string. */
+export function fmtRelative(ts: number | string | null | undefined): string {
+  if (ts === null || ts === undefined || ts === "") return "";
+  const ms = typeof ts === "number" ? ts * 1000 : Date.parse(ts);
+  if (Number.isNaN(ms)) return "";
+  const delta = Math.max(0, Date.now() - ms) / 1000;
+  if (delta < 60) return `${Math.floor(delta)}s ago`;
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+  if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+  return `${Math.floor(delta / 86400)}d ago`;
 }
