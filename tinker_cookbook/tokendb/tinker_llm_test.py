@@ -5,6 +5,7 @@ end to end."""
 
 import asyncio
 import json
+from typing import cast
 
 import pytest
 
@@ -33,6 +34,7 @@ from tinker_cookbook.tokendb.tinker_llm import (
     pick_default_model,
     render_conversation,
 )
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 @pytest.fixture(autouse=True)
@@ -72,6 +74,10 @@ class FakeTokenizer:
             self._by_id[t] if t in self._by_id else chr(t - self._offset) for t in tokens
         )
 
+    def as_tokenizer(self) -> Tokenizer:
+        """This fake covers the tokenizer surface the renderers use."""
+        return cast(Tokenizer, self)
+
 
 class ScriptedSampler:
     """TinkerSampler stub: records prompts, replays scripted completions."""
@@ -83,7 +89,12 @@ class ScriptedSampler:
         self.stops: list[object] = []
 
     async def sample(self, prompt: tinker.ModelInput, max_tokens: int, stop) -> list[int]:
-        tokens = [t for chunk in prompt.chunks for t in chunk.tokens]
+        tokens = [
+            t
+            for chunk in prompt.chunks
+            if isinstance(chunk, tinker.EncodedTextChunk)
+            for t in chunk.tokens
+        ]
         self.prompts.append(self._tokenizer.decode(tokens))
         self.stops.append(stop)
         if not self._completions:
@@ -126,7 +137,7 @@ def collect(aiter):
 
 def test_native_prompt_and_tool_call_parse():
     tokenizer = FakeTokenizer()
-    renderer = Qwen3Renderer(tokenizer)
+    renderer = Qwen3Renderer(tokenizer.as_tokenizer())
     completion = (
         '<tool_call>\n{"name": "sql", "arguments": {"query": "SELECT 1"}}\n</tool_call><|im_end|>'
     )
@@ -157,7 +168,7 @@ def test_native_prompt_and_tool_call_parse():
 
 def test_native_history_renders_tool_calls_and_results():
     tokenizer = FakeTokenizer()
-    renderer = Qwen3Renderer(tokenizer)
+    renderer = Qwen3Renderer(tokenizer.as_tokenizer())
     sampler = ScriptedSampler(tokenizer, ["There is 1 row.<|im_end|>"])
     client = make_client(renderer, sampler)
     messages = [
@@ -182,7 +193,7 @@ def test_native_history_renders_tool_calls_and_results():
 
 def test_fallback_prompt_documents_protocol_and_parses_block():
     tokenizer = FakeTokenizer()
-    renderer = RoleColonRenderer(tokenizer)
+    renderer = RoleColonRenderer(tokenizer.as_tokenizer())
     completion = (
         'Let me check.\n\n```json\n{"tool": "sql", "arguments": {"query": "SELECT 1"}}\n```'
         "\n\nUser:"
@@ -203,7 +214,7 @@ def test_fallback_prompt_documents_protocol_and_parses_block():
 
 def test_fallback_history_rendering():
     tokenizer = FakeTokenizer()
-    renderer = RoleColonRenderer(tokenizer)
+    renderer = RoleColonRenderer(tokenizer.as_tokenizer())
     messages = [
         Message(role="user", content="count rows"),
         Message(
@@ -219,7 +230,9 @@ def test_fallback_history_rendering():
     # Prior tool calls become fenced JSON blocks; results become user messages.
     assert '```json\n{"tool": "sql"' in rendered[2]["content"]
     assert rendered[3]["role"] == "user"
-    assert rendered[3]["content"].startswith("Tool result for sql:")
+    result_content = rendered[3]["content"]
+    assert isinstance(result_content, str)
+    assert result_content.startswith("Tool result for sql:")
 
 
 def test_parse_json_tool_blocks():
@@ -264,7 +277,7 @@ def test_sampler_failure_surfaces_as_error_event():
         async def sample(self, prompt, max_tokens, stop):
             raise RuntimeError("service unavailable")
 
-    client = make_client(RoleColonRenderer(FakeTokenizer()), FailingSampler())
+    client = make_client(RoleColonRenderer(FakeTokenizer().as_tokenizer()), FailingSampler())
     events = collect(client.stream("sys", [Message(role="user", content="hi")]))
     assert isinstance(events[-1], ErrorEvent)
     assert "service unavailable" in events[-1].message
@@ -290,7 +303,7 @@ def test_pick_default_model_prefers_qwen3_instruct():
 def test_native_arguments_json_roundtrip():
     """Arguments survive the renderer's JSON-string encoding round trip."""
     tokenizer = FakeTokenizer()
-    renderer = Qwen3Renderer(tokenizer)
+    renderer = Qwen3Renderer(tokenizer.as_tokenizer())
     messages = [
         Message(
             role="assistant",
@@ -300,5 +313,7 @@ def test_native_arguments_json_roundtrip():
     ]
     rendered, native = render_conversation(renderer, "SYS", messages, [SQL_TOOL])
     assert native is True
-    rcall = rendered[-1]["tool_calls"][0]
+    rendered_calls = rendered[-1].get("tool_calls")
+    assert rendered_calls is not None
+    rcall = rendered_calls[0]
     assert json.loads(rcall.function.arguments) == {"query": 'SELECT "x"'}

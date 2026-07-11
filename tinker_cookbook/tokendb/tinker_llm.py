@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     import tinker
 
     from tinker_cookbook.renderers.base import Message as RendererMessage
-    from tinker_cookbook.renderers.base import Renderer
+    from tinker_cookbook.renderers.base import Renderer, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -175,10 +175,12 @@ def pick_default_model(models: Sequence[str]) -> str | None:
 # --- Conversation rendering ---
 
 
-def _tool_specs(tools: Sequence[ToolDef]) -> list[dict[str, Any]]:
-    """Our ToolDefs as renderer ToolSpec dicts (OpenAI function format)."""
+def _tool_specs(tools: Sequence[ToolDef]) -> list[ToolSpec]:
+    """Our ToolDefs as renderer ToolSpecs (OpenAI function format)."""
+    from tinker_cookbook.renderers.base import ToolSpec
+
     return [
-        {"name": t.name, "description": t.description, "parameters": t.input_schema} for t in tools
+        ToolSpec(name=t.name, description=t.description, parameters=t.input_schema) for t in tools
     ]
 
 
