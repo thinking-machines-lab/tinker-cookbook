@@ -2,7 +2,7 @@
 // live-updated over the dashboard websocket.
 
 import { useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { getJSON, type DashboardRun } from "../api";
 import { Badge } from "../components/Badge";
 import { CellValue, DataTable } from "../components/DataTable";
@@ -23,7 +23,10 @@ function sortRuns(runs: DashboardRun[]): DashboardRun[] {
 function RunRow({ run }: { run: DashboardRun }) {
   const navigate = useNavigate();
   return (
-    <tr className="clickable" onClick={() => navigate(`/runs/${encodeURIComponent(run.run_id)}`)}>
+    <tr
+      className="clickable"
+      onClick={() => navigate(`/runs/${encodeURIComponent(run.run_id)}/chat`)}
+    >
       <td>
         {run.live ? <Badge variant="success">LIVE</Badge> : <Badge variant="neutral">stale</Badge>}{" "}
         {run.error && (
@@ -81,7 +84,7 @@ export function Dashboard() {
   const onMessage = useCallback((msg: Record<string, unknown>) => {
     if (msg.type === "dashboard") setRuns(msg.runs as DashboardRun[]);
   }, []);
-  const wsStatus = useWebSocket("/ws/dashboard?poll_interval_s=5", { onMessage });
+  const { status: wsStatus } = useWebSocket("/ws/dashboard?poll_interval_s=5", { onMessage });
 
   const sorted = sortRuns(runs ?? []);
   const nLive = sorted.filter((run) => run.live).length;
@@ -94,6 +97,7 @@ export function Dashboard() {
         <span className="brand">Token DB</span>
         <nav>
           <span className="nav-current">Dashboard</span>
+          <Link to="/chat">Chat across runs</Link>
         </nav>
         {wsStatus === "live" ? (
           <Badge variant="success">live</Badge>
@@ -113,6 +117,15 @@ export function Dashboard() {
           />
         </div>
         {initial.error && runs === null && <p className="error">{initial.error}</p>}
+        <div className="dashboard-actions">
+          <Link to="/chat">
+            <button className="primary">Chat across all runs</button>
+          </Link>
+          <span className="muted small">
+            or click a run to chat about it: ask about reward trends, failure modes, specific
+            rollouts
+          </span>
+        </div>
         <DataTable
           head={[
             "status",

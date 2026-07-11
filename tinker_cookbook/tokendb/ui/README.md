@@ -37,24 +37,31 @@ npm run build   # typechecks, then emits ../static/ (committed)
 - `src/api.ts` — typed HTTP client, server-mode detection, endpoint prefixes
 - `src/App.tsx` — hash routes; per-run screens mount under both `#/run`
   (single-run mode) and `#/runs/{run_id}` (registry mode)
-- `src/screens/` — one file per screen: `Dashboard`, `Feed`, `Detail`, `Search`
+- `src/screens/` — one file per screen: `Dashboard`, `Chat`, `Detail`
 - `src/components/` — shared pieces: `Badge`, `Chip`, `StatCard`, `Sparkline`,
-  `DataTable`, `FilterBar`, `TokenSpan`
-- `src/hooks/` — `useApi` (fetch state), `useWebSocket` (reconnecting socket),
-  `useDebounce`
+  `DataTable`, `TokenSpan`, `Markdown` (tiny renderer, no dependency),
+  `VisualFrame` (sandboxed visual iframes), `AgentSettings`
+- `src/hooks/` — `useApi` (fetch state), `useWebSocket` (reconnecting socket
+  with a `send` function)
 - `src/style.css` — single stylesheet; design tokens as CSS variables in `:root`
 
 ## Screens
 
+Chat is the primary interface: instead of reading a dense feed or writing
+SQL, you ask questions and the server-side agent queries the token DB.
+
 - `#/` — dashboard (registry mode): every registered run with liveness,
   latest iteration, row counts, recent reward, and a reward sparkline;
-  live-updated over `/ws/dashboard`. In single-run mode `#/` redirects to
-  the feed.
-- `#/run` or `#/runs/{run_id}` — live feed: trajectory table with filters,
-  websocket updates (follow toggle), reward sparkline. Superseded run
-  attempts are dimmed and badged, not hidden.
+  live-updated over `/ws/dashboard`. Clicking a run opens that run's chat;
+  a "Chat across all runs" button opens the registry-level chat at `#/chat`.
+  In single-run mode `#/` redirects to `#/run/chat`.
+- `#/run/chat` or `#/runs/{run_id}/chat` — chat: conversation sidebar with a
+  visuals-gallery tab, streaming answers, tool calls as collapsible steps,
+  published visuals inline as sandboxed iframes (maximize / open in new tab),
+  and rollout keys in answers (e.g. `train/12/3/1`) linked to the detail
+  screen. An inline setup card (provider / model / API key) appears when no
+  key is configured; the gear in the header opens the same settings any time.
 - `.../rollout/{split}/{iter}/{group}/{traj}` — full transcript: per-token
   action spans colored by logprob, delta observations with an
   expand-full-context control, text vs raw-token-ID toggle, labels editor.
-- `.../search` — regex and token-ID-subsequence search with per-iteration
-  hit counts, plus a SELECT-only SQL console.
+  Reached from chat citations and dashboard links.

@@ -4,7 +4,7 @@
 //   - single-run mode: endpoints at /api/* and the live socket at /ws
 //   - registry mode: /api/runs lists runs, /api/dashboard aggregates them,
 //     and every single-run endpoint is also mounted at /api/runs/{run_id}/*
-// `detectMode()` probes once at app start; `apiBase(runId)` / `wsPath(runId)`
+// `detectMode()` probes once at app start; `apiBase(runId)` / `chatWsPath(runId)`
 // pick the right prefix for data calls.
 
 export interface StepRow {
@@ -39,28 +39,6 @@ export interface StepRow {
   // Added by the detail endpoint:
   ob_full_tokens?: number[];
   ac_token_strs?: string[];
-}
-
-export interface TrajectoryRow {
-  run_id: string;
-  run_attempt: number;
-  split: string;
-  iteration: number;
-  group_idx: number;
-  traj_idx: number;
-  n_steps: number;
-  n_ac_tokens: number;
-  total_reward: number;
-  final_reward: number;
-  stop_reason: string | null;
-  filtered_reason: string | null;
-  env_row_id: string | null;
-  tags: string[];
-  source: string;
-  sampling_client_step: number | null;
-  ac_preview: string | null;
-  superseded: boolean;
-  ts: string;
 }
 
 export interface Label {
@@ -111,6 +89,43 @@ export interface DashboardRun {
   error?: string;
 }
 
+export interface AgentConfig {
+  provider: string;
+  model: string;
+  has_key: boolean;
+}
+
+export interface ConversationSummary {
+  conversation_id: string;
+  title: string;
+  n_records: number;
+  mtime: number | null;
+}
+
+/** One JSONL transcript line: a conversation message or a replayable UI event. */
+export interface ChatRecord {
+  kind: string; // "message" | "event"
+  ts?: string;
+  // kind == "message":
+  role?: string;
+  content?: string;
+  tool_calls?: { id: string; name: string; arguments: Record<string, unknown> }[];
+  tool_call_id?: string;
+  // kind == "event" (e.g. visual_published):
+  type?: string;
+  name?: string;
+  url?: string;
+  title?: string;
+  description?: string;
+}
+
+export interface VisualInfo {
+  name: string;
+  url: string;
+  size: number | null;
+  mtime: number | null;
+}
+
 export type Mode = "single" | "registry";
 
 /** Probe the server once at app start: registry mode serves /api/runs. */
@@ -128,9 +143,9 @@ export function apiBase(runId?: string): string {
   return runId ? `/api/runs/${encodeURIComponent(runId)}` : "/api";
 }
 
-/** Live-row websocket path: /ws (single-run) or the per-run mount. */
-export function wsPath(runId?: string): string {
-  return runId ? `/api/runs/${encodeURIComponent(runId)}/ws` : "/ws";
+/** Chat websocket path: per-run mount, or /api/chat (single-run and registry-global). */
+export function chatWsPath(runId?: string): string {
+  return runId ? `/api/runs/${encodeURIComponent(runId)}/chat` : "/api/chat";
 }
 
 export function wsUrl(path: string): string {

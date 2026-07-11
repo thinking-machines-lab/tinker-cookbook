@@ -35,7 +35,7 @@ Every rollout transition is then written as one row (one row per turn) under `{l
 python -m tinker_cookbook.tokendb.serve log_path=~/runs/my-run  # http://127.0.0.1:7423
 ```
 
-Serves a live feed of trajectories (updates pushed over a websocket as new segments land), a per-rollout detail view with tokens colored by logprob and a raw-token-ID toggle, regex and token-ID search, and a read-only SQL console.
+The viewer is chat-first: ask questions about the run in plain language (see [Chat](#chat)) and the agent queries the token DB for you, linking the rollouts it cites. A per-rollout detail view shows the full transcript with tokens colored by logprob and a raw-token-ID toggle.
 
 ## Multi-run dashboard and run registry
 
