@@ -1,4 +1,11 @@
-// HTTP + websocket client for the token DB viewer server.
+// Typed HTTP client for the token DB viewer server.
+//
+// The server runs in one of two modes:
+//   - single-run mode: endpoints at /api/* and the live socket at /ws
+//   - registry mode: /api/runs lists runs, /api/dashboard aggregates them,
+//     and every single-run endpoint is also mounted at /api/runs/{run_id}/*
+// `detectMode()` probes once at app start; `apiBase(runId)` / `wsPath(runId)`
+// pick the right prefix for data calls.
 
 export interface StepRow {
   run_id: string;
@@ -76,6 +83,61 @@ export interface RolloutDetail {
   group_traj_idxs: number[];
 }
 
+export interface RunInfo {
+  run_id: string;
+  run_attempt: number;
+  context?: { model_name?: string };
+}
+
+export interface RewardPoint {
+  iteration: number;
+  mean_total_reward: number | null;
+}
+
+export interface DashboardRun {
+  run_id: string;
+  run_attempt: number;
+  log_path: string;
+  model_name: string | null;
+  recipe_name: string | null;
+  started_at: string | null;
+  live: boolean;
+  last_activity_ts: number | null;
+  latest_iteration: number | null;
+  n_rows: number | null;
+  n_filtered_rows: number | null;
+  mean_recent_reward: number | null;
+  reward_series: RewardPoint[];
+  error?: string;
+}
+
+export type Mode = "single" | "registry";
+
+/** Probe the server once at app start: registry mode serves /api/runs. */
+export async function detectMode(): Promise<Mode> {
+  try {
+    const resp = await fetch("/api/runs");
+    return resp.ok ? "registry" : "single";
+  } catch {
+    return "single";
+  }
+}
+
+/** Prefix for data endpoints: /api (single-run) or /api/runs/{run_id}. */
+export function apiBase(runId?: string): string {
+  return runId ? `/api/runs/${encodeURIComponent(runId)}` : "/api";
+}
+
+/** Live-row websocket path: /ws (single-run) or the per-run mount. */
+export function wsPath(runId?: string): string {
+  return runId ? `/api/runs/${encodeURIComponent(runId)}/ws` : "/ws";
+}
+
+export function wsUrl(path: string): string {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${location.host}${path}`;
+}
+
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     let message = `${resp.status} ${resp.statusText}`;
@@ -91,7 +153,7 @@ async function handle<T>(resp: Response): Promise<T> {
 }
 
 export function getJSON<T>(path: string, params?: Record<string, string>): Promise<T> {
-  const qs = params ? `?${new URLSearchParams(params)}` : "";
+  const qs = params && Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
   return fetch(path + qs).then((r) => handle<T>(r));
 }
 
@@ -101,40 +163,4 @@ export function postJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   }).then((r) => handle<T>(r));
-}
-
-export interface WsHandlers {
-  onRow: (row: StepRow) => void;
-  onLabelsChanged?: () => void;
-  onStatus?: (status: string) => void;
-}
-
-/** Subscribe to live rows; returns a close function. Reconnects on drop. */
-export function subscribe(filters: Record<string, unknown>, handlers: WsHandlers): () => void {
-  let ws: WebSocket | null = null;
-  let closed = false;
-
-  const connect = () => {
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(`${proto}//${location.host}/ws`);
-    ws.onopen = () => {
-      handlers.onStatus?.("live");
-      ws?.send(JSON.stringify({ type: "subscribe", filters }));
-    };
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === "row") handlers.onRow(msg.row);
-      else if (msg.type === "labels_changed") handlers.onLabelsChanged?.();
-    };
-    ws.onclose = () => {
-      handlers.onStatus?.("disconnected");
-      if (!closed) setTimeout(connect, 2000);
-    };
-  };
-  connect();
-
-  return () => {
-    closed = true;
-    ws?.close();
-  };
 }
