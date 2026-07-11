@@ -53,6 +53,10 @@ modal = [
 multiplayer-rl = [
     "textarena>=0.7.4",
 ]
+tokendb = [
+    "duckdb>=1.0.0",
+    "pyarrow>=15.0.0",
+]
 tutorials = [
     "marimo>=0.23.8",
     "matplotlib>=3.7.0",
