@@ -97,7 +97,7 @@ Token IDs are canonical; text columns are a decoded convenience. Search for spec
 
 Two opt-in paths for code outside the RL loop:
 
-`capture_samples` observes every sample made through `TinkerTokenCompleter` / `TinkerMessageCompleter` inside the block, writing `source="sample"` rows (prompt as `ob_tokens`, sampled tokens/logprobs/stop reason as the `ac` fields, keyword metadata into the `extra` column):
+`capture_samples` observes every sample made through `TinkerTokenCompleter` / `TinkerMessageCompleter` inside the block, writing `source="sample"` rows (prompt as `ob_tokens`, sampled tokens/logprobs/stop reason as the action (`ac_*`) fields, keyword metadata into the `extra` column):
 
 ```python
 from tinker_cookbook.tokendb import TokenDbWriter, capture_samples
