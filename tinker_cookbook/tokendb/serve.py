@@ -77,6 +77,7 @@ from tinker_cookbook.tokendb.llm import (
     LLMClient,
     LLMConfig,
     SSETransport,
+    detect_default_provider,
 )
 from tinker_cookbook.tokendb.reader import (
     LABELS_PATH,
@@ -894,9 +895,21 @@ async def _get_tinker_models(
     return models, error
 
 
+def _agent_llm_config(state: dict[str, Any]) -> LLMConfig:
+    """The effective LLM config for the chat agent.
+
+    ``state["provider"]`` is None until a provider is explicitly POSTed to the
+    config endpoint; until then the effective provider is auto-detected from
+    key availability (so e.g. a server with only OPENAI_API_KEY set chats via
+    openai out of the box).
+    """
+    provider = state["provider"] or detect_default_provider(api_key=state["api_key"])
+    return LLMConfig(provider=provider, model=state["model"], api_key=state["api_key"])
+
+
 async def _handle_agent_config_get(request: web.Request) -> web.Response:
     state = request.app[AGENT_STATE_KEY]
-    config = LLMConfig(provider=state["provider"], model=state["model"], api_key=state["api_key"])
+    config = _agent_llm_config(state)
     # Per-provider curated suggestions + defaults so the UI can prefill its
     # model dropdown without hardcoding model ids. The tinker list is fetched
     # from server capabilities, but only when the tinker provider is actually
@@ -909,6 +922,15 @@ async def _handle_agent_config_get(request: web.Request) -> web.Response:
         "provider": config.provider,
         "model": config.resolved_model(),
         "has_key": config.resolve_api_key() is not None,
+        # Per-provider key availability, so the UI can show which providers
+        # are ready without switching to each one.
+        "providers": {
+            provider: {
+                "has_key": LLMConfig(provider=provider, api_key=state["api_key"]).resolve_api_key()
+                is not None
+            }
+            for provider in API_KEY_ENV_VARS
+        },
         "models": models,
         "default_model": default_model,
     }
@@ -1063,9 +1085,7 @@ async def _handle_chat_ws(request: web.Request) -> web.WebSocketResponse:
                 )
                 continue
             state = request.app[AGENT_STATE_KEY]
-            config = LLMConfig(
-                provider=state["provider"], model=state["model"], api_key=state["api_key"]
-            )
+            config = _agent_llm_config(state)
             if config.resolve_api_key() is None:
                 env_var = API_KEY_ENV_VARS[config.provider]
                 await ws.send_str(
@@ -1191,7 +1211,9 @@ def build_app(
     app[DASHBOARD_TTL_KEY] = dashboard_ttl_s
     app[LIVE_WINDOW_KEY] = live_window_s
     app[REGISTRY_DIR_KEY] = registry_dir
-    app[AGENT_STATE_KEY] = {"provider": "anthropic", "model": None, "api_key": None}
+    # provider=None means "not explicitly chosen": the effective provider is
+    # auto-detected from key availability until a POST pins one.
+    app[AGENT_STATE_KEY] = {"provider": None, "model": None, "api_key": None}
     app[LLM_TRANSPORT_KEY] = llm_transport
     app[TINKER_MODELS_FETCHER_KEY] = tinker_models_fetcher
     app[TINKER_MODELS_CACHE_KEY] = {}
