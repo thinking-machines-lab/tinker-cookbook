@@ -801,6 +801,11 @@ def test_agent_config_endpoint_never_leaks_key(populated_store: Path):
             "provider": "anthropic",
             "model": "claude-fable-5",
             "has_key": False,
+            "providers": {
+                "anthropic": {"has_key": False},
+                "openai": {"has_key": False},
+                "tinker": {"has_key": False},
+            },
             "models": KNOWN_MODELS,
             "default_model": DEFAULT_MODELS,
         }
@@ -843,6 +848,95 @@ def test_agent_config_has_key_from_environment(
     run_with_client(populated_store, fn)
 
 
+def test_agent_config_default_provider_from_openai_env(
+    populated_store: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Only OPENAI_API_KEY set: the effective default provider is openai."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-env")
+
+    async def fn(client):
+        resp = await client.get("/api/agent/config")
+        payload = await resp.json()
+        assert payload["provider"] == "openai"
+        assert payload["model"] == DEFAULT_MODELS["openai"]
+        assert payload["has_key"] is True
+        assert payload["providers"] == {
+            "anthropic": {"has_key": False},
+            "openai": {"has_key": True},
+            "tinker": {"has_key": False},
+        }
+
+    run_with_client(populated_store, fn)
+
+
+def test_agent_config_default_provider_preference_order(
+    populated_store: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Both anthropic and openai keys set: anthropic wins (preference order)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-env")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-env")
+
+    async def fn(client):
+        resp = await client.get("/api/agent/config")
+        payload = await resp.json()
+        assert payload["provider"] == "anthropic"
+        assert payload["has_key"] is True
+        assert payload["providers"]["anthropic"] == {"has_key": True}
+        assert payload["providers"]["openai"] == {"has_key": True}
+
+    run_with_client(populated_store, fn)
+
+
+def test_agent_config_default_provider_no_keys(populated_store: Path):
+    """No keys anywhere: falls back to anthropic with has_key false."""
+
+    async def fn(client):
+        resp = await client.get("/api/agent/config")
+        payload = await resp.json()
+        assert payload["provider"] == "anthropic"
+        assert payload["has_key"] is False
+
+    run_with_client(populated_store, fn)
+
+
+def test_agent_config_explicit_provider_pins(
+    populated_store: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """An explicit POST pins the provider even when it has no key."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-env")
+
+    async def fn(client):
+        resp = await client.post("/api/agent/config", json={"provider": "anthropic"})
+        payload = await resp.json()
+        assert payload["provider"] == "anthropic"
+        assert payload["has_key"] is False
+        # Sticks across subsequent GETs despite openai having a key.
+        resp = await client.get("/api/agent/config")
+        payload = await resp.json()
+        assert payload["provider"] == "anthropic"
+        assert payload["has_key"] is False
+        assert payload["providers"]["openai"] == {"has_key": True}
+
+    run_with_client(populated_store, fn)
+
+
+def test_agent_config_runtime_key_counts_for_all_providers(populated_store: Path):
+    """A runtime-configured key marks every provider as ready."""
+
+    async def fn(client):
+        resp = await client.post("/api/agent/config", json={"api_key": "sk-runtime"})
+        payload = await resp.json()
+        assert payload["provider"] == "anthropic"  # first in preference order
+        assert payload["has_key"] is True
+        assert payload["providers"] == {
+            "anthropic": {"has_key": True},
+            "openai": {"has_key": True},
+            "tinker": {"has_key": True},
+        }
+
+    run_with_client(populated_store, fn)
+
+
 class CountingModelsFetcher:
     """Stub for the tinker supported-models fetch; counts calls."""
 
@@ -859,6 +953,9 @@ class CountingModelsFetcher:
 
 
 def test_agent_config_tinker_models(populated_store: Path, monkeypatch: pytest.MonkeyPatch):
+    # An anthropic key too, so the auto-detected default provider stays
+    # non-tinker and the plain GET below exercises the "no fetch" path.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-env")
     monkeypatch.setenv("TINKER_API_KEY", "tml-test")
     fetcher = CountingModelsFetcher(
         models=["meta-llama/Llama-3.1-8B", "Qwen/Qwen3-30B-A3B-Instruct-2507", "Qwen/Qwen3-8B"]

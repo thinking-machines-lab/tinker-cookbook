@@ -38,6 +38,7 @@ from tinker_cookbook.tokendb.llm import (
     ToolDef,
     build_anthropic_request,
     build_openai_request,
+    detect_default_provider,
 )
 from tinker_cookbook.tokendb.reader import ParquetSegmentReader
 from tinker_cookbook.tokendb.schema import TokenRow
@@ -315,6 +316,28 @@ def test_missing_api_key_yields_error_event():
     assert len(events) == 1
     assert isinstance(events[0], ErrorEvent)
     assert "ANTHROPIC_API_KEY" in events[0].message
+
+
+def test_detect_default_provider(monkeypatch: pytest.MonkeyPatch):
+    # No keys at all (the autouse fixture cleared the env): anthropic fallback.
+    assert detect_default_provider() == "anthropic"
+    # Only openai has a key.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    assert detect_default_provider() == "openai"
+    # Only tinker has a key.
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.setenv("TINKER_API_KEY", "tml-key")
+    assert detect_default_provider() == "tinker"
+    # Preference order: anthropic > openai > tinker.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    assert detect_default_provider() == "openai"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic")
+    assert detect_default_provider() == "anthropic"
+    # A runtime key counts for every provider, so the first preference wins.
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.delenv("TINKER_API_KEY")
+    assert detect_default_provider(api_key="sk-runtime") == "anthropic"
 
 
 # --- Tool executors ---
