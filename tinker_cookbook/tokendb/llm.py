@@ -254,7 +254,9 @@ def build_openai_request(
             wire_messages.append({"role": "user", "content": msg.content})
     payload: dict[str, Any] = {
         "model": config.resolved_model(),
-        "max_tokens": config.max_tokens,
+        # OpenAI deprecated "max_tokens" for chat completions; current models
+        # (gpt-5.x and later) reject it outright.
+        "max_completion_tokens": config.max_tokens,
         "messages": wire_messages,
         "stream": True,
     }
