@@ -12,6 +12,11 @@ from tinker_cookbook import renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
+# Teacher model whose samples are distilled into the training data. Also
+# recorded on captured token DB rows so downstream analysis can attribute
+# rows to the teacher.
+TEACHER_MODEL = "Qwen/Qwen3.6-35B-A3B"
+
 LANGUAGE_CLASSIFICATION_PROMPT = """You are a precise language classifier.
 
 Goal: Classify the language of the provided text into exactly one of these labels:
@@ -96,8 +101,8 @@ def setup_clients():
         user_metadata=recipe_user_metadata("dataset_prompt_distillation"),
     )
     print("Creating sampling client")
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
-    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    sampling_client = service_client.create_sampling_client(base_model=TEACHER_MODEL)
+    tokenizer = get_tokenizer(TEACHER_MODEL)
     renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     return sampling_client, tokenizer, renderer
@@ -136,6 +141,8 @@ async def create_data_async(
                 group_idx=sentence_idx,
                 tokenizer=tokenizer,
                 sentence=sentence,
+                teacher_model=TEACHER_MODEL,
+                source_dataset="multilingual.txt",
             )
         response = tokenizer.decode(result.sequences[0].tokens)
         # parse the final answer from the response using regex for example: Final Answer: xx where xx is two character label for each language and nothing else. xx is one of the following: en, fr, es, hi, ja, ko, ru, ot.

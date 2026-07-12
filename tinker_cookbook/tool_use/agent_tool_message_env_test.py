@@ -176,6 +176,45 @@ class TestStepLogs:
         assert "tool_result_0" not in result.logs
 
 
+class TestRewardFnLogs:
+    """Reward functions may return (reward, metrics, logs); logs merge into
+    the step result's logs at episode end."""
+
+    def test_three_tuple_reward_fn_merges_logs(self):
+        async def grading_reward(
+            history: list[Message],
+        ) -> tuple[float, dict[str, float], dict[str, str | int | float]]:
+            return 0.5, {"tests_total": 3.0}, {"grading/verdict": "failed"}
+
+        env = AgentToolMessageEnv(
+            tools=[],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=grading_reward,
+        )
+        asyncio.run(env.initial_observation())
+        result = asyncio.run(env.step({"role": "assistant", "content": "done"}))
+
+        assert result.episode_done
+        assert result.reward == 0.5
+        assert result.metrics["tests_total"] == 3.0
+        assert result.logs["grading/verdict"] == "failed"
+        assert result.logs["assistant_content"] == "done"
+
+    def test_two_tuple_reward_fn_unchanged(self):
+        env = AgentToolMessageEnv(
+            tools=[],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+        result = asyncio.run(env.step({"role": "assistant", "content": "done"}))
+
+        assert result.reward == 1.0
+        assert result.logs == {"assistant_content": "done"}
+
+
 class TestStructuredToolCalls:
     """AgentToolMessageEnv.step() should emit structured tool_calls records."""
 

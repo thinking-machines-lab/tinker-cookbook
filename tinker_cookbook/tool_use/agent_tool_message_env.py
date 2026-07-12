@@ -18,7 +18,10 @@ from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, Messag
 from tinker_cookbook.tool_use.tools import handle_tool_call
 from tinker_cookbook.tool_use.types import Tool, ToolResult
 
-RewardResult = tuple[float, dict[str, float]]
+# Reward functions return (reward, metrics) or (reward, metrics, logs). The
+# optional third element carries grading diagnostics (e.g. test-run details)
+# into ``StepResult.logs`` for display/capture; it does not affect training.
+RewardResult = tuple[float, dict[str, float]] | tuple[float, dict[str, float], types.Logs]
 RewardFn = Callable[[list[Message]], Awaitable[RewardResult]]
 # TODO(tyler): Consider supporting stateful tools that need to grade rollouts based on
 # information not contained in the message history (e.g., internal tool state that changes
@@ -132,8 +135,11 @@ class AgentToolMessageEnv(MessageEnv):
 
         reward = 0.0
         if done:
-            reward, reward_metrics = await self.reward_fn(self.history)
-            metrics.update(reward_metrics)
+            reward_result = await self.reward_fn(self.history)
+            reward = reward_result[0]
+            metrics.update(reward_result[1])
+            if len(reward_result) == 3:
+                logs.update(reward_result[2])
 
         return MessageStepResult(
             reward=reward,
