@@ -30,6 +30,11 @@ class MessageStepResult:
     metrics: dict[str, float] = field(default_factory=dict)
     logs: types.Logs = field(default_factory=dict)
     next_stop_condition: StopCondition | None = None
+    attrs: dict[str, str] = field(default_factory=dict)
+    """Per-step categorical dimensions; forwarded to :attr:`StepResult.attrs`."""
+    tool_calls: list[types.ToolCallRecord] | None = None
+    """Structured tool calls made during this step; forwarded to
+    :attr:`StepResult.tool_calls`."""
 
 
 class MessageEnv(ABC):
@@ -152,6 +157,8 @@ class EnvFromMessageEnv(types.Env):
                 next_stop_condition=self._base_stop_condition,
                 metrics={**msg_step.metrics, "context_overflow": 1.0},
                 logs=msg_step.logs,
+                attrs=msg_step.attrs,
+                tool_calls=msg_step.tool_calls,
             )
 
         return types.StepResult(
@@ -161,4 +168,6 @@ class EnvFromMessageEnv(types.Env):
             next_stop_condition=next_stop_condition,
             metrics=msg_step.metrics,
             logs=msg_step.logs,
+            attrs=msg_step.attrs,
+            tool_calls=msg_step.tool_calls,
         )

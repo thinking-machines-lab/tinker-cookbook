@@ -830,6 +830,7 @@ async def do_sync_training_with_stream_minibatch(
                         trajectory_group=group.trajectory_group,
                         tags=group.env_group_builder.logging_tags(),
                         sampling_client_step=group.sampling_client_step,
+                        metadata=group.env_group_builder.metadata(),
                     )
                     for group in full_batch_wrapped_trajectory_groups
                 ],
@@ -1168,6 +1169,7 @@ async def do_async_training(
                             trajectory_group=group.trajectory_group,
                             tags=group.env_group_builder.logging_tags(),
                             sampling_client_step=group.sampling_client_step,
+                            metadata=group.env_group_builder.metadata(),
                         )
                         for group in full_batch_wrapped_trajectory_groups
                     ],
@@ -1225,6 +1227,7 @@ async def do_async_training(
                             trajectory_group=group.trajectory_group,
                             tags=group.env_group_builder.logging_tags(),
                             sampling_client_step=group.sampling_client_step,
+                            metadata=group.env_group_builder.metadata(),
                         )
                         for group in wrapped_trajectory_groups
                     ],
@@ -1813,6 +1816,7 @@ async def do_sync_training(
                             trajectory_group=trajectory_group,
                             tags=env_group_builder.logging_tags(),
                             sampling_client_step=i_batch,
+                            metadata=env_group_builder.metadata(),
                         )
                         for env_group_builder, trajectory_group in safezip(
                             env_group_builders_P, trajectory_groups_P

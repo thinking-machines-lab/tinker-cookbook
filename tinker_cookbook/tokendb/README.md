@@ -160,6 +160,35 @@ One row per turn (`schema_version = 2`):
 
 Query the maps directly in DuckDB: `metrics['group/rubric/score']`, `attrs['dataset'] = 'gsm8k'`.
 
+## Populating metadata from your env
+
+Two first-class channels feed the extensible columns; both are additive with zero-cost defaults, so envs that don't use them are unaffected.
+
+**Group-scoped dimensions** come from `EnvGroupBuilder.metadata()` (a sibling of `logging_tags()`), written onto every row of the group. Numeric values route to the `metrics` map, strings to `attrs`, and the reserved key `row_id` promotes to the `env_row_id` column (overriding the legacy `logs["env/row_id"]` fallback):
+
+```python
+class MyGroupBuilder(EnvGroupBuilder):
+    def metadata(self) -> Mapping[str, str | int | float]:
+        return {
+            "dataset": "gsm8k",     # -> attrs['dataset']
+            "difficulty": 3,        # -> metrics['difficulty']
+            "row_id": "gsm8k-42",   # -> env_row_id column
+        }
+```
+
+**Per-step dimensions** go on `StepResult.attrs` (categorical, coerced to str) and `StepResult.tool_calls` (structured tool calls). On an attrs key collision, the per-step value wins over the group-level one:
+
+```python
+return StepResult(
+    ...,
+    attrs={"phase": "solve"},
+    tool_calls=[ToolCallRecord(name="search", args_json='{"q": "..."}',
+                               error_type=None, should_stop=False)],
+)
+```
+
+Tool-using envs built on `AgentToolMessageEnv` populate `tool_calls` automatically (one record per call, with `error_type` set when a call fails).
+
 Old stores keep working: v1 segments (`metrics` as a JSON string, no `attrs` / `token_metrics` / `tool_calls`) are normalized to the v2 shape when the reader loads them, so mixed-version stores query uniformly. v1 files are never rewritten.
 
 ## Capturing synthetic-data / sampling runs

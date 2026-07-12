@@ -67,6 +67,8 @@ Key columns of the `rollouts` view:
   NaN (filter with `isnan(...)` where it matters).
 - `attrs` (map<varchar, varchar>): categorical dimensions (dataset, task
   name, ...), e.g. `attrs['dataset'] = 'gsm8k'`; keys via `map_keys(attrs)`.
+  Envs populate `metrics` / `attrs` via `EnvGroupBuilder.metadata()`
+  (group-scoped, on every row of the group) and `StepResult.attrs` (per-step).
 - `token_metrics` (map<varchar, list<float>>): named per-token float arrays
   parallel to `ac_tokens` (e.g. distillation teacher logprobs under
   `teacher/logprobs`, per-token KL, token-level rewards). Empty for most

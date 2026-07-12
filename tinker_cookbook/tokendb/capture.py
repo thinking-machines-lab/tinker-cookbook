@@ -76,6 +76,45 @@ def _decode(tokenizer: SupportsDecode, tokens: list[int]) -> str | None:
         return None
 
 
+def _route_metadata(
+    metadata: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, str], str | None]:
+    """Split builder metadata into (metrics, attrs, row_id) destinations.
+
+    Numeric values (int / float, including bool) route to the ``metrics``
+    map, everything else is stringified into ``attrs``. The reserved key
+    ``"row_id"`` promotes to the ``env_row_id`` column.
+    """
+    meta_metrics: dict[str, Any] = {}
+    meta_attrs: dict[str, str] = {}
+    row_id: str | None = None
+    for key, value in metadata.items():
+        if key == "row_id":
+            row_id = str(value)
+        elif isinstance(value, (int, float)):
+            meta_metrics[str(key)] = value
+        else:
+            meta_attrs[str(key)] = str(value)
+    return meta_metrics, meta_attrs, row_id
+
+
+def _coerce_tool_calls(tool_calls: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize transition tool-call records for the ``tool_calls`` column.
+
+    Fills struct defaults so a partially populated record can never fail the
+    typed-column encode in the background flush thread.
+    """
+    return [
+        {
+            "name": str(tc.get("name", "")),
+            "args_json": str(tc.get("args_json", "")),
+            "error_type": (str(tc["error_type"]) if tc.get("error_type") is not None else None),
+            "should_stop": bool(tc.get("should_stop", False)),
+        }
+        for tc in tool_calls
+    ]
+
+
 def record_groups(
     writer: TokenWriter,
     groups: Sequence[TrajectoryGroup | RolloutSummaryGroup],
@@ -84,6 +123,7 @@ def record_groups(
     iteration: int,
     sampling_client_step: int | None = None,
     tags: Sequence[str] = (),
+    metadata: Mapping[str, str | int | float] | None = None,
     tokenizer: SupportsDecode | None = None,
     store_text: bool = True,
     source: str = "rollout",
@@ -114,20 +154,31 @@ def record_groups(
       ``ac_tokens``: teacher logprobs, per-token KL, token-level rewards,
       per-token entropy) is passed through when a transition carries a
       ``token_metrics`` mapping; the built-in envs do not emit one yet.
-    - ``logs["env/row_id"]`` is promoted to the ``env_row_id`` column.
+    - Builder metadata (:meth:`EnvGroupBuilder.metadata`, carried on
+      :class:`RolloutSummaryGroup` or the *metadata* kwarg) is written onto
+      every row of the group: numeric values into ``metrics``, strings into
+      ``attrs``, and the reserved ``row_id`` key into ``env_row_id``.
+    - ``Transition.attrs`` merges into the row's ``attrs``; on a key
+      collision the per-step value wins over the group-level one.
+    - ``Transition.tool_calls`` maps into the structured ``tool_calls``
+      column.
+    - ``logs["env/row_id"]`` is promoted to the ``env_row_id`` column (kept
+      for compatibility; an explicit metadata ``row_id`` overrides it).
     - ``ob_text`` / ``ac_text`` are decoded when *store_text* and *tokenizer*
       are given; for delta rows only the delta portion is decoded.
 
     Args:
         writer: Destination writer; rows are passed to ``append_rows``.
         groups: Trajectory groups, optionally pre-bundled as
-            :class:`RolloutSummaryGroup` (whose ``tags`` /
+            :class:`RolloutSummaryGroup` (whose ``tags`` / ``metadata`` /
             ``sampling_client_step`` then take precedence over the kwargs).
         split: Dataset split identifier (e.g. ``"train"``).
         iteration: Training iteration / batch index.
         sampling_client_step: Fallback sampling-client step for plain
             :class:`TrajectoryGroup` entries.
         tags: Fallback logging tags for plain :class:`TrajectoryGroup` entries.
+        metadata: Fallback group metadata for plain :class:`TrajectoryGroup`
+            entries.
         tokenizer: Anything with ``decode(list[int]) -> str``.
         store_text: Store decoded ``ob_text`` / ``ac_text`` columns.
         source: Row provenance (``"rollout"`` | ``"filtered"`` | ``"sample"``).
@@ -142,10 +193,13 @@ def record_groups(
             trajectory_group = entry.trajectory_group
             group_tags = list(entry.tags)
             group_step = entry.sampling_client_step
+            group_metadata = entry.metadata
         else:
             trajectory_group = entry
             group_tags = list(tags)
             group_step = sampling_client_step
+            group_metadata = metadata or {}
+        meta_metrics, meta_attrs, meta_row_id = _route_metadata(group_metadata)
         total_rewards_G = trajectory_group.get_total_rewards()
 
         metrics_G = trajectory_group.metrics_G
@@ -176,7 +230,13 @@ def record_groups(
                     ob_text = _decode(tokenizer, stored_ob)
                     ac_text = _decode(tokenizer, ac_tokens)
 
-                env_row_id = transition.logs.get("env/row_id")
+                # Explicit metadata row_id wins over the logs["env/row_id"]
+                # fallback (kept for compatibility).
+                env_row_id: Any = meta_row_id
+                if env_row_id is None:
+                    env_row_id = transition.logs.get("env/row_id")
+                transition_attrs = getattr(transition, "attrs", None) or {}
+                transition_tool_calls = getattr(transition, "tool_calls", None)
                 rows.append(
                     TokenRow(
                         split=split,
@@ -200,8 +260,15 @@ def record_groups(
                         final_reward=trajectory_group.final_rewards_G[traj_idx],
                         ob_text=ob_text,
                         ac_text=ac_text,
-                        metrics={**transition.metrics, **group_metrics},
+                        metrics={**meta_metrics, **transition.metrics, **group_metrics},
+                        # Per-step attrs win over group-level metadata on collision.
+                        attrs={**meta_attrs, **transition_attrs},
                         token_metrics=dict(token_metrics) if token_metrics else {},
+                        tool_calls=(
+                            _coerce_tool_calls(transition_tool_calls)
+                            if transition_tool_calls
+                            else None
+                        ),
                         logs=dict(transition.logs),
                         env_row_id=str(env_row_id) if env_row_id is not None else None,
                         sampling_client_step=group_step,
@@ -251,6 +318,7 @@ def record_groups_to_active_capture(
     iteration: int,
     sampling_client_step: int | None = None,
     tags: Sequence[str] = (),
+    metadata: Mapping[str, str | int | float] | None = None,
     source: str = "rollout",
     filtered_reason: str | None = None,
 ) -> None:
@@ -270,6 +338,7 @@ def record_groups_to_active_capture(
             iteration=iteration,
             sampling_client_step=sampling_client_step,
             tags=tags,
+            metadata=metadata,
             tokenizer=active.tokenizer,
             store_text=active.store_text,
             source=source,

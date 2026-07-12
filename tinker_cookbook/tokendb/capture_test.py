@@ -21,7 +21,7 @@ from tinker_cookbook.tokendb.capture import (
     set_capture_context,
     set_filtered_group_sink,
 )
-from tinker_cookbook.tokendb.schema import TokenRow
+from tinker_cookbook.tokendb.schema import TokenRow, row_to_record
 from tinker_cookbook.tokendb.writer import TokenDbWriter
 from tinker_cookbook.tokendb.writer_test import read_all_segments
 
@@ -58,6 +58,8 @@ def make_transition(
     episode_done: bool = False,
     metrics: dict | None = None,
     logs: dict | None = None,
+    attrs: dict | None = None,
+    tool_calls: list | None = None,
     ob: tinker.ModelInput | None = None,
 ) -> Transition:
     if logprobs is None:
@@ -69,6 +71,8 @@ def make_transition(
         episode_done=episode_done,
         metrics=metrics or {},
         logs=logs or {},
+        attrs=attrs or {},
+        tool_calls=tool_calls,
     )
 
 
@@ -305,6 +309,333 @@ class TestGroupMetrics:
         group = make_group([traj], metrics_G=[{"note": "not-a-number", "score": 1}])
         rows = record_groups(ListWriter(), [group], split="train", iteration=0)
         assert rows[0].metrics == {"group/score": 1.0}
+
+
+class TestBuilderMetadata:
+    """EnvGroupBuilder.metadata() routing: numeric -> metrics, str -> attrs,
+    row_id -> env_row_id."""
+
+    def _summary_group(self, metadata: dict, *, logs: dict | None = None) -> RolloutSummaryGroup:
+        return RolloutSummaryGroup(
+            trajectory_group=make_group([single_step_trajectory([1], [2], logs=logs or {})]),
+            tags=[],
+            metadata=metadata,
+        )
+
+    def test_numeric_routes_to_metrics_string_to_attrs(self):
+        group = self._summary_group({"dataset": "gsm8k", "difficulty": 3, "temp": 0.7})
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert rows[0].attrs == {"dataset": "gsm8k"}
+        assert rows[0].metrics == {"difficulty": 3.0, "temp": pytest.approx(0.7)}
+
+    def test_row_id_promotes_to_env_row_id(self):
+        group = self._summary_group({"row_id": "gsm8k-42"})
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert rows[0].env_row_id == "gsm8k-42"
+        # row_id is a routing key, not a metric or attr.
+        assert rows[0].metrics == {}
+        assert rows[0].attrs == {}
+
+    def test_explicit_row_id_overrides_logs_fallback(self):
+        group = self._summary_group({"row_id": "explicit"}, logs={"env/row_id": "from-logs"})
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert rows[0].env_row_id == "explicit"
+
+    def test_logs_fallback_kept_without_metadata_row_id(self):
+        group = self._summary_group({"dataset": "gsm8k"}, logs={"env/row_id": "from-logs"})
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert rows[0].env_row_id == "from-logs"
+
+    def test_metadata_on_every_row_of_group(self):
+        two_step = Trajectory(
+            transitions=[
+                make_transition([1], [2]),
+                make_transition([1, 2, 3], [4], episode_done=True),
+            ],
+            final_ob=tinker.ModelInput.from_ints([]),
+        )
+        group = RolloutSummaryGroup(
+            trajectory_group=make_group([two_step, single_step_trajectory([9], [8])]),
+            tags=[],
+            metadata={"dataset": "math", "level": 5, "row_id": "math-7"},
+        )
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert len(rows) == 3
+        assert all(r.attrs == {"dataset": "math"} for r in rows)
+        assert all(r.metrics == {"level": 5.0} for r in rows)
+        assert all(r.env_row_id == "math-7" for r in rows)
+
+    def test_kwarg_metadata_fallback_for_plain_groups(self):
+        rows = record_groups(
+            ListWriter(),
+            [make_group([single_step_trajectory([1], [2])])],
+            split="train",
+            iteration=0,
+            metadata={"dataset": "gsm8k", "difficulty": 2},
+        )
+        assert rows[0].attrs == {"dataset": "gsm8k"}
+        assert rows[0].metrics == {"difficulty": 2.0}
+
+    def test_summary_group_metadata_takes_precedence_over_kwarg(self):
+        group = self._summary_group({"dataset": "from-group"})
+        rows = record_groups(
+            ListWriter(),
+            [group],
+            split="train",
+            iteration=0,
+            metadata={"dataset": "from-kwarg"},
+        )
+        assert rows[0].attrs == {"dataset": "from-group"}
+
+    def test_per_step_metrics_win_over_metadata_on_collision(self):
+        group = RolloutSummaryGroup(
+            trajectory_group=make_group(
+                [single_step_trajectory([1], [2], metrics={"difficulty": 9})]
+            ),
+            tags=[],
+            metadata={"difficulty": 3},
+        )
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert rows[0].metrics == {"difficulty": 9.0}
+
+
+class TestStepAttrs:
+    """Transition.attrs flow into the row attrs map."""
+
+    def test_transition_attrs_reach_rows(self):
+        traj = single_step_trajectory([1], [2], attrs={"tool": "search", "phase": "solve"})
+        rows = record_groups(ListWriter(), [make_group([traj])], split="train", iteration=0)
+        assert rows[0].attrs == {"tool": "search", "phase": "solve"}
+
+    def test_attrs_values_coerced_to_str(self):
+        traj = single_step_trajectory([1], [2], attrs={"n_retries": 3})
+        rows = record_groups(ListWriter(), [make_group([traj])], split="train", iteration=0)
+        assert rows[0].attrs == {"n_retries": "3"}
+
+    def test_per_step_attrs_win_over_group_metadata_on_collision(self):
+        group = RolloutSummaryGroup(
+            trajectory_group=make_group(
+                [single_step_trajectory([1], [2], attrs={"phase": "step-level"})]
+            ),
+            tags=[],
+            metadata={"phase": "group-level", "dataset": "gsm8k"},
+        )
+        rows = record_groups(ListWriter(), [group], split="train", iteration=0)
+        assert rows[0].attrs == {"phase": "step-level", "dataset": "gsm8k"}
+
+
+class TestToolCalls:
+    """Transition.tool_calls flow into the structured tool_calls column."""
+
+    def test_tool_calls_mapped_with_defaults_filled(self):
+        traj = single_step_trajectory(
+            [1],
+            [2],
+            tool_calls=[
+                {"name": "search", "args_json": '{"q": "x"}'},
+                {
+                    "name": "calc",
+                    "args_json": "{}",
+                    "error_type": "validation_failed",
+                    "should_stop": True,
+                },
+            ],
+        )
+        rows = record_groups(ListWriter(), [make_group([traj])], split="train", iteration=0)
+        assert rows[0].tool_calls == [
+            {"name": "search", "args_json": '{"q": "x"}', "error_type": None, "should_stop": False},
+            {
+                "name": "calc",
+                "args_json": "{}",
+                "error_type": "validation_failed",
+                "should_stop": True,
+            },
+        ]
+
+    def test_no_tool_calls_stays_none(self):
+        rows = record_groups(
+            ListWriter(),
+            [make_group([single_step_trajectory([1], [2])])],
+            split="train",
+            iteration=0,
+        )
+        assert rows[0].tool_calls is None
+
+    def test_tool_calls_roundtrip_through_parquet(self, tmp_path: Path):
+        traj = single_step_trajectory(
+            [1],
+            [2],
+            tool_calls=[
+                {
+                    "name": "search",
+                    "args_json": '{"q": "x"}',
+                    "error_type": None,
+                    "should_stop": False,
+                }
+            ],
+            attrs={"tool": "search"},
+        )
+        with TokenDbWriter(tmp_path, flush_interval_s=3600.0) as writer:
+            record_groups(
+                writer,
+                [
+                    RolloutSummaryGroup(
+                        trajectory_group=make_group([traj]),
+                        tags=[],
+                        metadata={"dataset": "hotpot", "row_id": "q-1"},
+                    )
+                ],
+                split="train",
+                iteration=0,
+            )
+        got = read_all_segments(tmp_path).to_pylist()[0]
+        assert got["tool_calls"] == [
+            {"name": "search", "args_json": '{"q": "x"}', "error_type": None, "should_stop": False}
+        ]
+        assert dict(got["attrs"]) == {"tool": "search", "dataset": "hotpot"}
+        assert got["env_row_id"] == "q-1"
+
+
+class TestAgentToolEnvEndToEnd:
+    """Fake tool -> AgentToolMessageEnv -> EnvFromMessageEnv -> rollout ->
+    tool_calls column populated (error_type on failure)."""
+
+    @staticmethod
+    def _rollout_rows(tool_call, tools) -> list[TokenRow]:
+        import asyncio
+        from unittest.mock import MagicMock
+
+        from tinker_cookbook.renderers.base import ParseTermination
+        from tinker_cookbook.rl.message_env import EnvFromMessageEnv
+        from tinker_cookbook.rl.rollouts import do_single_rollout
+        from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
+
+        message_env = AgentToolMessageEnv(
+            tools=tools,
+            initial_messages=[{"role": "user", "content": "go"}],
+            max_turns=1,
+            reward_fn=_noop_reward,
+        )
+        renderer = MagicMock()
+        renderer.build_generation_prompt = MagicMock(
+            return_value=tinker.ModelInput.from_ints([1, 2, 3])
+        )
+        renderer.get_stop_sequences = MagicMock(return_value=["<stop>"])
+        renderer.parse_response = MagicMock(
+            return_value=(
+                {"role": "assistant", "content": "calling", "tool_calls": [tool_call]},
+                ParseTermination.STOP_SEQUENCE,
+            )
+        )
+        env = EnvFromMessageEnv(renderer=renderer, message_env=message_env)
+
+        from tinker_cookbook.completers import StopCondition, TokenCompleter
+
+        class FixedPolicy(TokenCompleter):
+            async def __call__(
+                self, model_input: tinker.ModelInput, stop: StopCondition
+            ) -> TokensWithLogprobs:
+                return TokensWithLogprobs(tokens=[7], maybe_logprobs=[-0.1])
+
+        trajectory = asyncio.run(do_single_rollout(FixedPolicy(), env))
+        group = TrajectoryGroup(trajectories_G=[trajectory], final_rewards_G=[0.0], metrics_G=[{}])
+        return record_groups(ListWriter(), [group], split="train", iteration=0)
+
+    def test_fake_tool_populates_tool_calls_column(self):
+        from tinker_cookbook.renderers.base import ToolCall
+        from tinker_cookbook.tool_use.tools import tool
+        from tinker_cookbook.tool_use.types import ToolResult
+
+        @tool
+        async def search(q: str) -> ToolResult:
+            """Fake search."""
+            from tinker_cookbook.tool_use.tools import simple_tool_result
+
+            return simple_tool_result(f"results for {q}")
+
+        tc = ToolCall(
+            id="c1", function=ToolCall.FunctionBody(name="search", arguments='{"q": "cats"}')
+        )
+        rows = self._rollout_rows(tc, [search])
+        assert len(rows) == 1
+        assert rows[0].tool_calls == [
+            {
+                "name": "search",
+                "args_json": '{"q": "cats"}',
+                "error_type": None,
+                "should_stop": False,
+            }
+        ]
+
+    def test_failed_tool_call_carries_error_type(self):
+        from tinker_cookbook.renderers.base import ToolCall
+
+        tc = ToolCall(id="c1", function=ToolCall.FunctionBody(name="missing_tool", arguments="{}"))
+        rows = self._rollout_rows(tc, [])
+        assert len(rows) == 1
+        assert rows[0].tool_calls is not None
+        assert rows[0].tool_calls[0]["name"] == "missing_tool"
+        assert rows[0].tool_calls[0]["error_type"] == "tool_not_found"
+
+
+async def _noop_reward(history) -> tuple[float, dict[str, float]]:
+    return 0.0, {}
+
+
+class TestDefaultsAreNoOps:
+    """Envs that don't use metadata/attrs/tool_calls produce identical rows."""
+
+    @staticmethod
+    def _plain_records() -> list[dict]:
+        groups = [
+            make_group(
+                [
+                    single_step_trajectory([1, 2], [3], reward=1.0),
+                    Trajectory(
+                        transitions=[
+                            make_transition([1], [2], metrics={"acc": 1}, logs={"note": "x"}),
+                            make_transition([1, 2, 5], [6], episode_done=True),
+                        ],
+                        final_ob=tinker.ModelInput.from_ints([]),
+                    ),
+                ],
+                final_rewards=[0.5, 0.0],
+                metrics_G=[{"g": 1.0}, {}],
+            )
+        ]
+        rows = record_groups(
+            ListWriter(),
+            groups,
+            split="train",
+            iteration=4,
+            tags=["plain"],
+            tokenizer=FakeTokenizer(),
+        )
+        records = [row_to_record(r) for r in rows]
+        for record in records:
+            record.pop("ts")  # only nondeterministic field
+        return records
+
+    def test_plain_fixture_rows_unchanged_by_new_fields(self):
+        # A Transition built without the new fields and one built with the
+        # explicit defaults must produce byte-identical records, and the
+        # extensible columns stay at their empty defaults.
+        first = self._plain_records()
+        second = self._plain_records()
+        assert first == second
+        for record in first:
+            assert dict(record["attrs"]) == {}
+            assert record["tool_calls"] is None
+
+    def test_record_groups_without_metadata_kwarg_matches_empty_metadata(self):
+        traj = [make_group([single_step_trajectory([1], [2])])]
+        base = record_groups(ListWriter(), traj, split="train", iteration=0)
+        with_empty = record_groups(ListWriter(), traj, split="train", iteration=0, metadata={})
+        base_records = [row_to_record(r) for r in base]
+        empty_records = [row_to_record(r) for r in with_empty]
+        for record in base_records + empty_records:
+            record.pop("ts")
+        assert base_records == empty_records
 
 
 class TestTextDecode:

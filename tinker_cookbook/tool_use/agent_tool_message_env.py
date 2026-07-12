@@ -16,7 +16,7 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.rl import types
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
 from tinker_cookbook.tool_use.tools import handle_tool_call
-from tinker_cookbook.tool_use.types import Tool
+from tinker_cookbook.tool_use.types import Tool, ToolResult
 
 RewardResult = tuple[float, dict[str, float]]
 RewardFn = Callable[[list[Message]], Awaitable[RewardResult]]
@@ -47,29 +47,26 @@ class AgentToolMessageEnv(MessageEnv):
             self.history = list(self.initial_messages)
         return self.history
 
-    async def _handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[Message]:
-        """Execute tool calls and append results to history.
+    async def _handle_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResult]:
+        """Execute tool calls and append result messages to history.
 
-        Note: Tool metrics are not accumulated in the message history.
-        Only messages and should_stop are used from ToolResult.
+        Returns the per-call :class:`ToolResult`\\ s, aligned 1:1 with
+        *tool_calls*, so the caller can record structured per-call info
+        (error type, should_stop) alongside the messages.
         """
         tool_results = await asyncio.gather(
             *[handle_tool_call(self._tool_dict, tc) for tc in tool_calls]
         )
 
-        all_messages: list[Message] = []
-
         for tool_result in tool_results:
             # Append messages to history
-            for msg in tool_result.messages:
-                self.history.append(msg)
-                all_messages.append(msg)
+            self.history.extend(tool_result.messages)
 
             # Check if any tool signals to stop
             if tool_result.should_stop:
                 self._should_stop = True
 
-        return all_messages
+        return list(tool_results)
 
     async def step(self, message: Message) -> MessageStepResult:
         """Execute any tools and return next messages.
@@ -95,14 +92,33 @@ class AgentToolMessageEnv(MessageEnv):
 
         # Extract and execute tool calls if present
         tool_calls: list[ToolCall] = list(message.get("tool_calls") or [])
+        tool_call_records: list[types.ToolCallRecord] = []
         if tool_calls:
+            # Deprecated: positional tool_call_{i} log strings are kept for
+            # display/JSONL compatibility; prefer the structured tool_calls
+            # records below.
             for i, tc in enumerate(tool_calls):
                 logs[f"tool_call_{i}"] = f"{tc.function.name}({tc.function.arguments})"
 
-            tool_result_messages = await self._handle_tool_calls(tool_calls)
+            tool_results = await self._handle_tool_calls(tool_calls)
 
+            tool_result_messages = [msg for result in tool_results for msg in result.messages]
             for i, msg in enumerate(tool_result_messages):
                 logs[f"tool_result_{i}"] = format_content_as_string(msg["content"])
+
+            # Structured per-call records: error_type comes from the "error"
+            # metadata key set by error_tool_result() (e.g. "tool_not_found",
+            # "validation_failed", "execution_failed").
+            for tc, result in zip(tool_calls, tool_results, strict=True):
+                error = result.metadata.get("error")
+                tool_call_records.append(
+                    types.ToolCallRecord(
+                        name=tc.function.name,
+                        args_json=tc.function.arguments,
+                        error_type=str(error) if error is not None else None,
+                        should_stop=result.should_stop,
+                    )
+                )
 
         # Determine if episode is done
         no_tool_calls = len(tool_calls) == 0
@@ -125,6 +141,7 @@ class AgentToolMessageEnv(MessageEnv):
             next_messages=self.history,
             metrics=metrics,
             logs=logs,
+            tool_calls=tool_call_records or None,
         )
 
 

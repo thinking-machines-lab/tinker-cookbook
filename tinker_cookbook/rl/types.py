@@ -18,7 +18,7 @@ Type aliases
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TypeAlias
 
@@ -36,6 +36,25 @@ Metrics: TypeAlias = dict[str, float | int]
 Logs: TypeAlias = dict[str, str | int | float]
 
 
+class ToolCallRecord(TypedDict):
+    """One structured tool call made during a step.
+
+    Emitted by tool-using envs on :attr:`StepResult.tool_calls` and captured
+    into the token DB's ``tool_calls`` column. The tool's result payload is
+    not recorded here — it is already part of the next turn's observation.
+    """
+
+    name: str
+    """Tool name as called by the model."""
+    args_json: str
+    """Raw JSON string of the call arguments."""
+    error_type: str | None
+    """Error category when the call failed (e.g. ``"validation_failed"``,
+    ``"tool_not_found"``), or ``None`` on success."""
+    should_stop: bool
+    """Whether the tool signalled the episode to stop."""
+
+
 @dataclass
 class StepResult:
     """Result returned by :meth:`Env.step`.
@@ -51,6 +70,10 @@ class StepResult:
             logs (e.g., timing, counts).
         logs (Logs): Diagnostic info for display/debugging tools (not
             aggregated like metrics).
+        attrs (dict[str, str]): Per-step categorical dimensions (tool name,
+            error type, phase). Values are coerced to str at capture.
+        tool_calls (list[ToolCallRecord] | None): Structured tool calls made
+            during this step, or ``None`` when the step made no tool calls.
     """
 
     reward: float
@@ -65,6 +88,11 @@ class StepResult:
     """Numeric values aggregated and reported in training logs (e.g., timing, counts)."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
+    attrs: dict[str, str] = field(default_factory=dict)
+    """Per-step categorical dimensions (tool name, error type, phase); values
+    coerced to str at capture."""
+    tool_calls: list[ToolCallRecord] | None = None
+    """Structured tool calls made during this step (``None`` when there were none)."""
 
 
 @dataclass
@@ -81,6 +109,11 @@ class Transition:
             logs.
         logs (Logs): Diagnostic info for display/debugging tools (not
             aggregated like metrics).
+        attrs (dict[str, str]): Per-step categorical dimensions (tool name,
+            error type, phase), copied from :attr:`StepResult.attrs`. Values
+            are coerced to str at capture.
+        tool_calls (list[ToolCallRecord] | None): Structured tool calls made
+            during this step, copied from :attr:`StepResult.tool_calls`.
     """
 
     ob: Observation
@@ -95,6 +128,11 @@ class Transition:
     """Numeric values aggregated and reported in training logs."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
+    attrs: dict[str, str] = field(default_factory=dict)
+    """Per-step categorical dimensions (tool name, error type, phase); values
+    coerced to str at capture."""
+    tool_calls: list[ToolCallRecord] | None = None
+    """Structured tool calls made during this step (``None`` when there were none)."""
 
 
 class ActionExtra(TypedDict, total=False):
@@ -300,6 +338,27 @@ class EnvGroupBuilder(ABC):
                 return ["gsm", "math", "rlvr"]
         """
         return []
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        """Return group-scoped dimensions attached to every row of this group.
+
+        Sibling of :meth:`logging_tags`, but typed key=value pairs rather
+        than bare tags. When token DB capture is enabled, these are written
+        onto every row of the group: numeric values route to the ``metrics``
+        map, strings to the ``attrs`` map. The reserved key ``"row_id"``
+        promotes to the ``env_row_id`` column (dataset row identity, useful
+        for tracking the same problem across iterations).
+
+        Returns:
+            Mapping[str, str | int | float]: Group-scoped dimensions.
+                Default is an empty mapping.
+
+        Example::
+
+            def metadata(self) -> Mapping[str, str | int | float]:
+                return {"dataset": "gsm8k", "difficulty": 3, "row_id": "gsm8k-42"}
+        """
+        return {}
 
 
 @dataclass
