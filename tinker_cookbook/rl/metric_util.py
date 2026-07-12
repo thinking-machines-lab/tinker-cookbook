@@ -326,6 +326,11 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
             for builder, r in zip(self.env_group_builders_P, results)
             if r is not None
         ]
+        metadata_P = [
+            builder.metadata()
+            for builder, r in zip(self.env_group_builders_P, results)
+            if r is not None
+        ]
         if rollout_summary_export is not None and store is not None:
             sampling_client_steps_P = (
                 [rollout_summary_export.sampling_client_step] * len(trajectory_groups_P)
@@ -343,6 +348,25 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 rollout_summary_export.iteration,
                 records,
                 base_name=rollout_summary_export.base_name,
+            )
+            # Tee into the token DB when a capture is active (no-op otherwise).
+            from tinker_cookbook.rl.rollout_logging import RolloutSummaryGroup
+            from tinker_cookbook.tokendb.capture import record_groups_to_active_capture
+
+            record_groups_to_active_capture(
+                [
+                    RolloutSummaryGroup(
+                        trajectory_group=trajectory_group,
+                        tags=tags,
+                        sampling_client_step=rollout_summary_export.sampling_client_step,
+                        metadata=metadata,
+                    )
+                    for trajectory_group, tags, metadata in zip(
+                        trajectory_groups_P, taglist_P, metadata_P, strict=True
+                    )
+                ],
+                split=rollout_summary_export.split,
+                iteration=rollout_summary_export.iteration,
             )
         num_errors = sum(1 for r in results if r is None)
         if trajectory_groups_P:

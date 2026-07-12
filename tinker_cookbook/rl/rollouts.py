@@ -191,6 +191,8 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
             episode_done=step_result.episode_done,
             metrics=step_result.metrics,
             logs=step_result.logs,
+            attrs=step_result.attrs,
+            tool_calls=step_result.tool_calls,
         )
         transitions.append(transition)
         ob = step_result.next_observation
@@ -422,6 +424,30 @@ async def do_group_rollout_and_filter_constant_reward(
     )
 
 
+def _notify_filtered_group(
+    trajectory_group: TrajectoryGroup | None,
+    env_group_builder: EnvGroupBuilder,
+    reason: str,
+) -> None:
+    """Invoke the filtered-group sink (if any) for a dropped group.
+
+    The sink is registered via ``tinker_cookbook.tokendb.capture
+    .set_filtered_group_sink`` (same pattern as :func:`set_rollout_executor`).
+    Never raises: capture must not break training. Note: under a
+    cross-process rollout executor this runs in the worker process, where no
+    sink is registered, so dropped groups are not captured there.
+    """
+    try:
+        from tinker_cookbook.tokendb.capture import get_filtered_group_sink
+
+        sink = get_filtered_group_sink()
+        if sink is None:
+            return
+        sink(trajectory_group, env_group_builder.logging_tags(), reason)
+    except Exception:
+        logger.exception("Filtered-group sink failed; continuing")
+
+
 async def _do_group_rollout_and_filter_constant_reward_impl(
     sampling_client: tinker.SamplingClient,
     env_group_builder: EnvGroupBuilder,
@@ -446,14 +472,17 @@ async def _do_group_rollout_and_filter_constant_reward_impl(
     except AllTrajectoriesFailedError as e:
         # All retries exhausted — already logged per-trajectory inside the strategy
         logger.warning(str(e))
+        _notify_filtered_group(None, env_group_builder, "all_failed")
         return None
     except Exception as e:
         if not strategy.catches_group_errors:
             raise
         logger.warning(f"Rollout error ({type(e).__name__}), skipping group: {e}")
+        _notify_filtered_group(None, env_group_builder, "group_error")
         return None
 
     # Remove if all trajectories have the same reward
     if do_remove_constant_reward_groups and all_same(trajectory_group.get_total_rewards()):
+        _notify_filtered_group(trajectory_group, env_group_builder, "constant_reward")
         return None
     return trajectory_group

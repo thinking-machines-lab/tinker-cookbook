@@ -2,8 +2,8 @@
 
 import json
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,11 +46,17 @@ class RolloutSummaryGroup:
         tags (list[str]): Logging / categorization tags (e.g. environment name).
         sampling_client_step (int | None): Step counter of the sampling client,
             or ``None`` if not tracked.
+        metadata (Mapping[str, str | int | float]): Group-scoped dimensions
+            from :meth:`EnvGroupBuilder.metadata`, carried alongside ``tags``
+            so token DB capture can write them onto every row of the group
+            (numerics to the ``metrics`` map, strings to ``attrs``, the
+            reserved ``"row_id"`` key to ``env_row_id``). Default empty.
     """
 
     trajectory_group: TrajectoryGroup
     tags: list[str]
     sampling_client_step: int | None = None
+    metadata: Mapping[str, str | int | float] = field(default_factory=dict)
 
 
 def _json_safe(value: Any) -> Any:
