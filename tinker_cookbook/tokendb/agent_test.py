@@ -37,7 +37,7 @@ from tinker_cookbook.tokendb.llm import (
     ToolCallEvent,
     ToolDef,
     build_anthropic_request,
-    build_openai_request,
+    build_openai_responses_request,
     detect_default_provider,
 )
 from tinker_cookbook.tokendb.reader import ParquetSegmentReader
@@ -209,41 +209,49 @@ def test_anthropic_request_shape():
 def test_openai_request_shape():
     config = LLMConfig(provider="openai", model="my-model")
     messages, tools = _sample_conversation()
-    url, headers, payload = build_openai_request(config, "sk-test", "SYSTEM", messages, tools)
-    assert url == "https://api.openai.com/v1/chat/completions"
+    url, headers, payload = build_openai_responses_request(
+        config, "sk-test", "SYSTEM", messages, tools
+    )
+    assert url == "https://api.openai.com/v1/responses"
     assert headers["authorization"] == "Bearer sk-test"
     assert payload["model"] == "my-model"
     assert payload["stream"] is True
-    assert payload["max_completion_tokens"] == config.max_tokens
-    assert "max_tokens" not in payload
-    assert payload["messages"][0] == {"role": "system", "content": "SYSTEM"}
-    assert payload["messages"][1] == {"role": "user", "content": "how is reward trending?"}
-    assert payload["messages"][2] == {
-        "role": "assistant",
-        "content": "Let me query.",
-        "tool_calls": [
-            {
-                "id": "call_1",
-                "type": "function",
-                "function": {"name": "sql", "arguments": '{"query": "SELECT 1"}'},
-            }
-        ],
+    assert payload["max_output_tokens"] == config.max_tokens
+    assert payload["store"] is False
+    # System prompt travels as top-level instructions, not an input item.
+    assert payload["instructions"] == "SYSTEM"
+    # Reasoning stays at the API default unless explicitly configured.
+    assert "reasoning" not in payload
+    assert payload["input"][0] == {"role": "user", "content": "how is reward trending?"}
+    # Assistant text and its tool calls are separate input items.
+    assert payload["input"][1] == {"role": "assistant", "content": "Let me query."}
+    assert payload["input"][2] == {
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "sql",
+        "arguments": '{"query": "SELECT 1"}',
     }
-    assert payload["messages"][3] == {
-        "role": "tool",
-        "tool_call_id": "call_1",
-        "content": '{"rows": []}',
+    assert payload["input"][3] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": '{"rows": []}',
     }
+    # Responses API function tools are flat (no nested "function" object).
     assert payload["tools"] == [
         {
             "type": "function",
-            "function": {
-                "name": "sql",
-                "description": "Run SQL.",
-                "parameters": tools[0].input_schema,
-            },
+            "name": "sql",
+            "description": "Run SQL.",
+            "parameters": tools[0].input_schema,
         }
     ]
+
+
+def test_openai_request_reasoning_effort_passthrough():
+    config = LLMConfig(provider="openai", reasoning_effort="low")
+    messages, tools = _sample_conversation()
+    _, _, payload = build_openai_responses_request(config, "sk-test", "SYSTEM", messages, tools)
+    assert payload["reasoning"] == {"effort": "low"}
 
 
 # --- Stream normalization ---
@@ -262,44 +270,82 @@ def test_anthropic_stream_normalization():
 
 
 def test_openai_stream_normalization():
+    """Responses SSE: text deltas, function-call args split across deltas."""
     chunks: list[tuple[str | None, dict]] = [
-        (None, {"choices": [{"delta": {"content": "Hel"}, "finish_reason": None}]}),
-        (None, {"choices": [{"delta": {"content": "lo"}, "finish_reason": None}]}),
+        ("response.created", {"type": "response.created", "response": {"id": "resp_1"}}),
         (
-            None,
+            "response.output_item.added",
             {
-                "choices": [
-                    {
-                        "delta": {
-                            "tool_calls": [
-                                {
-                                    "index": 0,
-                                    "id": "t1",
-                                    "function": {"name": "sql", "arguments": '{"que'},
-                                }
-                            ]
-                        },
-                        "finish_reason": None,
-                    }
-                ]
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {"type": "message", "id": "msg_1", "role": "assistant"},
             },
         ),
         (
-            None,
+            "response.output_text.delta",
+            {"type": "response.output_text.delta", "item_id": "msg_1", "delta": "Hel"},
+        ),
+        (
+            "response.output_text.delta",
+            {"type": "response.output_text.delta", "item_id": "msg_1", "delta": "lo"},
+        ),
+        (
+            "response.output_item.done",
             {
-                "choices": [
-                    {
-                        "delta": {
-                            "tool_calls": [
-                                {"index": 0, "function": {"arguments": 'ry": "SELECT 1"}'}}
-                            ]
-                        },
-                        "finish_reason": None,
-                    }
-                ]
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {"type": "message", "id": "msg_1", "role": "assistant"},
             },
         ),
-        (None, {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}),
+        (
+            "response.output_item.added",
+            {
+                "type": "response.output_item.added",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "t1",
+                    "name": "sql",
+                    "arguments": "",
+                },
+            },
+        ),
+        # Arguments arrive as string fragments that must be joined.
+        (
+            "response.function_call_arguments.delta",
+            {
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "delta": '{"que',
+            },
+        ),
+        (
+            "response.function_call_arguments.delta",
+            {
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "delta": 'ry": "SELECT 1"}',
+            },
+        ),
+        (
+            "response.output_item.done",
+            {
+                "type": "response.output_item.done",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "t1",
+                    "name": "sql",
+                    "arguments": '{"query": "SELECT 1"}',
+                },
+            },
+        ),
+        (
+            "response.completed",
+            {"type": "response.completed", "response": {"id": "resp_1", "status": "completed"}},
+        ),
     ]
     client = LLMClient(
         LLMConfig(provider="openai", api_key="k"), transport=ScriptedTransport([chunks])
@@ -310,6 +356,35 @@ def test_openai_stream_normalization():
     assert isinstance(events[2], ToolCallEvent)
     assert events[2].call == ToolCall(id="t1", name="sql", arguments={"query": "SELECT 1"})
     assert events[-1] == Done("tool_calls")
+
+
+def test_openai_stream_error_frame():
+    chunks: list[tuple[str | None, dict]] = [
+        ("response.created", {"type": "response.created", "response": {"id": "resp_1"}}),
+        ("error", {"type": "error", "code": "server_error", "message": "boom", "param": None}),
+    ]
+    client = LLMClient(
+        LLMConfig(provider="openai", api_key="k"), transport=ScriptedTransport([chunks])
+    )
+    events = collect(client.stream("sys", [Message(role="user", content="hi")]))
+    assert events == [ErrorEvent("boom")]
+
+
+def test_openai_stream_failed_response():
+    chunks: list[tuple[str | None, dict]] = [
+        (
+            "response.failed",
+            {
+                "type": "response.failed",
+                "response": {"status": "failed", "error": {"message": "quota exceeded"}},
+            },
+        ),
+    ]
+    client = LLMClient(
+        LLMConfig(provider="openai", api_key="k"), transport=ScriptedTransport([chunks])
+    )
+    events = collect(client.stream("sys", [Message(role="user", content="hi")]))
+    assert events == [ErrorEvent("quota exceeded")]
 
 
 def test_missing_api_key_yields_error_event():
