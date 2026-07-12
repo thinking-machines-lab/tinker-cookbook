@@ -2,7 +2,7 @@
 
 The viewer's chat mode runs this server-side loop: the user's question goes to
 an LLM (:mod:`tinker_cookbook.tokendb.llm`) together with tool definitions
-bound to a run's :class:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader`
+bound to a run's :class:`~tinker_cookbook.tokendb.interface.TokenStoreBackend`
 (``sql`` / ``search`` / ``get_rollout`` / ``publish_visual``; registry mode
 adds ``list_runs`` / ``dashboard`` and per-run variants taking a ``run_id``).
 Tool results are fed back until the model answers, up to
@@ -37,6 +37,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tinker_cookbook.stores.storage import Storage
+from tinker_cookbook.tokendb.interface import TokenStoreBackend
 from tinker_cookbook.tokendb.llm import (
     ErrorEvent,
     LLMClient,
@@ -46,7 +47,7 @@ from tinker_cookbook.tokendb.llm import (
     ToolCallEvent,
     ToolDef,
 )
-from tinker_cookbook.tokendb.reader import ParquetSegmentReader, reconstruct_full_ob
+from tinker_cookbook.tokendb.reader import reconstruct_full_ob
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,9 @@ class VisualStore:
         slug = re.sub(r"[^A-Za-z0-9]+", "-", title.lower()).strip("-")[:60] or "visual"
         name = f"{slug}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}.html"
         self._storage.write(f"{self._prefix}/{name}", data)
+        # No-op on LocalStorage; on staged cloud backends this makes sure the
+        # visual (and anything else staged on this Storage) is durable now.
+        self._storage.flush()
         return {
             "name": name,
             "url": f"{self._url_base}/{name}",
@@ -213,6 +217,12 @@ class ChatStore:
 
     def _append(self, conversation_id: str, record: dict[str, Any]) -> None:
         self._storage.append(self._path(conversation_id), (_to_json(record) + "\n").encode())
+        # FsspecStorage stages append()s locally and only uploads on flush();
+        # nothing else flushes this storage, so without this chat transcripts
+        # on gs:///s3:// stores would be silently lost when the viewer exits.
+        # LocalStorage.flush() is a no-op, and FsspecStorage re-uploads only
+        # files with staged appends (here: one small transcript).
+        self._storage.flush()
 
     def load_records(self, conversation_id: str) -> list[dict[str, Any]]:
         try:
@@ -366,15 +376,20 @@ class ToolOutcome:
     frames: list[dict[str, Any]] | None = None
 
 
-def _execute_sql(reader: ParquetSegmentReader, arguments: dict[str, Any]) -> dict[str, Any]:
+def _execute_sql(reader: TokenStoreBackend, arguments: dict[str, Any]) -> dict[str, Any]:
     query = arguments.get("query")
     if not query or not isinstance(query, str):
         raise ToolExecutionError("sql needs a 'query' string")
-    rows = reader.sql(query)  # SELECT-only guard lives in the reader
+    # sql() is a backend-specific escape hatch, deliberately not part of the
+    # TokenStoreBackend protocol.
+    sql_fn = getattr(reader, "sql", None)
+    if sql_fn is None:
+        raise ToolExecutionError("this token store backend has no raw SQL escape hatch")
+    rows = sql_fn(query)  # SELECT-only guard lives in the backend
     return _rows_for_model(rows, MAX_SQL_ROWS_FOR_MODEL)
 
 
-def _execute_search(reader: ParquetSegmentReader, arguments: dict[str, Any]) -> dict[str, Any]:
+def _execute_search(reader: TokenStoreBackend, arguments: dict[str, Any]) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     if arguments.get("regex"):
         kwargs["regex"] = str(arguments["regex"])
@@ -393,7 +408,7 @@ def _execute_search(reader: ParquetSegmentReader, arguments: dict[str, Any]) -> 
     return payload
 
 
-def _execute_get_rollout(reader: ParquetSegmentReader, arguments: dict[str, Any]) -> dict[str, Any]:
+def _execute_get_rollout(reader: TokenStoreBackend, arguments: dict[str, Any]) -> dict[str, Any]:
     try:
         split = str(arguments["split"])
         iteration = int(arguments["iteration"])
@@ -415,9 +430,9 @@ def _execute_get_rollout(reader: ParquetSegmentReader, arguments: dict[str, Any]
 
 
 class RunToolbox:
-    """Tools bound to one run's reader (single-run and per-run chats)."""
+    """Tools bound to one run's backend (single-run and per-run chats)."""
 
-    def __init__(self, reader: ParquetSegmentReader, visual_store: VisualStore) -> None:
+    def __init__(self, reader: TokenStoreBackend, visual_store: VisualStore) -> None:
         self._reader = reader
         self._visual_store = visual_store
 
@@ -471,7 +486,7 @@ class RegistryToolbox:
         self,
         list_runs_fn: Callable[[], list[dict[str, Any]]],
         dashboard_fn: Callable[[], list[dict[str, Any]]],
-        resolve_reader: Callable[[str], ParquetSegmentReader],
+        resolve_reader: Callable[[str], TokenStoreBackend],
         visual_store: VisualStore,
     ) -> None:
         self._list_runs_fn = list_runs_fn

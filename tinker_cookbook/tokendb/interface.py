@@ -37,6 +37,7 @@ class TokenWriter(Protocol):
         ...
 
 
+@runtime_checkable
 class TokenStoreBackend(Protocol):
     """Storage-agnostic interface to a token store (write + read halves)."""
 
@@ -53,8 +54,26 @@ class TokenStoreBackend(Protocol):
 
     # --- Read half. ---
 
+    def refresh(self) -> Any:
+        """Pick up data written since the last read. Return value is
+        backend-specific (the default backend returns newly seen segment
+        file names)."""
+        ...
+
     def query(self, **filters: Any) -> Any:
         """Structured row query (split, iteration range, tags, reward range, ...)."""
+        ...
+
+    def trajectories(
+        self,
+        *,
+        latest_only: bool = False,
+        limit: int = 500,
+        offset: int = 0,
+        **filters: Any,
+    ) -> Any:
+        """Trajectory-grain aggregation of :meth:`query` (one row per
+        trajectory with step/token counts, rewards, and a preview)."""
         ...
 
     def get_rollout(
@@ -70,6 +89,35 @@ class TokenStoreBackend(Protocol):
 
     def search(self, **kwargs: Any) -> Any:
         """Regex search over text columns, and/or token-ID-subsequence match."""
+        ...
+
+    def search_hit_counts(self, **kwargs: Any) -> Any:
+        """Grouped-by-iteration hit counts for a :meth:`search` call."""
+        ...
+
+    def runs(self) -> Any:
+        """One record per (run_id, run_attempt) with typed config columns."""
+        ...
+
+    def schema_card(self) -> Any:
+        """Observed metrics/attrs/token_metrics keys and tags for this store."""
+        ...
+
+    def dashboard_stats(self, *, recent_k: int = 5, series_len: int = 50) -> Any:
+        """Cheap store-level aggregates for a multi-run dashboard: row
+        counts, latest iteration, and a per-iteration mean-reward series
+        (oldest first, at most *series_len* points) with the mean over the
+        last *recent_k* points."""
+        ...
+
+    def group_traj_idxs(
+        self,
+        split: str,
+        iteration: int,
+        group_idx: int,
+        run_attempt: int | None = None,
+    ) -> Any:
+        """The distinct ``traj_idx`` values of one group (sibling trajectories)."""
         ...
 
     def subscribe(self, **filters: Any) -> AsyncIterator[Any]:

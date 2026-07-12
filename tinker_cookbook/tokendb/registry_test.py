@@ -38,21 +38,23 @@ def make_row(**overrides) -> TokenRow:
 def registry_dir() -> Path:
     resolved = resolve_registry_dir()
     assert resolved is not None
-    return resolved
+    return Path(resolved)
 
 
 def test_resolve_registry_dir_precedence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # Explicit arg wins over the env var.
-    assert resolve_registry_dir(str(tmp_path)) == tmp_path
+    assert resolve_registry_dir(str(tmp_path)) == str(tmp_path)
     # Env var (set by the conftest fixture) wins over the default.
-    assert resolve_registry_dir() == Path(os.environ["TINKER_TOKENDB_REGISTRY"])
+    assert resolve_registry_dir() == os.environ["TINKER_TOKENDB_REGISTRY"]
     # Empty string disables at either level.
     assert resolve_registry_dir("") is None
     monkeypatch.setenv("TINKER_TOKENDB_REGISTRY", "")
     assert resolve_registry_dir() is None
     # No env var: the default location, tilde-expanded.
     monkeypatch.delenv("TINKER_TOKENDB_REGISTRY")
-    assert resolve_registry_dir() == Path(DEFAULT_REGISTRY_DIR).expanduser()
+    assert resolve_registry_dir() == str(Path(DEFAULT_REGISTRY_DIR).expanduser())
+    # Cloud URIs pass through unchanged (no tilde/Path mangling).
+    assert resolve_registry_dir("gs://bucket/prefix/runs") == "gs://bucket/prefix/runs"
 
 
 def test_writer_registers_run(tmp_path: Path):
@@ -189,3 +191,49 @@ def test_list_runs_disabled_or_missing(monkeypatch: pytest.MonkeyPatch):
     assert list_runs("") == []
     monkeypatch.setenv("TINKER_TOKENDB_REGISTRY", "/nonexistent/definitely/not/here")
     assert list_runs() == []
+
+
+def test_registry_on_non_local_storage(tmp_path: Path):
+    """Registry I/O goes through Storage: a cloud-shaped (fsspec memory://)
+    registry supports the full register + load + list + status roundtrip."""
+    fsspec = pytest.importorskip("fsspec")
+    registry_uri = f"memory://tokendb-registry-{tmp_path.name}"
+
+    # A real (local) store so run_status has manifests to probe.
+    log_path = tmp_path / "run"
+    with TokenDbWriter(log_path, registry_dir="") as writer:
+        writer.append_rows([make_row(iteration=4)])
+
+    assert (
+        register_run(
+            log_path=str(log_path),
+            run_id="mem-run",
+            run_attempt=2,
+            model_name="mem-model",
+            registry_dir=registry_uri,
+        )
+        is not None
+    )
+    try:
+        loaded = load_run_record(registry_uri, "mem-run")
+        assert loaded is not None
+        assert loaded["model_name"] == "mem-model"
+        assert loaded["log_path"] == str(log_path.resolve())
+
+        runs = list_runs(registry_uri)
+        assert [r["run_id"] for r in runs] == ["mem-run"]
+        assert runs[0]["run_attempt"] == 2
+        assert runs[0]["status"]["live"] is True
+        assert runs[0]["status"]["latest_iteration"] == 4
+
+        # Re-registering overwrites the same record.
+        register_run(
+            log_path=str(log_path), run_id="mem-run", run_attempt=3, registry_dir=registry_uri
+        )
+        assert len(list_runs(registry_uri)) == 1
+        record = load_run_record(registry_uri, "mem-run")
+        assert record is not None and record["run_attempt"] == 3
+    finally:
+        # The fsspec memory filesystem is process-global; clean up.
+        fs = fsspec.filesystem("memory")
+        fs.rm(f"/tokendb-registry-{tmp_path.name}", recursive=True)

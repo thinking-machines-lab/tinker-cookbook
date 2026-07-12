@@ -1,8 +1,11 @@
 """Local viewer server for the token DB.
 
-A thin aiohttp layer over :class:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader`:
-the HTTP API exposes the reader's structured methods (query / get_rollout /
-search / sql / labels), a websocket pushes newly written rows via
+A thin aiohttp layer over the
+:class:`~tinker_cookbook.tokendb.interface.TokenStoreBackend` protocol
+(implemented by :class:`~tinker_cookbook.tokendb.writer.ParquetSegmentBackend`):
+the HTTP API exposes the backend's structured methods (query / trajectories /
+get_rollout / search / labels, plus the backend-specific sql escape hatch), a
+websocket pushes newly written rows via
 ``reader.subscribe()``, and the built Vite UI is served from
 ``tokendb/static/`` (see ``tokendb/ui/README.md`` for the frontend dev loop).
 
@@ -70,6 +73,7 @@ from tinker_cookbook.tokendb.agent import (
     valid_conversation_id,
 )
 from tinker_cookbook.tokendb.agent_prompt import build_system_prompt
+from tinker_cookbook.tokendb.interface import TokenStoreBackend
 from tinker_cookbook.tokendb.llm import (
     API_KEY_ENV_VARS,
     DEFAULT_MODELS,
@@ -81,7 +85,6 @@ from tinker_cookbook.tokendb.llm import (
 )
 from tinker_cookbook.tokendb.reader import (
     LABELS_PATH,
-    ParquetSegmentReader,
     reconstruct_full_ob,
 )
 from tinker_cookbook.tokendb.registry import (
@@ -90,7 +93,7 @@ from tinker_cookbook.tokendb.registry import (
     load_run_record,
     resolve_registry_dir,
 )
-from tinker_cookbook.tokendb.writer import RUN_JSON_PATH
+from tinker_cookbook.tokendb.writer import RUN_JSON_PATH, ParquetSegmentBackend
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +134,9 @@ class RunContext:
 
     log_path: str
     storage: Any
-    reader: ParquetSegmentReader
+    # Typed as the TokenStoreBackend protocol (the handlers only use the
+    # structured methods); the concrete implementation is the parquet backend.
+    reader: TokenStoreBackend
     tokenizer: Any = None
     tokenizer_error: str = "not loaded"
     tokenizer_task: asyncio.Task[None] | None = None
@@ -139,7 +144,7 @@ class RunContext:
     # Chat tools run in a worker thread (asyncio.to_thread) and DuckDB
     # connections are not thread-safe, so the chat gets its own reader
     # instead of sharing `reader` with the event-loop HTTP handlers.
-    chat_reader: ParquetSegmentReader | None = None
+    chat_reader: TokenStoreBackend | None = None
 
 
 # Typed application-state keys (aiohttp's recommended alternative to str keys).
@@ -169,7 +174,7 @@ def _error_response(message: str, status: int) -> web.Response:
     return _json_response({"error": message}, status=status)
 
 
-# Query/filter parameter types, mirroring ParquetSegmentReader._build_where.
+# Query/filter parameter types, mirroring the backend's structured filters.
 _ROLLOUT_FILTER_TYPES: dict[str, type] = {
     "run_id": str,
     "run_attempt": int,
@@ -199,53 +204,6 @@ _LABEL_FILTER_TYPES: dict[str, type] = {
     "label_key": str,
     "author": str,
 }
-
-# Trajectory-grain aggregation over the row-grain `rollouts` view. Matches the
-# reader's `trajectories` view but keeps the browsing columns the feed needs
-# (tags, ac preview, superseded).
-_TRAJECTORIES_SQL = """
-    WITH filtered AS (SELECT * FROM rollouts {where})
-    SELECT run_id, run_attempt, split, iteration, group_idx, traj_idx,
-           count(*) AS n_steps,
-           sum(len(ac_tokens))::BIGINT AS n_ac_tokens,
-           any_value(total_reward) AS total_reward,
-           any_value(final_reward) AS final_reward,
-           arg_max(stop_reason, step_idx) AS stop_reason,
-           any_value(filtered_reason) AS filtered_reason,
-           any_value(env_row_id) AS env_row_id,
-           any_value(tags) AS tags,
-           any_value(source) AS source,
-           any_value(sampling_client_step) AS sampling_client_step,
-           arg_max(ac_text, step_idx) AS ac_preview,
-           bool_or(superseded) AS superseded,
-           min(ts) AS ts
-    FROM filtered
-    GROUP BY run_id, run_attempt, split, iteration, group_idx, traj_idx
-    ORDER BY iteration DESC, ts DESC, group_idx, traj_idx
-    LIMIT {limit} OFFSET {offset}
-"""
-
-# Dashboard aggregates (registry mode); one cheap pass per run, TTL-cached.
-_DASHBOARD_TOTALS_SQL = """
-    SELECT count(*) AS n_rows,
-           count(*) FILTER (WHERE source = 'filtered') AS n_filtered_rows,
-           max(iteration) FILTER (WHERE iteration >= 0) AS latest_iteration
-    FROM rollouts
-"""
-# Per-iteration mean of per-trajectory total_reward, excluding filtered rows
-# (their placeholder reward of 0.0 would skew the mean).
-_DASHBOARD_SERIES_SQL = f"""
-    SELECT iteration, avg(total_reward) AS mean_total_reward
-    FROM (
-        SELECT iteration, any_value(total_reward) AS total_reward
-        FROM rollouts
-        WHERE iteration >= 0 AND source <> 'filtered'
-        GROUP BY run_attempt, split, iteration, group_idx, traj_idx
-    )
-    GROUP BY iteration
-    ORDER BY iteration DESC
-    LIMIT {REWARD_SERIES_ITERATIONS}
-"""
 
 _FALLBACK_PAGE = """<!doctype html>
 <html><head><title>Token DB viewer</title></head>
@@ -343,7 +301,9 @@ def _flag(query: Mapping[str, str], name: str, default: bool = False) -> bool:
 
 def _make_run_ctx(log_path: str) -> RunContext:
     storage = storage_from_uri(str(log_path))
-    return RunContext(log_path=str(log_path), storage=storage, reader=ParquetSegmentReader(storage))
+    return RunContext(
+        log_path=str(log_path), storage=storage, reader=ParquetSegmentBackend(storage)
+    )
 
 
 def _get_or_create_ctx(app: web.Application, run_id: str) -> RunContext:
@@ -414,13 +374,9 @@ async def _handle_rollouts(request: web.Request) -> web.Response:
         if grain == "rollouts":
             rows = reader.query(latest_only=latest_only, limit=limit, offset=offset, **filters)
         elif grain == "trajectories":
-            # Reuse the reader's filter builder so query semantics match
-            # /api/rollouts?grain=rollouts exactly (internal to this package).
-            where, params = reader._build_where(**filters)
-            if latest_only:
-                where = f"{where} AND NOT superseded" if where else "WHERE NOT superseded"
-            sql = _TRAJECTORIES_SQL.format(where=where, limit=int(limit), offset=int(offset))
-            rows = reader.sql(sql, params)
+            rows = reader.trajectories(
+                latest_only=latest_only, limit=limit, offset=offset, **filters
+            )
         else:
             raise ValueError(f"Unknown grain {grain!r} (expected 'trajectories' or 'rollouts')")
     except ValueError as e:
@@ -449,16 +405,11 @@ async def _handle_rollout_detail(request: web.Request) -> web.Response:
         for step in steps:
             step["ac_token_strs"] = [ctx.tokenizer.decode([t]) for t in step["ac_tokens"]]
     labels = reader.labels(split=split, iteration=iteration, group_idx=group_idx, traj_idx=traj_idx)
-    siblings = reader.sql(
-        "SELECT DISTINCT traj_idx FROM rollouts"
-        " WHERE split = ? AND iteration = ? AND group_idx = ? ORDER BY traj_idx",
-        [split, iteration, group_idx],
-    )
     return _json_response(
         {
             "steps": steps,
             "labels": labels,
-            "group_traj_idxs": [row["traj_idx"] for row in siblings],
+            "group_traj_idxs": reader.group_traj_idxs(split, iteration, group_idx),
         }
     )
 
@@ -491,12 +442,17 @@ async def _handle_search(request: web.Request) -> web.Response:
 
 async def _handle_sql(request: web.Request) -> web.Response:
     reader = _request_ctx(request).reader
+    # Raw SQL is a backend-specific escape hatch, deliberately not part of
+    # the TokenStoreBackend protocol; 501 when the backend doesn't offer it.
+    sql_fn = getattr(reader, "sql", None)
+    if sql_fn is None:
+        return _error_response("this token store backend has no raw SQL escape hatch", 501)
     try:
         body = await request.json()
         query = body.get("query")
         if not query or not isinstance(query, str):
             raise ValueError("body must include a 'query' string")
-        rows = reader.sql(query, body.get("params"))
+        rows = sql_fn(query, body.get("params"))
     except (json.JSONDecodeError, TypeError, ValueError) as e:
         return _error_response(str(e), 400)
     except Exception as e:  # DuckDB parse/binder errors on user SQL
@@ -556,18 +512,13 @@ async def _handle_runs(request: web.Request) -> web.Response:
     return _json_response({"runs": runs})
 
 
-def _compute_dashboard_row(record: dict[str, Any], reader: ParquetSegmentReader) -> dict[str, Any]:
-    """One dashboard row: registry record + status + DuckDB aggregates."""
+def _compute_dashboard_row(record: dict[str, Any], reader: TokenStoreBackend) -> dict[str, Any]:
+    """One dashboard row: registry record + status + backend aggregates."""
     status = record.get("status") or {}
-    totals = reader.sql(_DASHBOARD_TOTALS_SQL)[0]
-    series = reader.sql(_DASHBOARD_SERIES_SQL)
-    series.reverse()  # oldest -> newest for sparklines
-    recent = [
-        p["mean_total_reward"]
-        for p in series[-DASHBOARD_RECENT_ITERATIONS:]
-        if p["mean_total_reward"] is not None
-    ]
-    latest_iteration = totals["latest_iteration"]
+    stats = reader.dashboard_stats(
+        recent_k=DASHBOARD_RECENT_ITERATIONS, series_len=REWARD_SERIES_ITERATIONS
+    )
+    latest_iteration = stats["latest_iteration"]
     if latest_iteration is None:
         latest_iteration = status.get("latest_iteration")
     return {
@@ -580,10 +531,10 @@ def _compute_dashboard_row(record: dict[str, Any], reader: ParquetSegmentReader)
         "live": bool(status.get("live", False)),
         "last_activity_ts": status.get("last_activity_ts"),
         "latest_iteration": latest_iteration,
-        "n_rows": totals["n_rows"],
-        "n_filtered_rows": totals["n_filtered_rows"],
-        "mean_recent_reward": (sum(recent) / len(recent)) if recent else None,
-        "reward_series": series,
+        "n_rows": stats["n_rows"],
+        "n_filtered_rows": stats["n_filtered_rows"],
+        "mean_recent_reward": stats["mean_recent_reward"],
+        "reward_series": stats["reward_series"],
     }
 
 
@@ -647,9 +598,9 @@ async def _handle_dashboard(request: web.Request) -> web.Response:
 async def _push_rows(
     ctx: RunContext, ws: web.WebSocketResponse, filters: dict[str, Any], poll_interval_s: float
 ) -> None:
-    # A fresh reader per subscription: the shared reader's connection is not
+    # A fresh backend per subscription: the shared backend's connection is not
     # safe to tail from multiple subscribers (each tracks its own segment set).
-    reader = ParquetSegmentReader(ctx.log_path)
+    reader: TokenStoreBackend = ParquetSegmentBackend(ctx.log_path)
     async for row in reader.subscribe(poll_interval_s=poll_interval_s, **filters):
         await ws.send_str(_json_dumps({"type": "row", "row": row}))
 
@@ -776,11 +727,12 @@ def _registry_storage(app: web.Application) -> Storage:
     return storage_from_uri(str(directory))
 
 
-def _chat_reader(ctx: RunContext) -> ParquetSegmentReader:
-    """The run's chat-dedicated reader (see the ``chat_reader`` field note)."""
-    if ctx.chat_reader is None:
-        ctx.chat_reader = ParquetSegmentReader(ctx.log_path)
-    return ctx.chat_reader
+def _chat_reader(ctx: RunContext) -> TokenStoreBackend:
+    """The run's chat-dedicated backend (see the ``chat_reader`` field note)."""
+    reader = ctx.chat_reader
+    if reader is None:
+        reader = ctx.chat_reader = ParquetSegmentBackend(ctx.log_path)
+    return reader
 
 
 def _run_info(ctx: RunContext) -> dict[str, Any] | None:
@@ -841,7 +793,7 @@ def _chat_scope(request: web.Request, *, include_prompt: bool = False) -> ChatSc
     storage = _registry_storage(app)
     visual_store = VisualStore(storage, url_base="/visuals", prefix="visuals")
 
-    def _resolve_reader(rid: str) -> ParquetSegmentReader:
+    def _resolve_reader(rid: str) -> TokenStoreBackend:
         try:
             return _chat_reader(_get_or_create_ctx(app, rid))
         except web.HTTPNotFound as e:

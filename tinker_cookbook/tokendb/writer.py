@@ -208,6 +208,10 @@ class TokenDbWriter:
         # writer construction.
         try:
             self._storage.append(RUN_ATTEMPTS_PATH, encoded)
+            # Upload the staged append now (no-op on LocalStorage) so the
+            # attempt record is visible on cloud stores from the start of the
+            # run, not only after the first segment flush.
+            self._storage.flush()
         except Exception:
             logger.warning("Failed to append %s (training continues)", RUN_ATTEMPTS_PATH)
         return run_id, run_attempt
@@ -344,6 +348,15 @@ class TokenDbWriter:
                 or tags_truncated,
             }
             self._storage.append(self._manifest_path, (json.dumps(manifest_line) + "\n").encode())
+            # Push staged appends to the backing store. FsspecStorage stages
+            # append()s locally and only uploads on flush(), so without this
+            # a gs:///s3:// store would have segments but no visible manifest
+            # lines until close() — readers treating manifests as a liveness
+            # hint would see the run as dead all through training.
+            # LocalStorage.flush() is a no-op; FsspecStorage re-uploads only
+            # files with staged appends (here: this writer's manifest, which
+            # stays small — one short JSON line per segment).
+            self._storage.flush()
 
     async def aflush(self) -> None:
         """Async :meth:`flush` — runs the parquet encode + write in a thread."""
@@ -448,6 +461,39 @@ class ParquetSegmentBackend:
     def search_hit_counts(self, **kwargs: Any) -> Any:
         """Grouped-by-iteration hit counts for a :meth:`search` call."""
         return self._reader().search_hit_counts(**kwargs)
+
+    def refresh(self) -> Any:
+        """See :meth:`TokenStoreBackend.refresh`; returns newly registered
+        segment file names."""
+        return self._reader().refresh()
+
+    def trajectories(
+        self,
+        *,
+        latest_only: bool = False,
+        limit: int = 500,
+        offset: int = 0,
+        **filters: Any,
+    ) -> Any:
+        """See :meth:`TokenStoreBackend.trajectories` and
+        :meth:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader.trajectories`."""
+        return self._reader().trajectories(
+            latest_only=latest_only, limit=limit, offset=offset, **filters
+        )
+
+    def dashboard_stats(self, *, recent_k: int = 5, series_len: int = 50) -> Any:
+        """See :meth:`TokenStoreBackend.dashboard_stats`."""
+        return self._reader().dashboard_stats(recent_k=recent_k, series_len=series_len)
+
+    def group_traj_idxs(
+        self,
+        split: str,
+        iteration: int,
+        group_idx: int,
+        run_attempt: int | None = None,
+    ) -> Any:
+        """See :meth:`TokenStoreBackend.group_traj_idxs`."""
+        return self._reader().group_traj_idxs(split, iteration, group_idx, run_attempt)
 
     def runs(self) -> Any:
         """One row per (run_id, run_attempt); see

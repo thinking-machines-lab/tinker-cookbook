@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tinker_cookbook.stores.storage import LocalStorage, Storage, storage_from_uri
+from tinker_cookbook.tokendb.interface import TokenStoreBackend
 from tinker_cookbook.tokendb.writer import (
     RUN_ATTEMPTS_PATH,
     RUN_JSON_PATH,
@@ -60,6 +61,54 @@ _LABEL_COLUMNS_SQL = (
     "traj_idx: 'INTEGER', step_idx: 'INTEGER', label_key: 'VARCHAR', label_value: 'JSON', "
     "author: 'VARCHAR', ts: 'TIMESTAMP', note: 'VARCHAR'}"
 )
+
+# Trajectory-grain aggregation over the row-grain `rollouts` view (the
+# `trajectories()` backend method). Matches the `trajectories` view but keeps
+# the browsing columns the viewer's feed needs (tags, ac preview, superseded).
+_TRAJECTORIES_SQL = """
+    WITH filtered AS (SELECT * FROM rollouts {where})
+    SELECT run_id, run_attempt, split, iteration, group_idx, traj_idx,
+           count(*) AS n_steps,
+           sum(len(ac_tokens))::BIGINT AS n_ac_tokens,
+           any_value(total_reward) AS total_reward,
+           any_value(final_reward) AS final_reward,
+           arg_max(stop_reason, step_idx) AS stop_reason,
+           any_value(filtered_reason) AS filtered_reason,
+           any_value(env_row_id) AS env_row_id,
+           any_value(tags) AS tags,
+           any_value(source) AS source,
+           any_value(sampling_client_step) AS sampling_client_step,
+           arg_max(ac_text, step_idx) AS ac_preview,
+           bool_or(superseded) AS superseded,
+           min(ts) AS ts
+    FROM filtered
+    GROUP BY run_id, run_attempt, split, iteration, group_idx, traj_idx
+    ORDER BY iteration DESC, ts DESC, group_idx, traj_idx
+    LIMIT {limit} OFFSET {offset}
+"""
+
+# Dashboard aggregates (the `dashboard_stats()` backend method): one cheap
+# pass over the store.
+_DASHBOARD_TOTALS_SQL = """
+    SELECT count(*) AS n_rows,
+           count(*) FILTER (WHERE source = 'filtered') AS n_filtered_rows,
+           max(iteration) FILTER (WHERE iteration >= 0) AS latest_iteration
+    FROM rollouts
+"""
+# Per-iteration mean of per-trajectory total_reward, excluding filtered rows
+# (their placeholder reward of 0.0 would skew the mean).
+_DASHBOARD_SERIES_SQL = """
+    SELECT iteration, avg(total_reward) AS mean_total_reward
+    FROM (
+        SELECT iteration, any_value(total_reward) AS total_reward
+        FROM rollouts
+        WHERE iteration >= 0 AND source <> 'filtered'
+        GROUP BY run_attempt, split, iteration, group_idx, traj_idx
+    )
+    GROUP BY iteration
+    ORDER BY iteration DESC
+    LIMIT {series_len}
+"""
 
 
 def _result_to_dicts(result: Any) -> list[dict[str, Any]]:
@@ -615,6 +664,80 @@ class ParquetSegmentReader:
             sql += f" OFFSET {int(offset)}"
         return self._fetch(sql, params)
 
+    def trajectories(
+        self,
+        *,
+        latest_only: bool = False,
+        limit: int = 500,
+        offset: int = 0,
+        **filters: Any,
+    ) -> list[dict[str, Any]]:
+        """Trajectory-grain aggregation of :meth:`query`.
+
+        One row per (run_id, run_attempt, split, iteration, group_idx,
+        traj_idx) with step/token counts, rewards, tags, the last step's
+        ``ac_text`` as ``ac_preview``, and the ``superseded`` flag. *filters*
+        are the same as :meth:`query` and apply at row grain before
+        aggregation, so the semantics match a row-grain query exactly.
+        Ordered newest iteration first.
+        """
+        self.refresh()
+        where, params = self._build_where(**filters)
+        if latest_only:
+            where = f"{where} AND NOT superseded" if where else "WHERE NOT superseded"
+        sql = _TRAJECTORIES_SQL.format(where=where, limit=int(limit), offset=int(offset))
+        return self._fetch(sql, params)
+
+    def dashboard_stats(self, *, recent_k: int = 5, series_len: int = 50) -> dict[str, Any]:
+        """Store-level aggregates for the multi-run dashboard.
+
+        Returns ``n_rows``, ``n_filtered_rows``, ``latest_iteration`` (max
+        iteration >= 0, or None), ``reward_series`` (per-iteration mean of
+        per-trajectory ``total_reward`` excluding filtered rows, oldest
+        first, at most *series_len* points), and ``mean_recent_reward`` (the
+        mean over the last *recent_k* series points, or None).
+        """
+        self.refresh()
+        totals = self._fetch(_DASHBOARD_TOTALS_SQL)[0]
+        series = self._fetch(_DASHBOARD_SERIES_SQL.format(series_len=int(series_len)))
+        series.reverse()  # oldest -> newest for sparklines
+        recent = [
+            p["mean_total_reward"]
+            for p in series[-int(recent_k) :]
+            if p["mean_total_reward"] is not None
+        ]
+        return {
+            "n_rows": totals["n_rows"],
+            "n_filtered_rows": totals["n_filtered_rows"],
+            "latest_iteration": totals["latest_iteration"],
+            "mean_recent_reward": (sum(recent) / len(recent)) if recent else None,
+            "reward_series": series,
+        }
+
+    def group_traj_idxs(
+        self,
+        split: str,
+        iteration: int,
+        group_idx: int,
+        run_attempt: int | None = None,
+    ) -> list[int]:
+        """The distinct ``traj_idx`` values of one group, ascending.
+
+        ``run_attempt=None`` spans every attempt (the viewer's sibling
+        navigation shows all trajectories that ever existed for the group).
+        """
+        self.refresh()
+        sql = (
+            "SELECT DISTINCT traj_idx FROM rollouts"
+            " WHERE split = ? AND iteration = ? AND group_idx = ?"
+        )
+        params: list[Any] = [split, iteration, group_idx]
+        if run_attempt is not None:
+            sql += " AND run_attempt = ?"
+            params.append(run_attempt)
+        sql += " ORDER BY traj_idx"
+        return [row["traj_idx"] for row in self._fetch(sql, params)]
+
     def _fetch(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         conn = self._connection()
         return _result_to_dicts(conn.execute(sql, list(params)))
@@ -758,6 +881,13 @@ class ParquetSegmentReader:
             }
         )
         self._storage.append(LABELS_PATH, (json.dumps(record, default=str) + "\n").encode())
+        # FsspecStorage stages append()s locally and only uploads on flush();
+        # nothing else ever flushes this reader's storage, so without this a
+        # label written against a gs:///s3:// store would silently never
+        # reach the store. LocalStorage.flush() is a no-op, and FsspecStorage
+        # re-uploads only files with staged appends (here: labels.jsonl,
+        # which stays small).
+        self._storage.flush()
 
     def _refresh_labels_source(self, conn: duckdb.DuckDBPyConnection) -> None:
         """(Re)create the ``labels`` view over the current ``labels.jsonl``.
@@ -930,15 +1060,19 @@ class TokenDB:
     """Thin facade over a token store backend for agent/programmatic access.
 
     ``TokenDB(log_path)`` opens the default :class:`ParquetSegmentBackend` for
-    that run's log directory (local path or cloud URI). All methods delegate
-    to the backend's structured read half; :meth:`sql` is the backend-specific
+    that run's log directory (local path or cloud URI); any other
+    :class:`~tinker_cookbook.tokendb.interface.TokenStoreBackend`
+    implementation can be passed instead. All methods delegate to the
+    backend's structured read half; :meth:`sql` is the backend-specific
     escape hatch (SELECT-only) and is not part of the portable protocol.
     """
 
-    def __init__(self, log_path_or_backend: str | Path | Storage | ParquetSegmentBackend) -> None:
-        if isinstance(log_path_or_backend, ParquetSegmentBackend):
+    def __init__(self, log_path_or_backend: str | Path | Storage | TokenStoreBackend) -> None:
+        if isinstance(log_path_or_backend, (str, Path)):
+            self._backend: TokenStoreBackend = ParquetSegmentBackend(log_path_or_backend)
+        elif isinstance(log_path_or_backend, TokenStoreBackend):
             self._backend = log_path_or_backend
-        else:
+        else:  # a bare Storage: wrap it in the default backend
             self._backend = ParquetSegmentBackend(log_path_or_backend)
 
     def query(self, **kwargs: Any) -> list[dict[str, Any]]:
@@ -963,6 +1097,24 @@ class TokenDB:
     def search_hit_counts(self, **kwargs: Any) -> dict[int, int]:
         """See :meth:`ParquetSegmentReader.search_hit_counts`."""
         return self._backend.search_hit_counts(**kwargs)
+
+    def trajectories(self, **kwargs: Any) -> list[dict[str, Any]]:
+        """See :meth:`ParquetSegmentReader.trajectories`."""
+        return self._backend.trajectories(**kwargs)
+
+    def dashboard_stats(self, *, recent_k: int = 5, series_len: int = 50) -> dict[str, Any]:
+        """See :meth:`ParquetSegmentReader.dashboard_stats`."""
+        return self._backend.dashboard_stats(recent_k=recent_k, series_len=series_len)
+
+    def group_traj_idxs(
+        self,
+        split: str,
+        iteration: int,
+        group_idx: int,
+        run_attempt: int | None = None,
+    ) -> list[int]:
+        """See :meth:`ParquetSegmentReader.group_traj_idxs`."""
+        return self._backend.group_traj_idxs(split, iteration, group_idx, run_attempt)
 
     def add_label(
         self,
@@ -995,5 +1147,12 @@ class TokenDB:
 
     def sql(self, query: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]:
         """Backend-specific SQL escape hatch (SELECT-only); see
-        :meth:`ParquetSegmentReader.sql`."""
-        return self._backend.sql(query, params)
+        :meth:`ParquetSegmentReader.sql`.
+
+        ``sql()`` is deliberately not part of ``TokenStoreBackend``, so a
+        backend without it raises :class:`NotImplementedError`.
+        """
+        sql_fn = getattr(self._backend, "sql", None)
+        if sql_fn is None:
+            raise NotImplementedError("this token store backend has no raw SQL escape hatch")
+        return sql_fn(query, params)

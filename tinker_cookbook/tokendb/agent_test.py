@@ -40,9 +40,8 @@ from tinker_cookbook.tokendb.llm import (
     build_openai_responses_request,
     detect_default_provider,
 )
-from tinker_cookbook.tokendb.reader import ParquetSegmentReader
 from tinker_cookbook.tokendb.schema import TokenRow
-from tinker_cookbook.tokendb.writer import TokenDbWriter
+from tinker_cookbook.tokendb.writer import ParquetSegmentBackend, TokenDbWriter
 
 
 @pytest.fixture(autouse=True)
@@ -444,7 +443,7 @@ def store_toolbox(tmp_path: Path):
             ]
         )
     storage = storage_from_uri(str(log_path))
-    reader = ParquetSegmentReader(storage)
+    reader = ParquetSegmentBackend(storage)
     visual_store = VisualStore(storage, url_base="/visuals")
     return RunToolbox(reader, visual_store), storage, visual_store
 
@@ -613,9 +612,9 @@ def test_registry_toolbox_routes_by_run_id(tmp_path: Path):
     with TokenDbWriter(log_path, context={"model_name": "m"}) as writer:
         writer.append_rows([make_row(total_reward=1.5)])
         run_id = writer.run_id
-    readers = {run_id: ParquetSegmentReader(storage_from_uri(str(log_path)))}
+    readers = {run_id: ParquetSegmentBackend(storage_from_uri(str(log_path)))}
 
-    def resolve(rid: str) -> ParquetSegmentReader:
+    def resolve(rid: str) -> ParquetSegmentBackend:
         from tinker_cookbook.tokendb.agent import ToolExecutionError
 
         if rid not in readers:

@@ -9,7 +9,9 @@ currently-running ones) in one dashboard.
 
 Resolution order for the registry directory: explicit argument, then the
 ``TINKER_TOKENDB_REGISTRY`` environment variable, then the default. An empty
-string at any level disables the registry entirely.
+string at any level disables the registry entirely. The directory can be a
+local path or a cloud URI (``gs://``, ``s3://``, ...); all registry I/O goes
+through the ``Storage`` protocol.
 
 Registration is best-effort by design: a broken registry (unwritable
 directory, weird ``HOME``) must never break training, so
@@ -36,7 +38,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from tinker_cookbook.stores.storage import storage_from_uri
+from tinker_cookbook.stores.storage import LocalStorage, Storage, storage_from_uri
 from tinker_cookbook.tokendb.writer import TOKENS_DIR
 
 logger = logging.getLogger(__name__)
@@ -46,12 +48,14 @@ DEFAULT_REGISTRY_DIR = "~/.cache/tinker-cookbook/tokendb/runs"
 DEFAULT_LIVE_WINDOW_S = 120.0
 
 
-def resolve_registry_dir(registry_dir: str | None = None) -> Path | None:
+def resolve_registry_dir(registry_dir: str | None = None) -> str | None:
     """Resolve the registry directory, or ``None`` when the registry is disabled.
 
     Precedence: explicit *registry_dir*, then the ``TINKER_TOKENDB_REGISTRY``
     environment variable, then :data:`DEFAULT_REGISTRY_DIR`. An empty string
-    (at any level) disables the registry.
+    (at any level) disables the registry. Local paths are tilde-expanded;
+    cloud URIs (``gs://``, ``s3://``, ...) pass through unchanged, so the
+    registry itself can live on shared object storage.
     """
     if registry_dir is None:
         registry_dir = os.environ.get(REGISTRY_ENV_VAR)
@@ -59,7 +63,14 @@ def resolve_registry_dir(registry_dir: str | None = None) -> Path | None:
         registry_dir = DEFAULT_REGISTRY_DIR
     if registry_dir == "":
         return None
-    return Path(registry_dir).expanduser()
+    if "://" in registry_dir:
+        return registry_dir
+    return str(Path(registry_dir).expanduser())
+
+
+def _registry_storage(directory: str) -> Storage:
+    """A ``Storage`` rooted at the registry directory (local or cloud)."""
+    return storage_from_uri(directory)
 
 
 def normalize_log_path(log_path: str) -> str:
@@ -84,18 +95,17 @@ def register_run(
     recipe_name: str | None = None,
     writer_id: str | None = None,
     registry_dir: str | None = None,
-) -> Path | None:
+) -> str | None:
     """Write (or overwrite) this run's registry record ``{run_id}.json``.
 
-    Best-effort: returns the record path on success, or ``None`` when the
-    registry is disabled or the write failed (logged, never raised), so a
-    broken registry cannot break training.
+    Best-effort: returns the record's path/URI on success, or ``None`` when
+    the registry is disabled or the write failed (logged, never raised), so
+    a broken registry cannot break training.
     """
     try:
         directory = resolve_registry_dir(registry_dir)
         if directory is None:
             return None
-        directory.mkdir(parents=True, exist_ok=True)
         record = {
             "run_id": run_id,
             "run_attempt": run_attempt,
@@ -107,19 +117,26 @@ def register_run(
             "pid": os.getpid(),
             "hostname": socket.gethostname(),
         }
-        target = directory / f"{run_id}.json"
-        # Write-then-rename so a concurrent reader never sees a partial record.
-        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=f".{run_id}.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(record, f, indent=2)
-                f.write("\n")
-            os.replace(tmp_path, target)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-            raise
-        return target
+        encoded = (json.dumps(record, indent=2) + "\n").encode()
+        name = f"{run_id}.json"
+        storage = _registry_storage(directory)
+        if isinstance(storage, LocalStorage):
+            # Local filesystem: write-then-rename so a concurrent reader
+            # never sees a partial record. Object stores don't need the
+            # dance — a single-object write is already atomic there.
+            target = storage.root / name
+            fd, tmp_path = tempfile.mkstemp(dir=storage.root, prefix=f".{run_id}.", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(encoded)
+                os.replace(tmp_path, target)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
+                raise
+            return str(target)
+        storage.write(name, encoded)
+        return storage.url(name)
     except Exception:
         logger.warning(
             "Failed to register token DB run %s in the run registry (training continues)",
@@ -134,10 +151,9 @@ def load_run_record(registry_dir: str | None, run_id: str) -> dict[str, Any] | N
     directory = resolve_registry_dir(registry_dir)
     if directory is None:
         return None
-    path = directory / f"{run_id}.json"
     try:
-        record = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        record = json.loads(_registry_storage(directory).read(f"{run_id}.json").decode())
+    except Exception:
         return None
     return record if isinstance(record, dict) else None
 
@@ -211,17 +227,24 @@ def list_runs(
     with a warning.
     """
     directory = resolve_registry_dir(registry_dir)
-    if directory is None or not directory.is_dir():
+    if directory is None:
+        return []
+    try:
+        storage = _registry_storage(directory)
+        names = sorted(name for name in storage.list_dir("") if name.endswith(".json"))
+    except Exception:
+        # Missing/unreachable registry (e.g. the default dir was never
+        # created, or a cloud registry is unreachable) reads as empty.
         return []
     runs: list[dict[str, Any]] = []
-    for path in sorted(directory.glob("*.json")):
+    for name in names:
         try:
-            record = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            logger.warning("Skipping unreadable registry record %s", path)
+            record = json.loads(storage.read(name).decode())
+        except Exception:
+            logger.warning("Skipping unreadable registry record %s", name)
             continue
         if not isinstance(record, dict) or "run_id" not in record:
-            logger.warning("Skipping malformed registry record %s", path)
+            logger.warning("Skipping malformed registry record %s", name)
             continue
         record["status"] = run_status(str(record.get("log_path", "")), live_window_s=live_window_s)
         runs.append(record)
