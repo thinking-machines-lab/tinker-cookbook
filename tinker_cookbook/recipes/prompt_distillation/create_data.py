@@ -79,6 +79,10 @@ Text to classify:
 @chz.chz
 class Config:
     output_file: str
+    # Optional token DB capture of the raw sampled tokens (prompt, sampled
+    # tokens, logprobs) for inspection with tinker_cookbook.tokendb. Requires
+    # the tokendb extra: pip install 'tinker-cookbook[tokendb]'
+    token_db_path: str | None = None
 
 
 def setup_clients():
@@ -99,7 +103,13 @@ def setup_clients():
     return sampling_client, tokenizer, renderer
 
 
-async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any, renderer: Any):
+async def create_data_async(
+    config: Config,
+    sampling_client: Any,
+    tokenizer: Any,
+    renderer: Any,
+    token_db_writer: Any = None,
+):
     # read sentences from multilingual.txt file
     with open("tinker_cookbook/example_data/multilingual.txt") as f:
         sentences = f.readlines()
@@ -108,6 +118,7 @@ async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any
     print(f"Loaded {len(sentences)} sentences")
 
     async def sample_from_model(
+        sentence_idx: int,
         sentence: str,
     ) -> tuple[str, str | None]:
         prompt = LANGUAGE_CLASSIFICATION_PROMPT.format(text=sentence)
@@ -118,6 +129,14 @@ async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any
         result = await sampling_client.sample_async(
             prompt=tokenized_prompt, sampling_params=params, num_samples=1
         )
+        if token_db_writer is not None:
+            token_db_writer.record_sample(
+                tokenized_prompt,
+                result.sequences[0],
+                group_idx=sentence_idx,
+                tokenizer=tokenizer,
+                sentence=sentence,
+            )
         response = tokenizer.decode(result.sequences[0].tokens)
         # parse the final answer from the response using regex for example: Final Answer: xx where xx is two character label for each language and nothing else. xx is one of the following: en, fr, es, hi, ja, ko, ru, ot.
         # the final answer is the xx part
@@ -128,7 +147,7 @@ async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any
     answers: list[str | None] = []
     questions: list[str] = []
     for coro in tqdm_asyncio.as_completed(
-        [sample_from_model(s) for s in sentences], total=len(sentences)
+        [sample_from_model(i, s) for i, s in enumerate(sentences)], total=len(sentences)
     ):
         question, answer = await coro
         answers.append(answer)
@@ -171,9 +190,25 @@ def main(config: Config):
     # Setup clients synchronously
     sampling_client, tokenizer, renderer = setup_clients()
 
+    token_db_writer = None
+    if config.token_db_path is not None:
+        from tinker_cookbook.tokendb import TokenDbWriter, check_token_db_dependencies
+
+        check_token_db_dependencies()
+        token_db_writer = TokenDbWriter(
+            config.token_db_path,
+            context={"recipe_name": "prompt_distillation/create_data"},
+        )
+
     print("Sampling data")
     # Run async data creation
-    asyncio.run(create_data_async(config, sampling_client, tokenizer, renderer))
+    try:
+        asyncio.run(
+            create_data_async(config, sampling_client, tokenizer, renderer, token_db_writer)
+        )
+    finally:
+        if token_db_writer is not None:
+            token_db_writer.close()
     print(f"Saved data to {config.output_file}")
 
 

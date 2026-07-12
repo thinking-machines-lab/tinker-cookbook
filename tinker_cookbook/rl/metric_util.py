@@ -344,6 +344,22 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 records,
                 base_name=rollout_summary_export.base_name,
             )
+            # Tee into the token DB when a capture is active (no-op otherwise).
+            from tinker_cookbook.rl.rollout_logging import RolloutSummaryGroup
+            from tinker_cookbook.tokendb.capture import record_groups_to_active_capture
+
+            record_groups_to_active_capture(
+                [
+                    RolloutSummaryGroup(
+                        trajectory_group=trajectory_group,
+                        tags=tags,
+                        sampling_client_step=rollout_summary_export.sampling_client_step,
+                    )
+                    for trajectory_group, tags in zip(trajectory_groups_P, taglist_P, strict=True)
+                ],
+                split=rollout_summary_export.split,
+                iteration=rollout_summary_export.iteration,
+            )
         num_errors = sum(1 for r in results if r is None)
         if trajectory_groups_P:
             metrics = compute_trajectory_metrics(trajectory_groups_P, taglist_P)
