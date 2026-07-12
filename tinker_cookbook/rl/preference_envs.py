@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -343,7 +343,13 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
         return [
             (
                 (win_minus_loss / mc if mc > 0 else 0.0) + format_coef * (float(is_valid) - 1.0),
-                {"win_minus_loss": win_minus_loss / mc if mc > 0 else 0.0, "format": is_valid},
+                {
+                    "win_minus_loss": win_minus_loss / mc if mc > 0 else 0.0,
+                    "format": is_valid,
+                    # Number of pairwise matchups this trajectory took part in
+                    # (capture/logging only; the reward is already normalized).
+                    "matchup_count": mc,
+                },
             )
             for win_minus_loss, is_valid, mc in safezip(
                 win_minus_loss_list, is_valid_list, matchup_count
@@ -357,6 +363,13 @@ class PairwisePreferenceGroupBuilder(EnvGroupBuilder):
             list[str]: A single-element list ``["pair_pref"]``.
         """
         return ["pair_pref"]
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        """Return capture dimensions describing how matchup pairs are formed."""
+        return {
+            "tournament_pattern": self.tournament_pattern.value,
+            "matchup_group_size": self.matchup_group_size,
+        }
 
 
 class PairwisePreferenceDataset(RLDataset):

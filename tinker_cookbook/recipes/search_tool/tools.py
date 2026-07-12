@@ -94,6 +94,11 @@ class ChromaTool:
         self._chroma_host = chroma_host
         self._chroma_port = chroma_port
 
+    @property
+    def collection_name(self) -> str:
+        """Name of the ChromaDB collection queried by this tool."""
+        return self._collection_name
+
     def __getstate__(self) -> dict:
         """Exclude non-pickleable async clients from pickle state."""
         state = self.__dict__.copy()

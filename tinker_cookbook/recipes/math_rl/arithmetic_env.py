@@ -87,6 +87,9 @@ class ArithmeticDataset(RLDataset):
                 ArithmeticEnv, x, y, convo_prefix=convo_prefix, renderer=self.renderer
             ),
             num_envs=self.group_size,
+            # Token DB capture dimensions: the (x, y) pair is the problem
+            # identity for this generated dataset.
+            group_metadata={"dataset": "arithmetic", "row_id": f"arithmetic-{x}+{y}"},
         )
 
     def __len__(self) -> int:
