@@ -10,6 +10,7 @@ from tinker_cookbook.recipes.code_rl.code_grading import (
 )
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.rl.types import Logs
 from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
 from tinker_cookbook.utils import logtree
@@ -22,6 +23,9 @@ class DeepcoderTask:
     problem: str
     tests: list[dict[str, Any]]
     starter_code: str | None = None
+    source: str | None = None
+    """Sub-dataset the task came from (e.g. ``"taco"``, ``"lcbv5"``); used for
+    token DB capture dimensions only."""
 
 
 class DeepcoderTool:
@@ -65,6 +69,28 @@ class DeepcoderTool:
             return simple_tool_result(json.dumps({"error": str(e), "passed": False}))
 
 
+# Keys kept when summarizing sandbox grading details for StepResult.logs.
+# stdout/stderr are dropped: they are bulky run output, and the same test
+# harness output is already rendered into the model's observation whenever the
+# model exercises the check_solution tool.
+_GRADING_DETAIL_KEYS = ("status", "message", "error", "exit_code", "return_code", "execution_time")
+
+
+def _grading_details_summary(details: dict[str, Any]) -> dict[str, Any]:
+    """Keep the verdict / error-class / timing fields of a sandbox result."""
+    summary: dict[str, Any] = {
+        key: details[key] for key in _GRADING_DETAIL_KEYS if details.get(key) is not None
+    }
+    run_result = details.get("run_result")
+    if isinstance(run_result, dict):
+        nested = {
+            key: run_result[key] for key in _GRADING_DETAIL_KEYS if run_result.get(key) is not None
+        }
+        if nested:
+            summary["run_result"] = nested
+    return summary
+
+
 @dataclass
 class DeepcoderReward:
     """Reward function for code tasks.
@@ -82,8 +108,15 @@ class DeepcoderReward:
     timeout: int = 6
     format_coef: float = 0.1
 
-    async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
-        """Grade the completed episode by extracting code from final assistant message."""
+    async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float], Logs]:
+        """Grade the completed episode by extracting code from final assistant message.
+
+        Returns ``(reward, metrics, logs)``: metrics carry the reward components
+        plus ``tests_total``; logs carry a grading-details summary (verdict,
+        error class, timing) for display/capture.
+        """
+        tests_total = float(len(self.task.tests))
+
         # Find the last assistant message
         final_message = None
         for msg in reversed(history):
@@ -93,7 +126,7 @@ class DeepcoderReward:
 
         if final_message is None:
             logtree.log_text("No assistant message found in history.")
-            return 0.0, {"format": 0.0, "correct": 0.0}
+            return 0.0, {"format": 0.0, "correct": 0.0, "tests_total": tests_total}, {}
 
         # Use get_text_content to properly handle thinking models (o1, o3)
         content = get_text_content(final_message)
@@ -103,21 +136,31 @@ class DeepcoderReward:
         has_code_block = code is not None
 
         # Grade the code by running tests
+        grading_logs: Logs = {}
         if code is not None:
             try:
-                passed, _details = await sandbox_check_correctness(
+                passed, details = await sandbox_check_correctness(
                     self.task.tests,
                     code,
                     timeout=self.timeout,
                     backend=self.sandbox_backend,
                 )
                 correct = float(passed)
+                grading_logs["grading/verdict"] = "passed" if passed else "failed"
+                summary = _grading_details_summary(details)
+                if summary:
+                    grading_logs["grading/details"] = json.dumps(
+                        summary, ensure_ascii=False, default=str
+                    )
             except Exception as e:
                 logtree.log_text(f"Error running tests: {e}")
                 correct = 0.0
+                grading_logs["grading/verdict"] = "error"
+                grading_logs["grading/error_type"] = type(e).__name__
         else:
             logtree.log_text("No code block detected in response.")
             correct = 0.0
+            grading_logs["grading/verdict"] = "no_code_block"
 
         # Reward formula
         format_score = float(has_code_block)
@@ -132,4 +175,8 @@ class DeepcoderReward:
             f"Reward: {reward:.2f}"
         )
 
-        return reward, {"format": format_score, "correct": correct}
+        return (
+            reward,
+            {"format": format_score, "correct": correct, "tests_total": tests_total},
+            grading_logs,
+        )

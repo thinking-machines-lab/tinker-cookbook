@@ -1,0 +1,1076 @@
+/* Token DB viewer stylesheet. Design tokens live in :root; light theme only. */
+
+:root {
+  --bg: #f5f5f5;
+  --surface: #ffffff;
+  --hairline: rgba(0, 0, 0, 0.1);
+  --text: #1a1a1a;
+  --text-secondary: rgba(0, 0, 0, 0.5);
+  --text-placeholder: rgba(0, 0, 0, 0.3);
+  --accent: #2d72d2;
+  --focus-ring: rgba(45, 114, 210, 0.4);
+  --green: #34c759;
+  --red: #ff383c;
+  --orange: #ff8d28;
+  --yellow: #ffcc00;
+  --chart: #2563eb;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --card-shadow:
+    0 1px 1px hsl(220 8% 10% / 0.075),
+    0 2px 2px hsl(220 8% 10% / 0.075);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Thin scrollbars. */
+* {
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 20px 0 8px;
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+.small {
+  font-size: 12px;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.error {
+  color: var(--red);
+}
+.empty-dash {
+  color: var(--text-secondary);
+}
+
+/* --- Loading skeletons ---
+   Pre-data placeholders sized to match the loaded content, so data arriving
+   never shifts the layout. */
+
+.skeleton {
+  display: inline-block;
+  background: rgba(0, 0, 0, 0.07);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.skeleton-line {
+  height: 1em;
+  width: 100%;
+  vertical-align: middle;
+}
+.skeleton-row .skeleton-line {
+  min-width: 2.5em;
+}
+
+/* --- Navigation ---
+   Two levels, two bars. Level 1 (.app-header) holds the brand/home link and
+   the app-wide destinations; level 2 (.context-bar) exists only inside a run
+   and holds the breadcrumb, the run identity chips, and the run tabs. Both
+   levels use the same underline-tab pattern (.tab/.tab-current): the current
+   location is plain text with an accent underline, never a link. */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  height: 52px;
+  box-sizing: border-box;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+}
+.app-header .app-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+a.brand {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+}
+a.brand:hover {
+  text-decoration: none;
+  opacity: 0.7;
+}
+.app-nav,
+.run-tabs {
+  display: flex;
+  gap: 4px;
+  align-self: stretch;
+}
+
+/* Underline tabs: inactive tabs are quiet links, the current one is a
+   non-interactive span carrying aria-current and the accent underline. */
+.tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+a.tab:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+span.tab-current {
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Level-2 context bar (inside a run only). */
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  height: 41px;
+  box-sizing: border-box;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+}
+.context-bar .crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.crumb-sep {
+  color: var(--text-placeholder);
+}
+.crumb-current {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.run-tabs {
+  margin-left: auto;
+}
+
+/* Scope heading for full-page screens without a context bar (all-runs chat);
+   its 41px footprint matches .context-bar so chat heights line up. */
+.page-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  height: 33px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.page-heading h1 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+
+main {
+  padding: 16px 20px 40px;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+/* --- Buttons --- */
+
+button {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: #282c31;
+  background: linear-gradient(180deg, #fcfcfc, #f5f6f8);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  height: 26px;
+  padding: 0 10px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+button:hover {
+  filter: brightness(0.97);
+}
+button.primary {
+  color: #ffffff;
+  background: linear-gradient(180deg, #7fa5d3, #749bcb);
+  border-color: rgba(0, 0, 0, 0.15);
+  height: 32px;
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+button.linkish {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--accent);
+  height: auto;
+  padding: 2px 0;
+}
+button.linkish:hover {
+  text-decoration: underline;
+  filter: none;
+}
+
+/* --- Inputs --- */
+
+input,
+select,
+textarea {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: none;
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 10px;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+textarea {
+  height: auto;
+  width: 100%;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-placeholder);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--focus-ring);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+input[type="checkbox"] {
+  height: auto;
+  box-shadow: none;
+  accent-color: var(--accent);
+}
+label.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* --- Tables --- */
+
+.table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.data-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #666;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 16px;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: top;
+}
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.data-table tbody tr {
+  transition: background 150ms;
+}
+.data-table tbody tr:hover {
+  background: #f6f6f6;
+}
+.data-table tr.clickable {
+  cursor: pointer;
+}
+.data-table tr.superseded td {
+  opacity: 0.5;
+}
+.data-table td.preview {
+  max-width: 26em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Badges and chips --- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 590;
+  white-space: nowrap;
+}
+.badge-success {
+  background: var(--green);
+  color: #ffffff;
+}
+.badge-danger {
+  background: var(--red);
+  color: #ffffff;
+}
+.badge-warning {
+  background: var(--orange);
+  color: #ffffff;
+}
+.badge-neutral {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.chip {
+  display: inline-block;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: 1px 2px 1px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+/* --- Stat cards (dashboard) --- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 24px;
+}
+.stat-card-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.stat-card-value {
+  font-size: 24px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  margin: 4px 0;
+}
+.stat-card-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* --- Detail screen --- */
+
+.detail-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.transcript {
+  flex: 1;
+  min-width: 0;
+}
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.detail-header h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.step-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.step-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  margin-bottom: 8px;
+}
+.turn-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #666;
+  margin: 10px 0 4px;
+}
+.ob-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  max-height: 20em;
+  overflow-y: auto;
+}
+.ob-body.full-context {
+  border-top: 1px solid var(--hairline);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+.tok-run {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.tok {
+  cursor: default;
+}
+.tok:hover {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 2px;
+}
+.step-map {
+  margin-top: 10px;
+}
+.step-map table.facts {
+  width: auto;
+  min-width: 40%;
+}
+.step-map td code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.step-json summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 8px;
+}
+.step-json pre {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.sidebar {
+  width: 300px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 16px;
+}
+.banner-superseded {
+  background: var(--red);
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+table.facts {
+  border-collapse: collapse;
+  width: 100%;
+}
+table.facts th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 3px 8px 3px 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+table.facts td {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 3px 0;
+  word-break: break-all;
+}
+.side-block {
+  margin-top: 12px;
+}
+.label-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.label-editor input {
+  height: 26px;
+  border-radius: 6px;
+}
+
+/* --- Dashboard actions --- */
+
+.dashboard-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* --- Settings popover (header gear) --- */
+
+.settings-wrap {
+  position: relative;
+}
+.settings-pop {
+  position: absolute;
+  right: 0;
+  top: 34px;
+  z-index: 40;
+  width: 300px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: var(--card-shadow);
+  padding: 14px;
+}
+.agent-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agent-settings label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.agent-settings label span {
+  width: 60px;
+  flex-shrink: 0;
+}
+.agent-settings input,
+.agent-settings select {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border-radius: 6px;
+}
+.agent-settings button.primary {
+  align-self: flex-start;
+}
+.agent-settings p {
+  margin: 4px 0 0;
+}
+
+/* --- Chat --- */
+
+/* Height: viewport minus the two nav bars (52 + 41), main's top padding (16)
+   and bottom breathing room (32). The all-runs chat has a .page-heading of
+   the same 41px footprint instead of a context bar, so one value fits both. */
+.chat-layout {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+  height: calc(100vh - 141px);
+}
+.chat-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.chat-sidebar-label {
+  margin: 10px 10px 0;
+}
+button.new-chat {
+  margin: 8px 8px 0;
+}
+.chat-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+/* Empty states occupy the same box as one list row, so an empty list and a
+   loading list render at the same height. */
+.chat-sidebar-empty {
+  padding: 7px 9px;
+  margin: 0;
+}
+.chat-convo {
+  padding: 7px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.chat-convo:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.chat-convo.active {
+  background: rgba(45, 114, 210, 0.1);
+}
+.chat-convo-title {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-convo-time {
+  font-size: 11px;
+}
+
+.chat-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.chat-thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+.chat-column {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.chat-empty {
+  padding: 24px 0;
+}
+.chat-thinking {
+  margin: 8px 0;
+}
+
+.msg-user {
+  background: rgba(45, 114, 210, 0.08);
+  border: 1px solid rgba(45, 114, 210, 0.12);
+  border-radius: 12px 12px 4px 12px;
+  padding: 8px 12px;
+  margin: 14px 0 14px auto;
+  max-width: 80%;
+  width: fit-content;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg-assistant {
+  margin: 14px 0;
+}
+
+/* Markdown-lite */
+.md p {
+  margin: 8px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.md .md-heading {
+  font-weight: 700;
+  margin-top: 14px;
+}
+.md ul,
+.md ol {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+.md li {
+  margin: 3px 0;
+}
+.md code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.md pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* Tool steps */
+.tool-step {
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  margin: 8px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.tool-step summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  list-style-position: inside;
+}
+.tool-step .tool-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.tool-step .tool-args-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tool-step-body {
+  border-top: 1px solid var(--hairline);
+  padding: 4px 10px 10px;
+}
+.tool-step-body pre {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tool-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+.tool-dot-error {
+  background: var(--red);
+}
+.spinner {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Inline visuals, the Visuals-tab gallery, and the full-screen overlay */
+.visual-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 12px;
+}
+.visual-grid .visual-frame {
+  margin: 0;
+  background: var(--surface);
+}
+.visual-frame-skeleton-body {
+  height: 320px;
+  background: rgba(0, 0, 0, 0.03);
+}
+.visual-frame {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+.visual-frame-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+}
+.visual-title {
+  font-weight: 600;
+}
+.visual-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.visual-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  white-space: nowrap;
+}
+.visual-frame iframe {
+  display: block;
+  width: 100%;
+  height: 320px;
+  border: none;
+  background: #ffffff;
+}
+.visual-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  padding: 28px;
+}
+.visual-overlay-inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.visual-overlay-inner iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #ffffff;
+}
+
+/* Composer */
+.chat-composer {
+  border-top: 1px solid var(--hairline);
+  padding: 12px 20px;
+}
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.composer-row textarea {
+  flex: 1;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  resize: none;
+}
+/* Always-present connection strip below the composer: fixed height in every
+   state so the composer never moves when the socket connects or drops. */
+.composer-status {
+  height: 18px;
+  line-height: 18px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+.setup-card {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.setup-card > p {
+  margin: 0 0 10px;
+}
+
+/* Sticky-bottom streaming: the thread autoscrolls only while the user is at
+   the bottom; this pill surfaces when new content lands while scrolled up. */
+.chat-thread-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-thread-wrap .chat-thread {
+  flex: 1;
+}
+.jump-latest {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+}
+.jump-latest:hover {
+  border-color: var(--accent);
+}
+.jump-latest-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* In-flight conversation badge (sidebar + dashboard). */
+.pulse-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+  vertical-align: 1px;
+  animation: pulse 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Dashboard: recent chats card. */
+.recent-chats {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+.recent-chats-label {
+  margin-bottom: 6px;
+}
+.recent-chat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  min-width: 0;
+}
+.recent-chat.clickable {
+  cursor: pointer;
+}
+.recent-chat.clickable:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.recent-chat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hairline);
+  flex-shrink: 0;
+}
+.recent-chat-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-chat-run {
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.recent-chat-time {
+  font-size: 11px;
+  white-space: nowrap;
+}

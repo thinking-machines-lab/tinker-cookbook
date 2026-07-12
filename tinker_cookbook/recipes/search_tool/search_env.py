@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -178,6 +178,14 @@ class SearchEnvGroupBuilder(EnvGroupBuilder):
 
     def logging_tags(self) -> list[str]:
         return [self.datum.get("data_source", "unknown")]
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        # Token DB capture dimensions. Per-call tool usage flows separately
+        # through AgentToolMessageEnv's structured tool_calls records.
+        return {
+            "data_source": self.datum.get("data_source", "unknown"),
+            "corpus": self.chroma_tool.collection_name,
+        }
 
 
 class SearchRLDataset(RLDataset):

@@ -176,6 +176,123 @@ class TestStepLogs:
         assert "tool_result_0" not in result.logs
 
 
+class TestRewardFnLogs:
+    """Reward functions may return (reward, metrics, logs); logs merge into
+    the step result's logs at episode end."""
+
+    def test_three_tuple_reward_fn_merges_logs(self):
+        async def grading_reward(
+            history: list[Message],
+        ) -> tuple[float, dict[str, float], dict[str, str | int | float]]:
+            return 0.5, {"tests_total": 3.0}, {"grading/verdict": "failed"}
+
+        env = AgentToolMessageEnv(
+            tools=[],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=grading_reward,
+        )
+        asyncio.run(env.initial_observation())
+        result = asyncio.run(env.step({"role": "assistant", "content": "done"}))
+
+        assert result.episode_done
+        assert result.reward == 0.5
+        assert result.metrics["tests_total"] == 3.0
+        assert result.logs["grading/verdict"] == "failed"
+        assert result.logs["assistant_content"] == "done"
+
+    def test_two_tuple_reward_fn_unchanged(self):
+        env = AgentToolMessageEnv(
+            tools=[],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+        result = asyncio.run(env.step({"role": "assistant", "content": "done"}))
+
+        assert result.reward == 1.0
+        assert result.logs == {"assistant_content": "done"}
+
+
+class TestStructuredToolCalls:
+    """AgentToolMessageEnv.step() should emit structured tool_calls records."""
+
+    def _make_env(self, tools) -> AgentToolMessageEnv:
+        env = AgentToolMessageEnv(
+            tools=tools,
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+        return env
+
+    def test_success_records_name_args_and_no_error(self):
+        env = self._make_env([StubTool("search", "result")])
+        tc = _make_tool_call("search", '{"query": "weather"}')
+        result = asyncio.run(
+            env.step({"role": "assistant", "content": "Searching.", "tool_calls": [tc]})
+        )
+
+        assert result.tool_calls == [
+            {
+                "name": "search",
+                "args_json": '{"query": "weather"}',
+                "error_type": None,
+                "should_stop": False,
+            }
+        ]
+        # Deprecated positional log strings are kept for compatibility.
+        assert result.logs["tool_call_0"] == 'search({"query": "weather"})'
+
+    def test_records_align_with_multiple_calls(self):
+        env = self._make_env([StubTool("search", "a"), StubTool("calc", "b", should_stop=True)])
+        tc1 = _make_tool_call("search", '{"q": "x"}', call_id="c1")
+        tc2 = _make_tool_call("calc", '{"expr": "1+1"}', call_id="c2")
+        result = asyncio.run(
+            env.step({"role": "assistant", "content": "Both.", "tool_calls": [tc1, tc2]})
+        )
+
+        assert result.tool_calls is not None
+        assert [r["name"] for r in result.tool_calls] == ["search", "calc"]
+        assert [r["should_stop"] for r in result.tool_calls] == [False, True]
+
+    def test_error_type_on_unknown_tool(self):
+        env = self._make_env([])
+        tc = _make_tool_call("missing_tool", "{}")
+        result = asyncio.run(
+            env.step({"role": "assistant", "content": "Trying.", "tool_calls": [tc]})
+        )
+
+        assert result.tool_calls is not None
+        assert result.tool_calls[0]["name"] == "missing_tool"
+        assert result.tool_calls[0]["error_type"] == "tool_not_found"
+
+    def test_error_type_on_tool_execution_failure(self):
+        from tinker_cookbook.tool_use.tools import tool
+
+        @tool
+        async def boom() -> ToolResult:
+            """Always fails."""
+            raise RuntimeError("kaput")
+
+        env = self._make_env([boom])
+        tc = _make_tool_call("boom", "{}")
+        result = asyncio.run(
+            env.step({"role": "assistant", "content": "Boom.", "tool_calls": [tc]})
+        )
+
+        assert result.tool_calls is not None
+        assert result.tool_calls[0]["error_type"] == "execution_failed"
+
+    def test_none_when_no_tool_calls(self):
+        env = self._make_env([])
+        result = asyncio.run(env.step({"role": "assistant", "content": "Just text."}))
+
+        assert result.tool_calls is None
+
+
 # ---------------------------------------------------------------------------
 # simple_tool_result with images
 # ---------------------------------------------------------------------------

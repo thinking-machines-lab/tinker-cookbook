@@ -1,7 +1,7 @@
 """General two-player TextArena environment and dataset builders for tinker RL."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -163,6 +163,7 @@ class TwoPlayerEnv(Env):
             next_observation=self.get_observation(),
             next_stop_condition=self.stop_condition,
             metrics={},
+            attrs={"player_id": str(self.player_id)},
         )
 
     def get_done_step(self) -> StepResult:
@@ -172,6 +173,7 @@ class TwoPlayerEnv(Env):
             next_observation=types.ModelInput.empty(),
             next_stop_condition=STOP_CONDITION,
             metrics={},
+            attrs={"player_id": str(self.player_id)},
         )
 
     def compute_reward(self) -> float:
@@ -201,6 +203,9 @@ class TwoPlayerEnvGroupBuilder(EnvGroupBuilder):
     self_play: bool
     num_players: ClassVar[int] = 2
     opponent_policy: MessageCompleter | None = None
+    opponent_name: str | None = None
+    """Human-readable name of the fixed opponent policy (e.g. the
+    ``OpponentType``); used for token DB capture dimensions only."""
 
     async def make_envs(self) -> Sequence[Env]:
         """Create a group of environments sharing the same TextArena game."""
@@ -234,6 +239,13 @@ class TwoPlayerEnvGroupBuilder(EnvGroupBuilder):
                 for i in range(2)
             ]
         return envs
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        if self.self_play:
+            opponent = "self_play"
+        else:
+            opponent = self.opponent_name or "fixed_policy"
+        return {"game": self.game_name, "opponent": opponent}
 
 
 class TwoPlayerTextArenaDataset(RLDataset):
@@ -298,6 +310,7 @@ class TwoPlayerTextArenaDatasetBuilder(RLDatasetBuilder):
             num_envs=2,
             self_play=False,
             opponent_policy=self._construct_opponent_policy(renderer),
+            opponent_name=str(self.test_opponent),
         )
         test_dataset = TwoPlayerTextArenaDataset(
             batch_size=self.num_test_datapoints,

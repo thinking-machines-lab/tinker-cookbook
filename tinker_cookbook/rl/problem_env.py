@@ -1,7 +1,7 @@
 import logging
 from abc import abstractmethod
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 
 import tinker
 
@@ -165,6 +165,11 @@ class ProblemGroupBuilder(EnvGroupBuilder):
     env_thunk: Callable[[], ProblemEnv]
     num_envs: int
     dataset_name: str = "problems"
+    group_metadata: Mapping[str, str | int | float] = field(default_factory=dict)
+    """Passthrough for :meth:`EnvGroupBuilder.metadata`: group-scoped dimensions
+    (dataset name, difficulty, the reserved ``row_id``) captured with every row
+    of the group when token DB capture is enabled. Capture-only; does not
+    affect training."""
 
     async def make_envs(self) -> Sequence[Env]:
         """Create ``num_envs`` ProblemEnv instances using the factory callable."""
@@ -178,3 +183,6 @@ class ProblemGroupBuilder(EnvGroupBuilder):
 
     def logging_tags(self) -> list[str]:
         return [self.dataset_name]
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        return dict(self.group_metadata)

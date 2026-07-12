@@ -27,9 +27,11 @@ Example usage:
 """
 
 import asyncio
+import contextlib
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 import chz
 
@@ -84,6 +86,25 @@ class CLIConfig:
     max_steps: int | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
+
+    # Optional token DB capture of the student's on-policy samples (prompt,
+    # sampled tokens, logprobs) for inspection with tinker_cookbook.tokendb.
+    # Requires the tokendb extra: pip install 'tinker-cookbook[tokendb]'
+    token_db_path: str | None = None
+
+
+def _token_db_attrs(cli_config: CLIConfig) -> dict[str, str]:
+    """Attrs stamped onto every captured sample row (token_db_path set).
+
+    SDFT is self-distillation: the teacher is the same base model as the
+    student (conditioned on golden demonstrations), so both attrs record
+    ``model_name``.
+    """
+    return {
+        "student_model": cli_config.model_name,
+        "teacher_model": cli_config.model_name,
+        "dataset": cli_config.dataset,
+    }
 
 
 async def cli_main(cli_config: CLIConfig) -> None:
@@ -163,7 +184,39 @@ async def cli_main(cli_config: CLIConfig) -> None:
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
-    await sdft.main(config, train_dataset, test_dataset)
+    # Run training, optionally capturing the student's samples to a token DB.
+    # (Only the student's on-policy generations go through the completers;
+    # the teacher's forced-decode logprob probes are not captured.)
+    with contextlib.ExitStack() as stack:
+        if cli_config.token_db_path is not None:
+            from tinker_cookbook.tokendb import (
+                ActiveCapture,
+                TokenDbWriter,
+                capture_samples,
+                check_token_db_dependencies,
+            )
+            from tinker_cookbook.tokendb.capture import SupportsDecode
+            from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+            check_token_db_dependencies()
+            writer = stack.enter_context(
+                TokenDbWriter(
+                    cli_config.token_db_path,
+                    context={
+                        "recipe_name": "sdft/train",
+                        "model_name": cli_config.model_name,
+                    },
+                )
+            )
+            # The HF tokenizer's decode(list[int]) returns str at runtime.
+            tokenizer = cast(SupportsDecode, get_tokenizer(cli_config.model_name))
+            stack.enter_context(
+                capture_samples(
+                    ActiveCapture(writer, tokenizer=tokenizer),
+                    attrs=_token_db_attrs(cli_config),
+                )
+            )
+        await sdft.main(config, train_dataset, test_dataset)
 
 
 if __name__ == "__main__":

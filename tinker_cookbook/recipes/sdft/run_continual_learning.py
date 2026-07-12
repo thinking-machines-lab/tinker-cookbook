@@ -23,10 +23,11 @@ Usage:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import chz
 
@@ -80,6 +81,11 @@ class ExperimentConfig:
 
     # Control
     dry_run: bool = False
+
+    # Optional token DB capture of each SDFT stage's on-policy samples into
+    # {stage log_path}/tokens (SFT stages do no sampling and are not
+    # captured). Requires the tokendb extra: pip install 'tinker-cookbook[tokendb]'
+    token_db: bool = False
 
     def get_methods(self) -> list[Method]:
         return [m.strip() for m in self.methods.split(",")]  # type: ignore[return-value]
@@ -172,6 +178,7 @@ async def run_sdft_stage(
     topk: int,
     wandb_name: str | None = None,
     load_checkpoint_path: str | None = None,
+    token_db_attrs: dict[str, str] | None = None,
 ) -> str | None:
     """Run SDFT training on a task and return the checkpoint path."""
     expanded_data_dir = str(Path(config.data_dir).expanduser())
@@ -218,7 +225,43 @@ async def run_sdft_stage(
         load_checkpoint_path=load_checkpoint_path,
     )
 
-    await sdft.main(sdft_config, train_dataset, test_dataset=None)
+    # Run the stage, optionally capturing the student's on-policy samples
+    # into {log_path}/tokens with the stage identity as attrs.
+    with contextlib.ExitStack() as stack:
+        if config.token_db:
+            from tinker_cookbook.tokendb import (
+                ActiveCapture,
+                TokenDbWriter,
+                capture_samples,
+                check_token_db_dependencies,
+            )
+            from tinker_cookbook.tokendb.capture import SupportsDecode
+
+            check_token_db_dependencies()
+            writer = stack.enter_context(
+                TokenDbWriter(
+                    log_path,
+                    context={
+                        "recipe_name": "sdft/run_continual_learning",
+                        "model_name": config.model_name,
+                    },
+                )
+            )
+            attrs = {
+                # Self-distillation: teacher and student are the same model.
+                "student_model": config.model_name,
+                "teacher_model": config.model_name,
+                "dataset": f"sdft_{task}",
+                **(token_db_attrs or {}),
+            }
+            # The HF tokenizer's decode(list[int]) returns str at runtime.
+            stack.enter_context(
+                capture_samples(
+                    ActiveCapture(writer, tokenizer=cast(SupportsDecode, tokenizer)),
+                    attrs=attrs,
+                )
+            )
+        await sdft.main(sdft_config, train_dataset, test_dataset=None)
 
     ckpt = checkpoint_utils.get_last_checkpoint(log_path)
     if ckpt and ckpt.state_path:
@@ -287,6 +330,7 @@ async def run_single(
             topk=0,
             wandb_name=run_id,
             load_checkpoint_path=load_checkpoint_path,
+            token_db_attrs={"method": method, "stage": str(stage), "run": run_id},
         )
     elif method in ("sdft_topk", "sdft_hybrid"):
         checkpoint_path = await run_sdft_stage(
@@ -298,6 +342,7 @@ async def run_single(
             topk=config.topk,
             wandb_name=run_id,
             load_checkpoint_path=load_checkpoint_path,
+            token_db_attrs={"method": method, "stage": str(stage), "run": run_id},
         )
     else:
         raise ValueError(f"Unknown method: {method}")
