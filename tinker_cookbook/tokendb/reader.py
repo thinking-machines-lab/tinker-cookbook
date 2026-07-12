@@ -55,12 +55,39 @@ LABELS_PATH = f"{TOKENS_DIR}/labels.jsonl"
 DEFAULT_SUBSCRIBE_POLL_INTERVAL_S = 2.0
 
 _LABEL_KEY_FIELDS = ("run_id", "split", "iteration", "group_idx", "traj_idx", "step_idx")
+LABEL_FILTER_FIELDS = frozenset(_LABEL_KEY_FIELDS) | {"label_key", "author"}
 
 _LABEL_COLUMNS_SQL = (
     "{run_id: 'VARCHAR', split: 'VARCHAR', iteration: 'INTEGER', group_idx: 'INTEGER', "
     "traj_idx: 'INTEGER', step_idx: 'INTEGER', label_key: 'VARCHAR', label_value: 'JSON', "
     "author: 'VARCHAR', ts: 'TIMESTAMP', note: 'VARCHAR'}"
 )
+
+# Casts a raw (all-strings-and-ints) label relation to the typed label columns.
+LABELS_CAST_SELECT = (
+    "(SELECT run_id, split, iteration::INTEGER AS iteration,"
+    " group_idx::INTEGER AS group_idx, traj_idx::INTEGER AS traj_idx,"
+    " step_idx::INTEGER AS step_idx, label_key, label_value::JSON AS label_value,"
+    " author, ts::TIMESTAMP AS ts, note FROM {src})"
+)
+
+# Last write (by ts) wins per (identity, label_key); tombstones (null
+# label_value) win first, then drop out of the view.
+LABELS_DEDUP_VIEW_SQL = """
+    CREATE OR REPLACE VIEW labels AS
+    SELECT * EXCLUDE (_rank) FROM (
+        SELECT *,
+               row_number() OVER (
+                   PARTITION BY run_id, split, iteration, group_idx, traj_idx,
+                                step_idx, label_key
+                   ORDER BY ts DESC
+               ) AS _rank
+        FROM {source}
+    )
+    WHERE _rank = 1
+      AND label_value IS NOT NULL
+      AND CAST(label_value AS VARCHAR) <> 'null'
+"""
 
 # Trajectory-grain aggregation over the row-grain `rollouts` view (the
 # `trajectories()` backend method). Matches the `trajectories` view but keeps
@@ -308,6 +335,387 @@ def _contains_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> boo
     return False
 
 
+# --- Shared query building (used by the single-run reader and the cross-run
+# --- registry backend; see registry_backend.py) ---
+
+
+def build_where(
+    *,
+    run_id: str | None = None,
+    run_attempt: int | None = None,
+    split: str | None = None,
+    iteration: int | None = None,
+    min_iteration: int | None = None,
+    max_iteration: int | None = None,
+    group_idx: int | None = None,
+    traj_idx: int | None = None,
+    min_reward: float | None = None,
+    max_reward: float | None = None,
+    stop_reason: str | None = None,
+    source: str | None = None,
+    filtered_reason: str | None = None,
+    tag: str | None = None,
+    env_row_id: str | None = None,
+    text_regex: str | None = None,
+    attr_eq: Mapping[str, str] | None = None,
+    metric_min: Mapping[str, float] | None = None,
+    metric_max: Mapping[str, float] | None = None,
+) -> tuple[str, list[Any]]:
+    """Build a parameterized ``WHERE`` clause from the structured row filters."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    for column, value in [
+        ("run_id", run_id),
+        ("run_attempt", run_attempt),
+        ("split", split),
+        ("iteration", iteration),
+        ("group_idx", group_idx),
+        ("traj_idx", traj_idx),
+        ("stop_reason", stop_reason),
+        ("source", source),
+        ("filtered_reason", filtered_reason),
+        ("env_row_id", env_row_id),
+    ]:
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    if min_iteration is not None:
+        clauses.append("iteration >= ?")
+        params.append(min_iteration)
+    if max_iteration is not None:
+        clauses.append("iteration <= ?")
+        params.append(max_iteration)
+    if min_reward is not None:
+        clauses.append("total_reward >= ?")
+        params.append(min_reward)
+    if max_reward is not None:
+        clauses.append("total_reward <= ?")
+        params.append(max_reward)
+    if tag is not None:
+        clauses.append("list_contains(tags, ?)")
+        params.append(tag)
+    if text_regex is not None:
+        clauses.append(
+            "(regexp_matches(coalesce(ob_text, ''), ?) OR regexp_matches(coalesce(ac_text, ''), ?))"
+        )
+        params.extend([text_regex, text_regex])
+    # Structured map filters. Keys bind as parameters (map access on a
+    # missing key yields NULL, so these clauses also drop rows lacking
+    # the key). TRY_CAST guards the numeric comparison; note DuckDB
+    # orders NaN above every number, so a NaN metric passes metric_min.
+    for key, value in (attr_eq or {}).items():
+        clauses.append("attrs[?] = ?")
+        params.extend([str(key), str(value)])
+    for key, value in (metric_min or {}).items():
+        clauses.append("TRY_CAST(metrics[?] AS DOUBLE) >= ?")
+        params.extend([str(key), float(value)])
+    for key, value in (metric_max or {}).items():
+        clauses.append("TRY_CAST(metrics[?] AS DOUBLE) <= ?")
+        params.extend([str(key), float(value)])
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where, params
+
+
+def run_search(
+    fetch: Any,
+    *,
+    regex: str | None = None,
+    fields: Sequence[str] = ("ac_text", "ob_text"),
+    token_subsequence: Sequence[int] | None = None,
+    limit: int | None = None,
+    **filters: Any,
+) -> list[dict[str, Any]]:
+    """Shared :meth:`~ParquetSegmentReader.search` implementation.
+
+    *fetch* is a ``(sql, params) -> list[dict]`` callable bound to a
+    connection whose ``rollouts`` view is current (the caller refreshes).
+    """
+    string_fields = {"ac_text", "ob_text", "logs"}
+    map_fields = {"metrics", "attrs", "token_metrics"}
+    bad = set(fields) - string_fields - map_fields
+    if bad:
+        raise ValueError(f"Unsupported search fields: {sorted(bad)}")
+    where, params = build_where(**filters)
+    clauses = [where[len("WHERE ") :]] if where else []
+    if regex is not None:
+        field_matches = []
+        for f in fields:
+            if f in map_fields:
+                # regexp_matches on a MAP is a BinderException; match keys.
+                field_matches.append(
+                    "EXISTS (SELECT 1 FROM unnest(map_keys("
+                    f"{f})) AS _k(key) WHERE regexp_matches(_k.key, ?))"
+                )
+            else:
+                field_matches.append(f"regexp_matches(coalesce({f}, ''), ?)")
+        clauses.append(f"({' OR '.join(field_matches)})")
+        params.extend([regex] * len(fields))
+    if token_subsequence:
+        # Cheap SQL prefilter on the first token; the exact contiguous
+        # match runs in Python below (portable across backends).
+        clauses.append("list_contains(ac_tokens, ?)")
+        params.append(int(token_subsequence[0]))
+    sql = "SELECT * FROM rollouts"
+    if clauses:
+        sql += f" WHERE {' AND '.join(clauses)}"
+    sql += " ORDER BY iteration, ts, group_idx, traj_idx, step_idx"
+    rows = fetch(sql, params)
+    if token_subsequence:
+        needle = [int(t) for t in token_subsequence]
+        rows = [row for row in rows if _contains_subsequence(row["ac_tokens"], needle)]
+    if limit is not None:
+        rows = rows[: int(limit)]
+    return rows
+
+
+def get_rollout_query(
+    split: str,
+    iteration: int,
+    group_idx: int,
+    traj_idx: int,
+    run_attempt: int | None,
+    run_id: str | None,
+) -> tuple[str, list[Any]]:
+    """The (sql, params) fetching one trajectory's step rows from ``rollouts``.
+
+    ``run_attempt=None`` selects the latest attempt that produced rows for
+    this trajectory (within ``run_id``, when given).
+    """
+    ident = "split = ? AND iteration = ? AND group_idx = ? AND traj_idx = ?"
+    ident_params: list[Any] = [split, iteration, group_idx, traj_idx]
+    if run_id is not None:
+        ident += " AND run_id = ?"
+        ident_params.append(run_id)
+    sql = f"SELECT * FROM rollouts WHERE {ident}"
+    params = list(ident_params)
+    if run_attempt is None:
+        sql += f" AND run_attempt = (SELECT max(run_attempt) FROM rollouts WHERE {ident})"
+        params += ident_params
+    else:
+        sql += " AND run_attempt = ?"
+        params.append(run_attempt)
+    sql += " ORDER BY step_idx"
+    return sql, params
+
+
+def run_attempt_payloads(storage: Storage) -> list[dict[str, Any]]:
+    """All run-attempt payloads for one store, one per (run_id, run_attempt).
+
+    Reads ``run-attempts.jsonl`` (one line appended per attempt), falling
+    back to ``run.json`` (latest attempt only) for stores written before
+    the append-per-attempt record existed. Deduped by
+    ``(run_id, run_attempt)``, last line wins.
+    """
+    payloads: dict[tuple[Any, Any], dict[str, Any]] = {}
+    if storage.exists(RUN_ATTEMPTS_PATH):
+        for line in storage.read(RUN_ATTEMPTS_PATH).decode().splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                payloads[(payload.get("run_id"), payload.get("run_attempt"))] = payload
+    if not payloads and storage.exists(RUN_JSON_PATH):
+        try:
+            payload = json.loads(storage.read(RUN_JSON_PATH).decode())
+            if isinstance(payload, dict):
+                payloads[(payload.get("run_id"), payload.get("run_attempt"))] = payload
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+    return [payloads[key] for key in sorted(payloads, key=lambda k: (str(k[0]), str(k[1])))]
+
+
+def runs_arrow_schema() -> Any:
+    """Arrow schema of the ``runs`` view (typed config columns + config_json)."""
+    import pyarrow as pa
+
+    return pa.schema(
+        [
+            pa.field("run_id", pa.string()),
+            pa.field("run_attempt", pa.int32()),
+            pa.field("model_name", pa.string()),
+            pa.field("recipe_name", pa.string()),
+            pa.field("started_at", pa.string()),
+            pa.field("temperature", pa.float64()),
+            pa.field("max_tokens", pa.int64()),
+            pa.field("renderer_name", pa.string()),
+            pa.field("lora_rank", pa.int64()),
+            pa.field("seed", pa.int64()),
+            pa.field("group_size", pa.int64()),
+            pa.field("loss_fn", pa.string()),
+            pa.field("learning_rate", pa.float64()),
+            pa.field("config_json", pa.string()),
+        ]
+    )
+
+
+def load_schema_card(storage: Storage) -> dict[str, Any]:
+    """Aggregate one store's observed-keys manifest lines into a card.
+
+    Unions ``metrics_keys`` / ``attrs_keys`` / ``token_metrics_keys`` /
+    ``tags`` across every manifest line of every writer (cheap: manifest
+    lines only, no segment bytes). ``keys_truncated`` is true if any
+    contributing line hit the writer's per-line key cap, i.e. the lists
+    may be incomplete. Lines from writers that predate observed-keys
+    manifests contribute nothing.
+    """
+    union: dict[str, set[str]] = {
+        "metrics_keys": set(),
+        "attrs_keys": set(),
+        "token_metrics_keys": set(),
+        "tags": set(),
+    }
+    truncated = False
+    try:
+        names = [
+            name
+            for name in storage.list_dir(TOKENS_DIR)
+            if name.startswith("manifest-") and name.endswith(".jsonl")
+        ]
+    except FileNotFoundError:
+        names = []
+    for name in names:
+        try:
+            lines = storage.read(f"{TOKENS_DIR}/{name}").decode().splitlines()
+        except FileNotFoundError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            for field in union:
+                values = entry.get(field)
+                if isinstance(values, list):
+                    union[field].update(str(v) for v in values)
+            truncated = truncated or bool(entry.get("keys_truncated"))
+    return {
+        **{field: sorted(values) for field, values in union.items()},
+        "keys_truncated": truncated,
+    }
+
+
+def append_label(
+    storage: Storage,
+    key: Mapping[str, Any],
+    label_key: str,
+    label_value: Any,
+    *,
+    author: str,
+    note: str | None = None,
+) -> None:
+    """Append one annotation record to a store's ``labels.jsonl``.
+
+    See :meth:`ParquetSegmentReader.add_label` for the key/tombstone
+    semantics; this is the shared write path.
+    """
+    bad_keys = set(key) - set(_LABEL_KEY_FIELDS)
+    if bad_keys:
+        raise ValueError(f"Unsupported label key fields: {sorted(bad_keys)}")
+    record: dict[str, Any] = {field: key.get(field) for field in _LABEL_KEY_FIELDS}
+    record.update(
+        {
+            "label_key": label_key,
+            "label_value": label_value,
+            "author": author,
+            "ts": datetime.now(UTC).isoformat(),
+            "note": note,
+        }
+    )
+    storage.append(LABELS_PATH, (json.dumps(record, default=str) + "\n").encode())
+    # FsspecStorage stages append()s locally and only uploads on flush();
+    # nothing else ever flushes this storage, so without this a label
+    # written against a gs:///s3:// store would silently never reach the
+    # store. LocalStorage.flush() is a no-op, and FsspecStorage re-uploads
+    # only files with staged appends (here: labels.jsonl, which stays small).
+    storage.flush()
+
+
+def labels_arrow_table(records: Sequence[Mapping[str, Any]]) -> Any:
+    """Label records as an arrow table (``label_value`` JSON-encoded).
+
+    An explicit schema keeps the shape stable for empty record lists.
+    """
+    import pyarrow as pa
+
+    schema = pa.schema(
+        [
+            pa.field("run_id", pa.string()),
+            pa.field("split", pa.string()),
+            pa.field("iteration", pa.int64()),
+            pa.field("group_idx", pa.int64()),
+            pa.field("traj_idx", pa.int64()),
+            pa.field("step_idx", pa.int64()),
+            pa.field("label_key", pa.string()),
+            pa.field("label_value", pa.string()),
+            pa.field("author", pa.string()),
+            pa.field("ts", pa.string()),
+            pa.field("note", pa.string()),
+        ]
+    )
+    return pa.Table.from_pylist(
+        [
+            {
+                **{field: rec.get(field) for field in _LABEL_KEY_FIELDS},
+                "label_key": rec.get("label_key"),
+                "label_value": json.dumps(rec.get("label_value")),
+                "author": rec.get("author"),
+                "ts": rec.get("ts"),
+                "note": rec.get("note"),
+            }
+            for rec in records
+        ],
+        schema=schema,
+    )
+
+
+def create_derived_views(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create the views derived from ``rollouts`` (shared across backends).
+
+    The caller creates ``rollouts`` (whose ``superseded`` window differs
+    between the single-run reader and the cross-run registry backend);
+    everything defined on top of it is identical.
+    """
+    # Dedup convenience: only the latest attempt per superseded partition.
+    conn.execute("CREATE VIEW rollouts_latest AS SELECT * FROM rollouts WHERE NOT superseded")
+    # Promoted views: thin CREATE VIEW sugar over `rollouts` for the
+    # hottest metrics keys, so common questions need no map syntax.
+    # Retroactive and reversible (zero write cost); the key choices match
+    # what the cookbook envs actually emit:
+    # - `correct`: ProblemEnv/code_rl/search_tool/eval benchmarks emit
+    #   metrics['correct']; group-level correctness lands as
+    #   metrics['group/correct'] (which wins when both are present).
+    conn.execute(
+        """
+        CREATE VIEW correct AS
+        SELECT *, coalesce(metrics['group/correct'], metrics['correct']) AS correct
+        FROM rollouts
+        WHERE metrics['correct'] IS NOT NULL OR metrics['group/correct'] IS NOT NULL
+        """
+    )
+    # - `parse_errors`: message-env turns whose response failed renderer
+    #   parsing (metrics['parse_error'] = 1.0 in rl/message_env.py).
+    conn.execute(
+        """
+        CREATE VIEW parse_errors AS
+        SELECT * FROM rollouts WHERE metrics['parse_error'] >= 1.0
+        """
+    )
+    # - `context_overflows`: turns that hit max_tokens — stop_reason
+    #   'length', or the message-env's metrics['max_tokens_reached'].
+    conn.execute(
+        """
+        CREATE VIEW context_overflows AS
+        SELECT * FROM rollouts
+        WHERE stop_reason = 'length' OR metrics['max_tokens_reached'] >= 1.0
+        """
+    )
+
+
 class ParquetSegmentReader:
     """DuckDB reader over a parquet segment token store.
 
@@ -355,8 +763,6 @@ class ParquetSegmentReader:
             FROM segment_rows
             """
         )
-        # Dedup convenience: only the latest attempt per (split, iteration).
-        conn.execute("CREATE VIEW rollouts_latest AS SELECT * FROM rollouts WHERE NOT superseded")
         # Trajectory grain.
         conn.execute(
             """
@@ -374,66 +780,7 @@ class ParquetSegmentReader:
             GROUP BY run_id, run_attempt, split, iteration, group_idx, traj_idx
             """
         )
-        # Promoted views: thin CREATE VIEW sugar over `rollouts` for the
-        # hottest metrics keys, so common questions need no map syntax.
-        # Retroactive and reversible (zero write cost); the key choices match
-        # what the cookbook envs actually emit:
-        # - `correct`: ProblemEnv/code_rl/search_tool/eval benchmarks emit
-        #   metrics['correct']; group-level correctness lands as
-        #   metrics['group/correct'] (which wins when both are present).
-        conn.execute(
-            """
-            CREATE VIEW correct AS
-            SELECT *, coalesce(metrics['group/correct'], metrics['correct']) AS correct
-            FROM rollouts
-            WHERE metrics['correct'] IS NOT NULL OR metrics['group/correct'] IS NOT NULL
-            """
-        )
-        # - `parse_errors`: message-env turns whose response failed renderer
-        #   parsing (metrics['parse_error'] = 1.0 in rl/message_env.py).
-        conn.execute(
-            """
-            CREATE VIEW parse_errors AS
-            SELECT * FROM rollouts WHERE metrics['parse_error'] >= 1.0
-            """
-        )
-        # - `context_overflows`: turns that hit max_tokens — stop_reason
-        #   'length', or the message-env's metrics['max_tokens_reached'].
-        conn.execute(
-            """
-            CREATE VIEW context_overflows AS
-            SELECT * FROM rollouts
-            WHERE stop_reason = 'length' OR metrics['max_tokens_reached'] >= 1.0
-            """
-        )
-
-    def _run_attempt_payloads(self) -> list[dict[str, Any]]:
-        """All run-attempt payloads for this store, one per (run_id, run_attempt).
-
-        Reads ``run-attempts.jsonl`` (one line appended per attempt), falling
-        back to ``run.json`` (latest attempt only) for stores written before
-        the append-per-attempt record existed. Deduped by
-        ``(run_id, run_attempt)``, last line wins.
-        """
-        payloads: dict[tuple[Any, Any], dict[str, Any]] = {}
-        if self._storage.exists(RUN_ATTEMPTS_PATH):
-            for line in self._storage.read(RUN_ATTEMPTS_PATH).decode().splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(payload, dict):
-                    payloads[(payload.get("run_id"), payload.get("run_attempt"))] = payload
-        if not payloads and self._storage.exists(RUN_JSON_PATH):
-            try:
-                payload = json.loads(self._storage.read(RUN_JSON_PATH).decode())
-                if isinstance(payload, dict):
-                    payloads[(payload.get("run_id"), payload.get("run_attempt"))] = payload
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-        return [payloads[key] for key in sorted(payloads, key=lambda k: (str(k[0]), str(k[1])))]
+        create_derived_views(conn)
 
     def _refresh_runs_source(self, conn: duckdb.DuckDBPyConnection) -> None:
         """(Re)create the ``runs`` view: one row per (run_id, run_attempt).
@@ -446,26 +793,8 @@ class ParquetSegmentReader:
         """
         import pyarrow as pa
 
-        rows = [_run_row_from_payload(payload) for payload in self._run_attempt_payloads()]
-        schema = pa.schema(
-            [
-                pa.field("run_id", pa.string()),
-                pa.field("run_attempt", pa.int32()),
-                pa.field("model_name", pa.string()),
-                pa.field("recipe_name", pa.string()),
-                pa.field("started_at", pa.string()),
-                pa.field("temperature", pa.float64()),
-                pa.field("max_tokens", pa.int64()),
-                pa.field("renderer_name", pa.string()),
-                pa.field("lora_rank", pa.int64()),
-                pa.field("seed", pa.int64()),
-                pa.field("group_size", pa.int64()),
-                pa.field("loss_fn", pa.string()),
-                pa.field("learning_rate", pa.float64()),
-                pa.field("config_json", pa.string()),
-            ]
-        )
-        table = pa.Table.from_pylist(rows, schema=schema)
+        rows = [_run_row_from_payload(payload) for payload in run_attempt_payloads(self._storage)]
+        table = pa.Table.from_pylist(rows, schema=runs_arrow_schema())
         conn.execute("DROP VIEW IF EXISTS runs")
         conn.register("_runs_raw", table)
         conn.execute("CREATE VIEW runs AS SELECT * FROM _runs_raw")
@@ -479,49 +808,12 @@ class ParquetSegmentReader:
     def schema_card(self) -> dict[str, Any]:
         """Aggregate the observed-keys manifest lines into a per-run card.
 
-        Unions ``metrics_keys`` / ``attrs_keys`` / ``token_metrics_keys`` /
-        ``tags`` across every manifest line of every writer (cheap: manifest
-        lines only, no segment bytes). ``keys_truncated`` is true if any
-        contributing line hit the writer's per-line key cap, i.e. the lists
-        may be incomplete. Lines from writers that predate observed-keys
-        manifests contribute nothing.
+        See :func:`load_schema_card` (the shared implementation): unions
+        ``metrics_keys`` / ``attrs_keys`` / ``token_metrics_keys`` / ``tags``
+        across every manifest line of every writer, with ``keys_truncated``
+        set when any contributing line hit the writer's per-line key cap.
         """
-        union: dict[str, set[str]] = {
-            "metrics_keys": set(),
-            "attrs_keys": set(),
-            "token_metrics_keys": set(),
-            "tags": set(),
-        }
-        truncated = False
-        try:
-            names = [
-                name
-                for name in self._storage.list_dir(TOKENS_DIR)
-                if name.startswith("manifest-") and name.endswith(".jsonl")
-            ]
-        except FileNotFoundError:
-            names = []
-        for name in names:
-            try:
-                lines = self._storage.read(f"{TOKENS_DIR}/{name}").decode().splitlines()
-            except FileNotFoundError:
-                continue
-            for line in lines:
-                if not line.strip():
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                for field in union:
-                    values = entry.get(field)
-                    if isinstance(values, list):
-                        union[field].update(str(v) for v in values)
-                truncated = truncated or bool(entry.get("keys_truncated"))
-        return {
-            **{field: sorted(values) for field, values in union.items()},
-            "keys_truncated": truncated,
-        }
+        return load_schema_card(self._storage)
 
     def _list_segment_files(self) -> list[str]:
         return sorted(
@@ -555,83 +847,6 @@ class ParquetSegmentReader:
 
     # --- Structured query ---
 
-    def _build_where(
-        self,
-        *,
-        run_id: str | None = None,
-        run_attempt: int | None = None,
-        split: str | None = None,
-        iteration: int | None = None,
-        min_iteration: int | None = None,
-        max_iteration: int | None = None,
-        group_idx: int | None = None,
-        traj_idx: int | None = None,
-        min_reward: float | None = None,
-        max_reward: float | None = None,
-        stop_reason: str | None = None,
-        source: str | None = None,
-        filtered_reason: str | None = None,
-        tag: str | None = None,
-        env_row_id: str | None = None,
-        text_regex: str | None = None,
-        attr_eq: Mapping[str, str] | None = None,
-        metric_min: Mapping[str, float] | None = None,
-        metric_max: Mapping[str, float] | None = None,
-    ) -> tuple[str, list[Any]]:
-        clauses: list[str] = []
-        params: list[Any] = []
-        for column, value in [
-            ("run_id", run_id),
-            ("run_attempt", run_attempt),
-            ("split", split),
-            ("iteration", iteration),
-            ("group_idx", group_idx),
-            ("traj_idx", traj_idx),
-            ("stop_reason", stop_reason),
-            ("source", source),
-            ("filtered_reason", filtered_reason),
-            ("env_row_id", env_row_id),
-        ]:
-            if value is not None:
-                clauses.append(f"{column} = ?")
-                params.append(value)
-        if min_iteration is not None:
-            clauses.append("iteration >= ?")
-            params.append(min_iteration)
-        if max_iteration is not None:
-            clauses.append("iteration <= ?")
-            params.append(max_iteration)
-        if min_reward is not None:
-            clauses.append("total_reward >= ?")
-            params.append(min_reward)
-        if max_reward is not None:
-            clauses.append("total_reward <= ?")
-            params.append(max_reward)
-        if tag is not None:
-            clauses.append("list_contains(tags, ?)")
-            params.append(tag)
-        if text_regex is not None:
-            clauses.append(
-                "(regexp_matches(coalesce(ob_text, ''), ?)"
-                " OR regexp_matches(coalesce(ac_text, ''), ?))"
-            )
-            params.extend([text_regex, text_regex])
-        # Structured map filters. Keys bind as parameters (map access on a
-        # missing key yields NULL, so these clauses also drop rows lacking
-        # the key). TRY_CAST guards the numeric comparison; note DuckDB
-        # orders NaN above every number, so a NaN metric passes metric_min.
-        for key, value in (attr_eq or {}).items():
-            clauses.append("attrs[?] = ?")
-            params.extend([str(key), str(value)])
-        for key, value in (metric_min or {}).items():
-            clauses.append("TRY_CAST(metrics[?] AS DOUBLE) >= ?")
-            params.extend([str(key), float(value)])
-        for key, value in (metric_max or {}).items():
-            clauses.append("TRY_CAST(metrics[?] AS DOUBLE) <= ?")
-            params.extend([str(key), float(value)])
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        return where, params
-
     def query(
         self,
         *,
@@ -655,7 +870,7 @@ class ParquetSegmentReader:
         ``(iteration, ts)`` and include the computed ``superseded`` flag.
         """
         self.refresh()
-        where, params = self._build_where(**filters)
+        where, params = build_where(**filters)
         view = "rollouts_latest" if latest_only else "rollouts"
         sql = f"SELECT * FROM {view} {where} ORDER BY iteration, ts, group_idx, traj_idx, step_idx"
         if limit is not None:
@@ -682,7 +897,7 @@ class ParquetSegmentReader:
         Ordered newest iteration first.
         """
         self.refresh()
-        where, params = self._build_where(**filters)
+        where, params = build_where(**filters)
         if latest_only:
             where = f"{where} AND NOT superseded" if where else "WHERE NOT superseded"
         sql = _TRAJECTORIES_SQL.format(where=where, limit=int(limit), offset=int(offset))
@@ -720,11 +935,14 @@ class ParquetSegmentReader:
         iteration: int,
         group_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> list[int]:
         """The distinct ``traj_idx`` values of one group, ascending.
 
         ``run_attempt=None`` spans every attempt (the viewer's sibling
         navigation shows all trajectories that ever existed for the group).
+        ``run_id`` is an optional extra filter (a single-run store holds one
+        run, so it is rarely needed here).
         """
         self.refresh()
         sql = (
@@ -735,6 +953,9 @@ class ParquetSegmentReader:
         if run_attempt is not None:
             sql += " AND run_attempt = ?"
             params.append(run_attempt)
+        if run_id is not None:
+            sql += " AND run_id = ?"
+            params.append(run_id)
         sql += " ORDER BY traj_idx"
         return [row["traj_idx"] for row in self._fetch(sql, params)]
 
@@ -749,31 +970,17 @@ class ParquetSegmentReader:
         group_idx: int,
         traj_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch the full trajectory: all step rows ordered by ``step_idx``.
 
         ``run_attempt=None`` selects the latest attempt that produced rows for
-        this trajectory. Delta-encoded observations are returned as stored;
-        use :func:`reconstruct_full_ob` to expand them.
+        this trajectory. ``run_id`` is an optional extra filter (a single-run
+        store holds one run). Delta-encoded observations are returned as
+        stored; use :func:`reconstruct_full_ob` to expand them.
         """
         self.refresh()
-        params: list[Any] = [split, iteration, group_idx, traj_idx]
-        sql = """
-            SELECT * FROM rollouts
-            WHERE split = ? AND iteration = ? AND group_idx = ? AND traj_idx = ?
-        """
-        if run_attempt is None:
-            sql += """
-              AND run_attempt = (
-                  SELECT max(run_attempt) FROM rollouts
-                  WHERE split = ? AND iteration = ? AND group_idx = ? AND traj_idx = ?
-              )
-            """
-            params += [split, iteration, group_idx, traj_idx]
-        else:
-            sql += " AND run_attempt = ?"
-            params.append(run_attempt)
-        sql += " ORDER BY step_idx"
+        sql, params = get_rollout_query(split, iteration, group_idx, traj_idx, run_attempt, run_id)
         return self._fetch(sql, params)
 
     # --- Search ---
@@ -799,43 +1006,15 @@ class ParquetSegmentReader:
         Additional structured ``filters`` are the same as :meth:`query`.
         Results are ordered by ``(iteration, ts)``.
         """
-        string_fields = {"ac_text", "ob_text", "logs"}
-        map_fields = {"metrics", "attrs", "token_metrics"}
-        bad = set(fields) - string_fields - map_fields
-        if bad:
-            raise ValueError(f"Unsupported search fields: {sorted(bad)}")
         self.refresh()
-        where, params = self._build_where(**filters)
-        clauses = [where[len("WHERE ") :]] if where else []
-        if regex is not None:
-            field_matches = []
-            for f in fields:
-                if f in map_fields:
-                    # regexp_matches on a MAP is a BinderException; match keys.
-                    field_matches.append(
-                        "EXISTS (SELECT 1 FROM unnest(map_keys("
-                        f"{f})) AS _k(key) WHERE regexp_matches(_k.key, ?))"
-                    )
-                else:
-                    field_matches.append(f"regexp_matches(coalesce({f}, ''), ?)")
-            clauses.append(f"({' OR '.join(field_matches)})")
-            params.extend([regex] * len(fields))
-        if token_subsequence:
-            # Cheap SQL prefilter on the first token; the exact contiguous
-            # match runs in Python below (portable across backends).
-            clauses.append("list_contains(ac_tokens, ?)")
-            params.append(int(token_subsequence[0]))
-        sql = "SELECT * FROM rollouts"
-        if clauses:
-            sql += f" WHERE {' AND '.join(clauses)}"
-        sql += " ORDER BY iteration, ts, group_idx, traj_idx, step_idx"
-        rows = self._fetch(sql, params)
-        if token_subsequence:
-            needle = [int(t) for t in token_subsequence]
-            rows = [row for row in rows if _contains_subsequence(row["ac_tokens"], needle)]
-        if limit is not None:
-            rows = rows[: int(limit)]
-        return rows
+        return run_search(
+            self._fetch,
+            regex=regex,
+            fields=fields,
+            token_subsequence=token_subsequence,
+            limit=limit,
+            **filters,
+        )
 
     def search_hit_counts(self, **search_kwargs: Any) -> dict[int, int]:
         """Grouped-by-iteration hit counts for a :meth:`search` call."""
@@ -867,27 +1046,7 @@ class ParquetSegmentReader:
             author: Who wrote the label (user name, ``"agent"``, ...).
             note: Optional free-form note.
         """
-        bad_keys = set(key) - set(_LABEL_KEY_FIELDS)
-        if bad_keys:
-            raise ValueError(f"Unsupported label key fields: {sorted(bad_keys)}")
-        record: dict[str, Any] = {field: key.get(field) for field in _LABEL_KEY_FIELDS}
-        record.update(
-            {
-                "label_key": label_key,
-                "label_value": label_value,
-                "author": author,
-                "ts": datetime.now(UTC).isoformat(),
-                "note": note,
-            }
-        )
-        self._storage.append(LABELS_PATH, (json.dumps(record, default=str) + "\n").encode())
-        # FsspecStorage stages append()s locally and only uploads on flush();
-        # nothing else ever flushes this reader's storage, so without this a
-        # label written against a gs:///s3:// store would silently never
-        # reach the store. LocalStorage.flush() is a no-op, and FsspecStorage
-        # re-uploads only files with staged appends (here: labels.jsonl,
-        # which stays small).
-        self._storage.flush()
+        append_label(self._storage, key, label_key, label_value, author=author, note=note)
 
     def _refresh_labels_source(self, conn: duckdb.DuckDBPyConnection) -> None:
         """(Re)create the ``labels`` view over the current ``labels.jsonl``.
@@ -920,47 +1079,9 @@ class ParquetSegmentReader:
                 for line in self._storage.read(LABELS_PATH).decode().splitlines()
                 if line.strip()
             ]
-            import pyarrow as pa
-
-            table = pa.Table.from_pylist(
-                [
-                    {
-                        **{field: rec.get(field) for field in _LABEL_KEY_FIELDS},
-                        "label_key": rec.get("label_key"),
-                        "label_value": json.dumps(rec.get("label_value")),
-                        "author": rec.get("author"),
-                        "ts": rec.get("ts"),
-                        "note": rec.get("note"),
-                    }
-                    for rec in records
-                ]
-            )
-            conn.register("_labels_raw", table)
-            source = (
-                "(SELECT run_id, split, iteration::INTEGER AS iteration,"
-                " group_idx::INTEGER AS group_idx, traj_idx::INTEGER AS traj_idx,"
-                " step_idx::INTEGER AS step_idx, label_key, label_value::JSON AS label_value,"
-                " author, ts::TIMESTAMP AS ts, note FROM _labels_raw)"
-            )
-        # Last write (by ts) wins per (identity, label_key); tombstones
-        # (null label_value) win first, then drop out of the view.
-        conn.execute(
-            f"""
-            CREATE VIEW labels AS
-            SELECT * EXCLUDE (_rank) FROM (
-                SELECT *,
-                       row_number() OVER (
-                           PARTITION BY run_id, split, iteration, group_idx, traj_idx,
-                                        step_idx, label_key
-                           ORDER BY ts DESC
-                       ) AS _rank
-                FROM {source}
-            )
-            WHERE _rank = 1
-              AND label_value IS NOT NULL
-              AND CAST(label_value AS VARCHAR) <> 'null'
-            """
-        )
+            conn.register("_labels_raw", labels_arrow_table(records))
+            source = LABELS_CAST_SELECT.format(src="_labels_raw")
+        conn.execute(LABELS_DEDUP_VIEW_SQL.format(source=source))
 
     def labels(self, **filters: Any) -> list[dict[str, Any]]:
         """Fetch current labels (after last-write-wins and tombstone filtering).
@@ -969,8 +1090,7 @@ class ParquetSegmentReader:
         ``traj_idx``, ``step_idx``, ``label_key``, ``author``. Returned
         ``label_value`` is decoded back to a Python value.
         """
-        allowed = set(_LABEL_KEY_FIELDS) | {"label_key", "author"}
-        bad = set(filters) - allowed
+        bad = set(filters) - LABEL_FILTER_FIELDS
         if bad:
             raise ValueError(f"Unsupported label filters: {sorted(bad)}")
         conn = self._connection()
@@ -1008,7 +1128,7 @@ class ParquetSegmentReader:
         """
         # Baseline: everything already on disk is "old".
         await asyncio.to_thread(self.refresh)
-        where, params = self._build_where(**filters)
+        where, params = build_where(**filters)
         conn = self._connection()
         while True:
             await asyncio.sleep(poll_interval_s)
@@ -1086,9 +1206,10 @@ class TokenDB:
         group_idx: int,
         traj_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """See :meth:`ParquetSegmentReader.get_rollout`."""
-        return self._backend.get_rollout(split, iteration, group_idx, traj_idx, run_attempt)
+        return self._backend.get_rollout(split, iteration, group_idx, traj_idx, run_attempt, run_id)
 
     def search(self, **kwargs: Any) -> list[dict[str, Any]]:
         """See :meth:`ParquetSegmentReader.search`."""
@@ -1112,9 +1233,10 @@ class TokenDB:
         iteration: int,
         group_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> list[int]:
         """See :meth:`ParquetSegmentReader.group_traj_idxs`."""
-        return self._backend.group_traj_idxs(split, iteration, group_idx, run_attempt)
+        return self._backend.group_traj_idxs(split, iteration, group_idx, run_attempt, run_id)
 
     def add_label(
         self,

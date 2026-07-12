@@ -113,6 +113,7 @@ class FakeBackend:
         group_idx: int,
         traj_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return [{"split": split, "iteration": iteration, "step_idx": 0}]
 
@@ -138,7 +139,12 @@ class FakeBackend:
         }
 
     def group_traj_idxs(
-        self, split: str, iteration: int, group_idx: int, run_attempt: int | None = None
+        self,
+        split: str,
+        iteration: int,
+        group_idx: int,
+        run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> list[int]:
         return [0]
 

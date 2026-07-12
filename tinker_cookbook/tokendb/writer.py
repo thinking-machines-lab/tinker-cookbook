@@ -458,9 +458,12 @@ class ParquetSegmentBackend:
         group_idx: int,
         traj_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> Any:
         """See :meth:`TokenStoreBackend.get_rollout`."""
-        return self._reader().get_rollout(split, iteration, group_idx, traj_idx, run_attempt)
+        return self._reader().get_rollout(
+            split, iteration, group_idx, traj_idx, run_attempt, run_id
+        )
 
     def search(self, **kwargs: Any) -> Any:
         """See :meth:`TokenStoreBackend.search` and
@@ -500,9 +503,10 @@ class ParquetSegmentBackend:
         iteration: int,
         group_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> Any:
         """See :meth:`TokenStoreBackend.group_traj_idxs`."""
-        return self._reader().group_traj_idxs(split, iteration, group_idx, run_attempt)
+        return self._reader().group_traj_idxs(split, iteration, group_idx, run_attempt, run_id)
 
     def runs(self) -> Any:
         """One row per (run_id, run_attempt); see

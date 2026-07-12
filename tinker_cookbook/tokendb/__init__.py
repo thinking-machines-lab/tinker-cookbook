@@ -37,6 +37,7 @@ from tinker_cookbook.tokendb.registry import (
     resolve_registry_dir,
     run_status,
 )
+from tinker_cookbook.tokendb.registry_backend import RegistryBackend
 from tinker_cookbook.tokendb.schema import (
     SCHEMA_VERSION,
     TokenRow,
@@ -51,6 +52,7 @@ __all__ = [
     "CaptureContext",
     "ParquetSegmentBackend",
     "ParquetSegmentReader",
+    "RegistryBackend",
     "TokenDB",
     "TokenDbConfig",
     "TokenDbWriter",

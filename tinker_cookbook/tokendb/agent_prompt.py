@@ -214,24 +214,67 @@ def _format_key_list(keys: list[str]) -> str:
     return ", ".join(f"`{key}`" for key in shown) + suffix
 
 
+def _format_key_list_with_runs(keys: list[str], field: str, runs: dict[str, dict[str, Any]]) -> str:
+    """Like :func:`_format_key_list`, with per-run attribution.
+
+    Keys present in only some of the contributing runs get an
+    ``(only: run_a, run_b)`` suffix so the model knows where map access
+    returns NULL.
+    """
+    if not keys:
+        return "(none)"
+    shown = keys[:_SCHEMA_CARD_MAX_KEYS]
+    parts = []
+    for key in shown:
+        present = [run_id for run_id, card in runs.items() if key in (card.get(field) or [])]
+        if 0 < len(present) < len(runs):
+            parts.append(f"`{key}` (only: {', '.join(sorted(present))})")
+        else:
+            parts.append(f"`{key}`")
+    suffix = f", ... ({len(keys) - len(shown)} more)" if len(keys) > len(shown) else ""
+    return ", ".join(parts) + suffix
+
+
 def format_schema_card(card: dict[str, Any]) -> str:
     """Render an observed-keys card (``reader.schema_card()``) as prompt text.
 
     Tells the model exactly which `metrics` / `attrs` / `token_metrics` keys
-    and tags exist in this run, plus the promoted views and `runs` columns,
-    so it writes correct map SQL on the first try instead of probing with
-    ``map_keys`` scans.
+    and tags exist, plus the promoted views and `runs` columns, so it writes
+    correct map SQL on the first try instead of probing with ``map_keys``
+    scans. A cross-run card (one with a ``runs`` mapping, from
+    ``RegistryBackend.schema_card()``) renders the union with per-run key
+    attribution.
     """
+    runs = card.get("runs")
+    if runs:
+        header = [
+            f"## Observed keys across runs ({len(runs)} runs)",
+            "",
+            "Union of the keys present across every registered run. A key marked",
+            "(only: ...) exists only in those runs; elsewhere map access returns",
+            "NULL. Do not guess other keys.",
+        ]
+
+        def render(field: str) -> str:
+            return _format_key_list_with_runs(card.get(field) or [], field, runs)
+    else:
+        header = [
+            "## This run's observed keys",
+            "",
+            "These are the keys actually present in this run's data. Do not guess",
+            "other keys; a key not listed here is absent (map access returns NULL).",
+        ]
+
+        def render(field: str) -> str:
+            return _format_key_list(card.get(field) or [])
+
     lines = [
-        "## This run's observed keys",
+        *header,
         "",
-        "These are the keys actually present in this run's data. Do not guess",
-        "other keys; a key not listed here is absent (map access returns NULL).",
-        "",
-        f"- `metrics` keys: {_format_key_list(card.get('metrics_keys') or [])}",
-        f"- `attrs` keys: {_format_key_list(card.get('attrs_keys') or [])}",
-        f"- `token_metrics` keys: {_format_key_list(card.get('token_metrics_keys') or [])}",
-        f"- tags: {_format_key_list(card.get('tags') or [])}",
+        f"- `metrics` keys: {render('metrics_keys')}",
+        f"- `attrs` keys: {render('attrs_keys')}",
+        f"- `token_metrics` keys: {render('token_metrics_keys')}",
+        f"- tags: {render('tags')}",
     ]
     if card.get("keys_truncated"):
         lines.append("- note: the key lists were truncated at capture time and may be incomplete.")
@@ -254,29 +297,38 @@ def build_system_prompt(
 
     Args:
         sql_url: Base path of the read-only SQL endpoint visuals should POST
-            to (e.g. ``/api/sql`` or ``/api/runs/{run_id}/sql``). In registry
-            mode this is a template: ``{run_id}`` must be substituted by the
-            visual's JS (the prompt tells the model so).
+            to (``/api/sql`` for single-run mode and for the registry's
+            cross-run endpoint, or ``/api/runs/{run_id}/sql`` for a per-run
+            chat mount).
         mode: ``"run"`` for a single-run chat, ``"registry"`` for the global
-            cross-run chat (extra tools: ``list_runs`` / ``dashboard``; data
-            tools take a ``run_id``).
+            cross-run chat (extra tools: ``list_runs`` / ``dashboard``; the
+            ``sql`` tool spans every run and takes an optional ``run_id``).
         run_info: Optional run metadata (``run.json`` content) shown to the
             model for a single-run chat.
-        schema_card: Optional observed-keys card
-            (:meth:`~tinker_cookbook.tokendb.reader.ParquetSegmentReader.schema_card`)
-            rendered via :func:`format_schema_card` for a single-run chat.
+        schema_card: Optional observed-keys card rendered via
+            :func:`format_schema_card` — the single-run reader's card, or the
+            registry backend's aggregated multi-run card.
     """
     parts = [_SCHEMA_AND_SEMANTICS, _VISUAL_GUIDE.format(sql_url=sql_url)]
     if mode == "registry":
         parts.append(
             "## Registry mode\n\n"
-            "This chat spans EVERY registered run. Start with `list_runs` or\n"
-            "`dashboard` to see what exists (run_id, model, recipe, liveness,\n"
-            "reward trends), then pass the relevant `run_id` to `sql`, `search`,\n"
-            "and `get_rollout`. In visual HTML, replace `{run_id}` in the SQL\n"
-            "endpoint template above with the actual run ID you are charting.\n"
-            "When comparing runs, query each run separately and align by\n"
-            "iteration."
+            "This chat spans EVERY registered run, and the `sql` tool queries ONE\n"
+            "database whose views (rollouts, rollouts_latest, trajectories, labels,\n"
+            "runs, and the promoted views) contain every run's rows. `run_id` is a\n"
+            "normal column: filter with `WHERE run_id = '...'`, compare runs with\n"
+            "`GROUP BY run_id`, and join `runs` USING (run_id, run_attempt) to\n"
+            "slice by config (temperature, learning_rate, model_name, ...). Note\n"
+            "that `rollouts` includes superseded rows from earlier run attempts;\n"
+            "prefer `rollouts_latest` for cross-run aggregates unless you are\n"
+            "explicitly comparing attempts.\n"
+            "Start with `list_runs` or `dashboard` for what exists (run_id, model,\n"
+            "recipe, liveness, reward trends). Pass the optional `run_id` argument\n"
+            "to `sql` only when you want one run's own store; `search` and\n"
+            "`get_rollout` always require a `run_id`.\n"
+            "In visual HTML, POST cross-run SQL to the endpoint above; a\n"
+            "single-run visual can instead use `/api/runs/{run_id}/sql` with the\n"
+            "actual run ID substituted."
         )
     if run_info:
         parts.append(

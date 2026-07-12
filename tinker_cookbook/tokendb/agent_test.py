@@ -849,9 +849,13 @@ def test_registry_toolbox_routes_by_run_id(tmp_path: Path):
     )
     names = [t.name for t in toolbox.tool_defs()]
     assert names == ["list_runs", "dashboard", "sql", "search", "get_rollout", "publish_visual"]
-    assert (
-        "run_id" in next(t for t in toolbox.tool_defs() if t.name == "sql").input_schema["required"]
-    )
+    # sql's run_id is optional (cross-run via the registry backend when
+    # omitted); search / get_rollout stay per-run.
+    sql_schema = next(t for t in toolbox.tool_defs() if t.name == "sql").input_schema
+    assert "run_id" in sql_schema["properties"]
+    assert "run_id" not in sql_schema["required"]
+    search_schema = next(t for t in toolbox.tool_defs() if t.name == "search").input_schema
+    assert "run_id" in search_schema["required"]
 
     outcome, payload = _run_tool(toolbox, "list_runs", {})
     assert payload["runs"][0]["run_id"] == run_id
@@ -861,6 +865,7 @@ def test_registry_toolbox_routes_by_run_id(tmp_path: Path):
         toolbox, "sql", {"run_id": run_id, "query": "SELECT count(*) AS n FROM rollouts"}
     )
     assert payload["rows"][0]["n"] == 1
+    # No cross-run backend was given, so run_id-less sql still errors.
     outcome, payload = _run_tool(toolbox, "sql", {"query": "SELECT 1"})
     assert outcome.is_error and "run_id" in payload["error"]
     outcome, payload = _run_tool(toolbox, "sql", {"run_id": "nope", "query": "SELECT 1"})

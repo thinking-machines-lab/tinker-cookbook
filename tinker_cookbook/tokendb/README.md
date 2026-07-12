@@ -62,6 +62,32 @@ In registry mode the server exposes:
 
 Pointing the server at a specific `log_path` still works exactly as before and does not need the registry.
 
+### Cross-run SQL (`RegistryBackend`)
+
+Registry mode also exposes one SQL surface spanning **all** registered runs: `POST /api/sql` at the registry root runs read-only DuckDB over cross-run `rollouts` / `rollouts_latest` / `trajectories` / `labels` / `runs` views (plus the promoted `correct` / `parse_errors` / `context_overflows`), with `run_id` as an ordinary column. This is what makes config-vs-outcome questions one query:
+
+```sql
+SELECT r.temperature, avg(t.total_reward) AS mean_reward
+FROM trajectories t JOIN runs r USING (run_id, run_attempt)
+GROUP BY 1 ORDER BY 1
+```
+
+The `superseded` flag is computed per run (`PARTITION BY run_id, split, iteration`), so a resume in one run never hides another run's rows; prefer `rollouts_latest` for cross-run aggregates. The same backend powers the registry chat's `sql` tool (no `run_id` argument means cross-run) and the dashboard aggregation (one `GROUP BY run_id` pass instead of a reader per run). Programmatic use:
+
+```python
+from tinker_cookbook.tokendb import RegistryBackend
+
+backend = RegistryBackend()  # resolves the registry like the viewer does
+rows = backend.sql("SELECT run_id, count(*) AS n FROM rollouts GROUP BY run_id")
+```
+
+Unlike the single-run reader, the cross-run reader is **lazy**: it keeps a DuckDB `read_parquet` scan over an explicit per-run file list (rebuilt on a TTL-gated refresh, default 5s) instead of materializing segments in memory, so nothing is pinned in RAM between queries. Segments that cannot be scanned in place are staged once into a local **segcache**:
+
+- Cloud stores (`gs://`, `s3://`): each segment is fetched once through `Storage` and cached (segments are immutable, so existence is validity).
+- v1-shaped segments are normalized to the v2 schema at cache fill (`upgraded/`); the original files are never rewritten.
+
+The segcache defaults to `~/.cache/tinker-cookbook/tokendb/segcache`; override it with the `segcache_dir` config knob (`python -m tinker_cookbook.tokendb.serve segcache_dir=/tmp/segcache`, or the `RegistryBackend(segcache_dir=...)` argument) or the `TINKER_TOKENDB_SEGCACHE` environment variable. There is no automatic eviction yet: the cache grows with the cloud/v1 segments you have actually queried, and it is always safe to delete (`rm -rf ~/.cache/tinker-cookbook/tokendb/segcache`); segments re-stage on the next refresh.
+
 ## Chat
 
 The viewer has a chat mode: ask questions about your training data in plain language and an LLM agent answers by querying the token DB for you. No SQL required. The agent can run read-only DuckDB queries (`sql`), search by regex or token-ID subsequence (`search`), pull whole trajectories (`get_rollout`), and publish self-contained HTML visuals (`publish_visual`) that render inline in the chat and in a gallery. In registry mode there is also a global cross-run chat (with `list_runs` and `dashboard` tools for comparing experiments) alongside the per-run chats.

@@ -404,6 +404,23 @@ def _with_run_id(schema: dict[str, Any]) -> dict[str, Any]:
     return {"type": "object", "properties": properties, "required": required}
 
 
+def _with_optional_run_id(schema: dict[str, Any]) -> dict[str, Any]:
+    """Registry-mode variant of a tool schema: adds an optional run_id."""
+    properties = {
+        "run_id": {
+            "type": "string",
+            "description": "Optional: execute against one run's own store "
+            "(omit for cross-run SQL over every registered run).",
+        },
+        **schema.get("properties", {}),
+    }
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(schema.get("required", [])),
+    }
+
+
 @dataclass
 class ToolOutcome:
     """One executed tool call: model-facing content plus optional UI frames."""
@@ -517,7 +534,13 @@ class RunToolbox:
 
 
 class RegistryToolbox:
-    """Cross-run tools for the registry-level chat: per-run tools take run_id."""
+    """Cross-run tools for the registry-level chat.
+
+    ``sql`` runs against the cross-run *backend* (every registered run in
+    one database, ``run_id`` as a column) when no ``run_id`` argument is
+    given, and against that run's own store when one is. ``search`` and
+    ``get_rollout`` stay per-run (they require a ``run_id``).
+    """
 
     def __init__(
         self,
@@ -525,11 +548,13 @@ class RegistryToolbox:
         dashboard_fn: Callable[[], list[dict[str, Any]]],
         resolve_reader: Callable[[str], TokenStoreBackend],
         visual_store: VisualStore,
+        backend: TokenStoreBackend | None = None,
     ) -> None:
         self._list_runs_fn = list_runs_fn
         self._dashboard_fn = dashboard_fn
         self._resolve_reader = resolve_reader
         self._visual_store = visual_store
+        self._backend = backend
 
     def tool_defs(self) -> list[ToolDef]:
         empty = {"type": "object", "properties": {}}
@@ -542,10 +567,11 @@ class RegistryToolbox:
             ),
             ToolDef(
                 "sql",
-                "Run a read-only DuckDB SELECT over one run's token DB "
-                "(views: rollouts, rollouts_latest, trajectories, labels, runs, "
-                "correct, parse_errors, context_overflows).",
-                _with_run_id(_SQL_SCHEMA),
+                "Run a read-only DuckDB SELECT over the token DB spanning EVERY "
+                "registered run (views: rollouts, rollouts_latest, trajectories, "
+                "labels, runs, correct, parse_errors, context_overflows; run_id is "
+                "a normal column). Pass run_id to query one run's store instead.",
+                _with_optional_run_id(_SQL_SCHEMA),
             ),
             ToolDef(
                 "search",
@@ -572,13 +598,21 @@ class RegistryToolbox:
                 return ToolOutcome(_to_json({"runs": self._dashboard_fn()}))
             if call.name == "publish_visual":
                 return _publish_visual_outcome(self._visual_store, call.arguments)
-            if call.name in ("sql", "search", "get_rollout"):
+            if call.name == "sql":
+                run_id = call.arguments.get("run_id")
+                if run_id:
+                    reader = self._resolve_reader(str(run_id))
+                elif self._backend is not None:
+                    reader = self._backend
+                else:
+                    raise ToolExecutionError("sql needs a run_id (see list_runs)")
+                return ToolOutcome(_to_json(_execute_sql(reader, call.arguments)))
+            if call.name in ("search", "get_rollout"):
                 run_id = call.arguments.get("run_id")
                 if not run_id:
                     raise ToolExecutionError(f"{call.name} needs a run_id (see list_runs)")
                 reader = self._resolve_reader(str(run_id))
                 executor = {
-                    "sql": _execute_sql,
                     "search": _execute_search,
                     "get_rollout": _execute_get_rollout,
                 }[call.name]

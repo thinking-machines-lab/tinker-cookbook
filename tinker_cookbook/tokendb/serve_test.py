@@ -649,6 +649,39 @@ def test_registry_websocket_dashboard(registry_stores: dict):
     run_registry_client(fn)
 
 
+def test_registry_root_sql_cross_run(registry_stores: dict):
+    """POST /api/sql at the registry root runs cross-run SQL over all runs."""
+
+    async def fn(client):
+        resp = await client.post("/api/sql", json={"query": "SELECT count(*) AS n FROM rollouts"})
+        assert resp.status == 200
+        assert (await resp.json())["rows"][0]["n"] == 4  # 3 live-run + 1 stale-run rows
+
+        resp = await client.post(
+            "/api/sql",
+            json={"query": "SELECT run_id, count(*) AS n FROM rollouts GROUP BY run_id"},
+        )
+        rows = (await resp.json())["rows"]
+        assert {r["run_id"]: r["n"] for r in rows} == {
+            registry_stores["live_id"]: 3,
+            registry_stores["stale_id"]: 1,
+        }
+
+        # runs is cross-run too: one row per (run_id, run_attempt).
+        resp = await client.post(
+            "/api/sql", json={"query": "SELECT run_id, model_name FROM runs ORDER BY model_name"}
+        )
+        rows = (await resp.json())["rows"]
+        assert [r["model_name"] for r in rows] == ["live-model", "stale-model"]
+
+        # The SELECT-only guard surfaces as a 400, same as the per-run endpoint.
+        resp = await client.post("/api/sql", json={"query": "DROP VIEW rollouts"})
+        assert resp.status == 400
+        assert "SELECT" in (await resp.json())["error"]
+
+    run_registry_client(fn)
+
+
 def test_registry_mode_requires_registry(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TINKER_TOKENDB_REGISTRY", "")
     with pytest.raises(ValueError, match="registry is disabled"):
@@ -1363,6 +1396,63 @@ def test_registry_global_chat_lists_runs(registry_stores: dict):
             resp = await client.get(f"/api/runs/{live_id}/chats")
             assert resp.status == 200
             assert (await resp.json())["conversations"] == []
+
+    asyncio.run(main())
+
+
+def test_registry_chat_sql_tool_cross_run(registry_stores: dict):
+    """The registry chat's sql tool without a run_id spans every run."""
+    transport = ScriptedTransport(
+        [
+            anthropic_script(
+                text="Comparing runs.",
+                tool_calls=[
+                    (
+                        "t1",
+                        "sql",
+                        {
+                            "query": (
+                                "SELECT run_id, count(*) AS n FROM rollouts "
+                                "GROUP BY run_id ORDER BY n DESC"
+                            )
+                        },
+                    )
+                ],
+            ),
+            anthropic_script(text="One run has 3 rows, the other 1."),
+        ]
+    )
+
+    async def main():
+        app = build_app(None, static_dir=None, load_tokenizer=False, llm_transport=transport)
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            async with client.ws_connect("/api/chat") as ws:
+                frames = await _chat_frames(ws, "compare the runs")
+            assert frames[-1]["type"] == "done"
+            sql_result = next(
+                f for f in frames if f.get("type") == "tool_result" and f["name"] == "sql"
+            )
+            assert not sql_result["is_error"]
+            # The model saw both runs' counts from ONE query with no run_id.
+            conversation_id = frames[0]["conversation_id"]
+            records = (await (await client.get(f"/api/chats/{conversation_id}")).json())["records"]
+            tool_record = next(
+                r for r in records if r["kind"] == "message" and r.get("role") == "tool"
+            )
+            content = json.loads(tool_record["content"])
+            assert {row["run_id"]: row["n"] for row in content["rows"]} == {
+                registry_stores["live_id"]: 3,
+                registry_stores["stale_id"]: 1,
+            }
+            # The registry prompt teaches cross-run SQL (root endpoint, run_id
+            # as a column) and carries the aggregated multi-run schema card.
+            system = transport.requests[0][2]["system"]
+            assert 'const SQL_URL = "/api/sql"' in system
+            assert "GROUP BY run_id" in system
+            assert "rollouts_latest` for cross-run aggregates" in system
+            assert "Observed keys across runs (2 runs)" in system
+            assert "/api/runs/{run_id}/sql" in system  # per-run template stays documented
 
     asyncio.run(main())
 

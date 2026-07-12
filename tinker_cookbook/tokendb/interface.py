@@ -83,8 +83,14 @@ class TokenStoreBackend(Protocol):
         group_idx: int,
         traj_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> Any:
-        """Fetch all rows (turns) for one trajectory (latest attempt by default)."""
+        """Fetch all rows (turns) for one trajectory (latest attempt by default).
+
+        Rollout identity is only unique per run, so cross-run backends require
+        ``run_id`` when more than one run is registered; single-run backends
+        accept it as an extra filter.
+        """
         ...
 
     def search(self, **kwargs: Any) -> Any:
@@ -116,8 +122,13 @@ class TokenStoreBackend(Protocol):
         iteration: int,
         group_idx: int,
         run_attempt: int | None = None,
+        run_id: str | None = None,
     ) -> Any:
-        """The distinct ``traj_idx`` values of one group (sibling trajectories)."""
+        """The distinct ``traj_idx`` values of one group (sibling trajectories).
+
+        Like :meth:`get_rollout`, cross-run backends require ``run_id`` when
+        more than one run is registered.
+        """
         ...
 
     def subscribe(self, **filters: Any) -> AsyncIterator[Any]:

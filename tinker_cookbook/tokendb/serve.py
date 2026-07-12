@@ -94,6 +94,7 @@ from tinker_cookbook.tokendb.registry import (
     load_run_record,
     resolve_registry_dir,
 )
+from tinker_cookbook.tokendb.registry_backend import RegistryBackend
 from tinker_cookbook.tokendb.writer import RUN_JSON_PATH, ParquetSegmentBackend
 
 logger = logging.getLogger(__name__)
@@ -151,8 +152,14 @@ class RunContext:
 # Typed application-state keys (aiohttp's recommended alternative to str keys).
 SINGLE_CTX_KEY: web.AppKey[RunContext | None] = web.AppKey("single_ctx")
 REGISTRY_DIR_KEY: web.AppKey[str | None] = web.AppKey("registry_dir")
+# Registry mode: the one cross-run reader shared by the all-runs chat, the
+# dashboard aggregation, and the root /api/sql endpoint (thread-safe: shared
+# connection + per-thread cursors). Constructed lazily on first use, inside
+# a mutable holder (aiohttp forbids replacing app-state values post-startup).
+REGISTRY_BACKEND_KEY: web.AppKey[dict[str, RegistryBackend]] = web.AppKey("registry_backend")
+SEGCACHE_DIR_KEY: web.AppKey[str | None] = web.AppKey("segcache_dir")
 RUN_CACHE_KEY: web.AppKey[OrderedDict[str, RunContext]] = web.AppKey("run_cache")
-DASHBOARD_CACHE_KEY: web.AppKey[dict[str, tuple[float, dict[str, Any]]]] = web.AppKey(
+DASHBOARD_CACHE_KEY: web.AppKey[dict[str, tuple[float, list[dict[str, Any]]]]] = web.AppKey(
     "dashboard_cache"
 )
 DASHBOARD_TTL_KEY = web.AppKey("dashboard_ttl_s", float)
@@ -443,8 +450,7 @@ async def _handle_search(request: web.Request) -> web.Response:
     )
 
 
-async def _handle_sql(request: web.Request) -> web.Response:
-    reader = _request_ctx(request).reader
+async def _sql_response(reader: Any, request: web.Request) -> web.Response:
     # Raw SQL is a backend-specific escape hatch, deliberately not part of
     # the TokenStoreBackend protocol; 501 when the backend doesn't offer it.
     sql_fn = getattr(reader, "sql", None)
@@ -461,6 +467,19 @@ async def _handle_sql(request: web.Request) -> web.Response:
     except Exception as e:  # DuckDB parse/binder errors on user SQL
         return _error_response(str(e), 400)
     return _json_response({"rows": rows})
+
+
+async def _handle_sql(request: web.Request) -> web.Response:
+    return await _sql_response(_request_ctx(request).reader, request)
+
+
+async def _handle_registry_sql(request: web.Request) -> web.Response:
+    """Registry mode: read-only cross-run SQL over every registered run."""
+    try:
+        backend = _registry_backend(request.app)
+    except Exception as e:
+        return _error_response(str(e), 500)
+    return await _sql_response(backend, request)
 
 
 async def _handle_labels_get(request: web.Request) -> web.Response:
@@ -515,79 +534,81 @@ async def _handle_runs(request: web.Request) -> web.Response:
     return _json_response({"runs": runs})
 
 
-def _compute_dashboard_row(record: dict[str, Any], reader: TokenStoreBackend) -> dict[str, Any]:
-    """One dashboard row: registry record + status + backend aggregates."""
-    status = record.get("status") or {}
-    stats = reader.dashboard_stats(
-        recent_k=DASHBOARD_RECENT_ITERATIONS, series_len=REWARD_SERIES_ITERATIONS
-    )
-    latest_iteration = stats["latest_iteration"]
-    if latest_iteration is None:
-        latest_iteration = status.get("latest_iteration")
-    return {
-        "run_id": record.get("run_id"),
-        "run_attempt": record.get("run_attempt"),
-        "log_path": record.get("log_path"),
-        "model_name": record.get("model_name"),
-        "recipe_name": record.get("recipe_name"),
-        "started_at": record.get("started_at"),
-        "live": bool(status.get("live", False)),
-        "last_activity_ts": status.get("last_activity_ts"),
-        "latest_iteration": latest_iteration,
-        "n_rows": stats["n_rows"],
-        "n_filtered_rows": stats["n_filtered_rows"],
-        "mean_recent_reward": stats["mean_recent_reward"],
-        "reward_series": stats["reward_series"],
-    }
+def _registry_backend(app: web.Application) -> RegistryBackend:
+    """The lazily constructed cross-run reader for this registry-mode app."""
+    holder = app[REGISTRY_BACKEND_KEY]
+    backend = holder.get("backend")
+    if backend is None:
+        backend = RegistryBackend(app[REGISTRY_DIR_KEY], segcache_dir=app[SEGCACHE_DIR_KEY])
+        holder["backend"] = backend
+    return backend
 
 
 def _dashboard_rows(app: web.Application) -> list[dict[str, Any]]:
-    """Dashboard rows for every registered run, TTL-cached per run.
+    """Dashboard rows for every registered run, in one cross-run pass.
 
-    The TTL cache (default 10s) lets the dashboard poll without hammering
-    DuckDB; within the TTL a run's row is returned as-is, so repeated polls
-    are consistent and cheap.
+    One ``RegistryBackend.dashboard_stats()`` call (a GROUP-BY-run_id pass
+    over the shared cross-run views) joined with the registry's liveness
+    records, replacing the old per-run reader loop. The TTL cache (default
+    10s) lets the dashboard poll without hammering DuckDB; within the TTL
+    the whole payload is returned as-is, so repeated polls are consistent
+    and cheap. A run whose store errored is reported as a degraded row with
+    an ``error`` field (isolation now lives inside the backend's refresh).
     """
     cache = app[DASHBOARD_CACHE_KEY]
     ttl = app[DASHBOARD_TTL_KEY]
     now = time.monotonic()
+    cached = cache.get("__dashboard__")
+    if cached is not None and now - cached[0] <= ttl:
+        return cached[1]
+    records = list_runs(app[REGISTRY_DIR_KEY], live_window_s=app[LIVE_WINDOW_KEY])
+    per_run: dict[str, dict[str, Any]] = {}
+    try:
+        backend = _registry_backend(app)
+        # The dashboard has its own TTL cache, so a recompute forces a full
+        # rescan (matching the old per-run-reader refresh cadence).
+        backend.refresh(force=True)
+        stats = backend.dashboard_stats(
+            recent_k=DASHBOARD_RECENT_ITERATIONS, series_len=REWARD_SERIES_ITERATIONS
+        )
+        per_run = stats["per_run"]
+    except Exception as e:
+        logger.warning("Cross-run dashboard aggregation failed: %s", e)
     rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for record in list_runs(app[REGISTRY_DIR_KEY], live_window_s=app[LIVE_WINDOW_KEY]):
+    for record in records:
         run_id = str(record["run_id"])
-        seen.add(run_id)
-        cached = cache.get(run_id)
-        if cached is not None and now - cached[0] <= ttl:
-            rows.append(cached[1])
-            continue
-        try:
-            ctx = _get_or_create_ctx(app, run_id)
-            row = _compute_dashboard_row(record, ctx.reader)
-        except web.HTTPNotFound:
-            continue
-        except Exception as e:
-            logger.warning("Dashboard aggregation failed for run %s: %s", run_id, e)
-            row = {
-                "run_id": record.get("run_id"),
-                "run_attempt": record.get("run_attempt"),
-                "log_path": record.get("log_path"),
-                "model_name": record.get("model_name"),
-                "recipe_name": record.get("recipe_name"),
-                "started_at": record.get("started_at"),
-                "live": bool((record.get("status") or {}).get("live", False)),
-                "last_activity_ts": (record.get("status") or {}).get("last_activity_ts"),
-                "latest_iteration": (record.get("status") or {}).get("latest_iteration"),
-                "n_rows": None,
-                "n_filtered_rows": None,
-                "mean_recent_reward": None,
-                "reward_series": [],
-                "error": str(e),
-            }
-        cache[run_id] = (now, row)
+        status = record.get("status") or {}
+        run_stats = per_run.get(run_id) or {
+            "n_rows": None,
+            "n_filtered_rows": None,
+            "latest_iteration": None,
+            "mean_recent_reward": None,
+            "reward_series": [],
+            "error": "run not loaded",
+        }
+        latest_iteration = run_stats.get("latest_iteration")
+        if latest_iteration is None:
+            latest_iteration = status.get("latest_iteration")
+        row = {
+            "run_id": record.get("run_id"),
+            "run_attempt": record.get("run_attempt"),
+            "log_path": record.get("log_path"),
+            "model_name": record.get("model_name"),
+            "recipe_name": record.get("recipe_name"),
+            "started_at": record.get("started_at"),
+            "live": bool(status.get("live", False)),
+            "last_activity_ts": status.get("last_activity_ts"),
+            "latest_iteration": latest_iteration,
+            "n_rows": run_stats.get("n_rows"),
+            "n_filtered_rows": run_stats.get("n_filtered_rows"),
+            "mean_recent_reward": run_stats.get("mean_recent_reward"),
+            "reward_series": run_stats.get("reward_series") or [],
+        }
+        if run_stats.get("error"):
+            row["error"] = str(run_stats["error"])
         rows.append(row)
-    # Drop cache entries for unregistered runs.
-    for run_id in set(cache) - seen:
-        del cache[run_id]
+    cache.clear()
+    cache["__dashboard__"] = (now, rows)
     return rows
 
 
@@ -814,15 +835,34 @@ def _chat_scope(request: web.Request, *, include_prompt: bool = False) -> ChatSc
         except web.HTTPNotFound as e:
             raise ToolExecutionError(f"unknown run_id {rid!r} (see list_runs)") from e
 
+    backend: RegistryBackend | None = None
+    try:
+        backend = _registry_backend(app)
+    except Exception:
+        logger.warning(
+            "Could not construct the cross-run registry backend; the sql tool "
+            "will require a run_id",
+            exc_info=True,
+        )
     toolbox = RegistryToolbox(
         list_runs_fn=lambda: list_runs(app[REGISTRY_DIR_KEY], live_window_s=app[LIVE_WINDOW_KEY]),
         dashboard_fn=lambda: _dashboard_rows(app),
         resolve_reader=_resolve_reader,
         visual_store=visual_store,
+        backend=backend,
     )
     prompt = ""
     if include_prompt:
-        prompt = build_system_prompt(sql_url="/api/runs/{run_id}/sql", mode="registry")
+        card = None
+        if backend is not None:
+            try:
+                card = backend.schema_card()
+            except Exception:
+                logger.warning(
+                    "Could not build the cross-run schema card for the chat prompt",
+                    exc_info=True,
+                )
+        prompt = build_system_prompt(sql_url="/api/sql", mode="registry", schema_card=card)
     return ChatScope(
         toolbox=toolbox,
         chat_store=ChatStore(storage, prefix="chats"),
@@ -1287,6 +1327,7 @@ def build_app(
     log_path: str | Path | None = None,
     *,
     registry_dir: str | None = None,
+    segcache_dir: str | None = None,
     static_dir: Path | None = STATIC_DIR,
     load_tokenizer: bool = True,
     dashboard_ttl_s: float = DEFAULT_DASHBOARD_TTL_S,
@@ -1303,6 +1344,10 @@ def build_app(
         registry_dir: Registry directory override for registry mode;
             ``None`` resolves via ``TINKER_TOKENDB_REGISTRY`` then the
             default (``~/.cache/tinker-cookbook/tokendb/runs``).
+        segcache_dir: Local segment-cache directory for the cross-run
+            reader (cloud-staged and v1-upgraded segments); ``None``
+            resolves via ``TINKER_TOKENDB_SEGCACHE`` then the default
+            (``~/.cache/tinker-cookbook/tokendb/segcache``).
         static_dir: Directory with the built UI; a fallback page is served
             when it's missing (e.g. the frontend hasn't been built).
         load_tokenizer: Allow the best-effort tokenizer loads (single-run:
@@ -1325,6 +1370,8 @@ def build_app(
     app[DASHBOARD_TTL_KEY] = dashboard_ttl_s
     app[LIVE_WINDOW_KEY] = live_window_s
     app[REGISTRY_DIR_KEY] = registry_dir
+    app[REGISTRY_BACKEND_KEY] = {}
+    app[SEGCACHE_DIR_KEY] = segcache_dir
     # provider=None means "not explicitly chosen": the effective provider is
     # auto-detected from key availability until a POST pins one.
     app[AGENT_STATE_KEY] = {"provider": None, "model": None, "api_key": None}
@@ -1366,6 +1413,9 @@ def build_app(
         app[SINGLE_CTX_KEY] = None
         app.router.add_get("/api/runs", _handle_runs)
         app.router.add_get("/api/dashboard", _handle_dashboard)
+        # Cross-run SQL at the registry root (the per-run endpoint below
+        # stays valid for per-run visuals).
+        app.router.add_post("/api/sql", _handle_registry_sql)
         prefix = "/api/runs/{run_id}"
         app.router.add_get(f"{prefix}/run", _handle_run)
         app.router.add_get(f"{prefix}/rollouts", _handle_rollouts)
@@ -1415,13 +1465,19 @@ class Config:
 
     log_path: str | None = None
     registry_dir: str | None = None
+    # Local cache for the cross-run reader's cloud-staged / v1-upgraded
+    # segments (default ~/.cache/tinker-cookbook/tokendb/segcache; also via
+    # TINKER_TOKENDB_SEGCACHE). Unbounded; safe to delete between sessions.
+    segcache_dir: str | None = None
     port: int = DEFAULT_PORT
     host: str = "127.0.0.1"  # local viewer; not meant to be exposed
 
 
 def run(config: Config) -> None:
     logging.basicConfig(level=logging.INFO)
-    app = build_app(config.log_path, registry_dir=config.registry_dir)
+    app = build_app(
+        config.log_path, registry_dir=config.registry_dir, segcache_dir=config.segcache_dir
+    )
     if config.log_path is not None:
         logger.info(
             "Token DB viewer on http://%s:%d (log_path=%s)",
