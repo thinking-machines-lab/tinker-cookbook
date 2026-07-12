@@ -3,8 +3,9 @@
 Covers: the default parquet backend satisfying the (enlarged) protocol,
 ``TokenDB`` over a minimal custom backend, and the "appends must be followed
 by ``Storage.flush()``" contract that keeps staged cloud backends
-(``FsspecStorage``) from silently holding back manifests, labels, and chat
-transcripts.
+(``FsspecStorage``) from silently holding back manifests and labels. The
+studio stores' flush semantics (chat transcripts, visuals) are covered in
+``tinker_cookbook/tokendb_studio/agent_test.py``.
 """
 
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -16,7 +17,6 @@ import pytest
 pytest.importorskip("pyarrow")
 
 from tinker_cookbook.stores.storage import LocalStorage, Storage
-from tinker_cookbook.tokendb.agent import ChatStore, VisualStore
 from tinker_cookbook.tokendb.interface import TokenStoreBackend, TokenWriter
 from tinker_cookbook.tokendb.reader import ParquetSegmentReader, TokenDB
 from tinker_cookbook.tokendb.schema import TokenRow
@@ -234,19 +234,3 @@ def test_add_label_flushes_storage(tmp_path: Path):
     reader.add_label({"split": "train", "iteration": 0}, "quality", 1, author="tester")
     assert storage.flush_calls == 1
     assert len(reader.labels(label_key="quality")) == 1
-
-
-def test_chat_store_append_flushes_storage(tmp_path: Path):
-    storage = RecordingStorage(LocalStorage(tmp_path))
-    store = ChatStore(cast(Storage, storage))
-    store.append_event("20240101-000000-abcd1234", {"type": "ping"})
-    assert storage.flush_calls == 1
-    assert len(store.load_records("20240101-000000-abcd1234")) == 1
-
-
-def test_visual_store_publish_flushes_storage(tmp_path: Path):
-    storage = RecordingStorage(LocalStorage(tmp_path))
-    store = VisualStore(cast(Storage, storage), url_base="/visuals")
-    store.publish("t", "d", "<html></html>")
-    assert storage.flush_calls == 1
-    assert len(store.list()) == 1

@@ -1,7 +1,7 @@
 """Chat agent for the token DB viewer: tool-use loop over tokendb tools.
 
 The viewer's chat mode runs this server-side loop: the user's question goes to
-an LLM (:mod:`tinker_cookbook.tokendb.llm`) together with tool definitions
+an LLM (:mod:`tinker_cookbook.tokendb_studio.llm`) together with tool definitions
 bound to a run's :class:`~tinker_cookbook.tokendb.interface.TokenStoreBackend`
 (``sql`` / ``search`` / ``get_rollout`` / ``publish_visual``; registry mode
 adds ``list_runs`` / ``dashboard`` and per-run variants taking a ``run_id``).
@@ -45,7 +45,8 @@ from typing import Any
 
 from tinker_cookbook.stores.storage import Storage
 from tinker_cookbook.tokendb.interface import TokenStoreBackend
-from tinker_cookbook.tokendb.llm import (
+from tinker_cookbook.tokendb.reader import reconstruct_full_ob
+from tinker_cookbook.tokendb_studio.llm import (
     ErrorEvent,
     LLMClient,
     Message,
@@ -54,7 +55,6 @@ from tinker_cookbook.tokendb.llm import (
     ToolCallEvent,
     ToolDef,
 )
-from tinker_cookbook.tokendb.reader import reconstruct_full_ob
 
 logger = logging.getLogger(__name__)
 

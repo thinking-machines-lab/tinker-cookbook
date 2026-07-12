@@ -35,7 +35,7 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
-from tinker_cookbook.tokendb.llm import (
+from tinker_cookbook.tokendb_studio.llm import (
     Done,
     LLMConfig,
     LLMEvent,

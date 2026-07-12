@@ -1,10 +1,10 @@
 # Token DB viewer UI
 
 React + TypeScript (Vite) frontend for the token DB viewer
-(`python -m tinker_cookbook.tokendb.serve`).
+(`python -m tinker_cookbook.tokendb_studio.serve`).
 
 End users never need node: the built bundle is committed as package data
-under `tinker_cookbook/tokendb/static/` and served by the python CLI.
+under `tinker_cookbook/tokendb_studio/static/` and served by the python CLI.
 
 ## Dev loop
 
@@ -13,11 +13,11 @@ and `/ws` to it):
 
 ```bash
 # single-run mode (one run's store) ...
-python -m tinker_cookbook.tokendb.serve log_path=~/runs/my-run port=7423
+python -m tinker_cookbook.tokendb_studio.serve log_path=~/runs/my-run port=7423
 # ... or registry mode (dashboard of every registered run)
-python -m tinker_cookbook.tokendb.serve port=7423
+python -m tinker_cookbook.tokendb_studio.serve port=7423
 
-cd tinker_cookbook/tokendb/ui
+cd tinker_cookbook/tokendb_studio/ui
 npm install
 npm run dev   # http://localhost:5173, hot reload
 ```
@@ -28,7 +28,7 @@ registry mode) and routes accordingly.
 ## Build
 
 ```bash
-cd tinker_cookbook/tokendb/ui
+cd tinker_cookbook/tokendb_studio/ui
 npm run build   # typechecks, then emits ../static/ (committed)
 ```
 

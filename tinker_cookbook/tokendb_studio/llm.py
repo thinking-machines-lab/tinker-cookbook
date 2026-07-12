@@ -4,7 +4,7 @@ Speaks the Anthropic Messages API and the OpenAI Responses API over plain
 HTTP (aiohttp + server-sent events); no provider SDK dependencies. A third
 provider, ``tinker``, samples from any Tinker-served model through the
 tinker SDK and the cookbook's renderer machinery (see
-:mod:`tinker_cookbook.tokendb.tinker_llm`). All providers are normalized into
+:mod:`tinker_cookbook.tokendb_studio.tinker_llm`). All providers are normalized into
 one internal representation:
 
 - :class:`Message` / :class:`ToolCall` / :class:`ToolDef` describe the
@@ -501,7 +501,7 @@ class LLMClient:
         if self.config.provider == "tinker":
             # Renderer + SDK path (see tinker_llm); imported lazily to keep
             # the HTTP providers importable without the tinker/renderer stack.
-            from tinker_cookbook.tokendb import tinker_llm
+            from tinker_cookbook.tokendb_studio import tinker_llm
 
             try:
                 async for event in tinker_llm.stream_tinker(

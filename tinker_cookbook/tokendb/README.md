@@ -1,16 +1,18 @@
 # Token DB
 
-Capture every raw token exchanged during RL rollouts (prompts, sampled tokens, per-token logprobs, rewards) into parquet segments under your run's `log_path`, then inspect them with a live web viewer, the Python API, or plain DuckDB SQL. Designed so that agents can query training data programmatically, not just humans clicking through HTML reports.
+Capture every raw token exchanged during RL rollouts (prompts, sampled tokens, per-token logprobs, rewards) into parquet segments under your run's `log_path`, then query them with the Python API or plain DuckDB SQL. Designed so that agents can query training data programmatically, not just humans clicking through HTML reports.
+
+This package is the persistence and query layer. The interactive analysis app on top of it (web viewer, chat agent, visuals) lives in [`tinker_cookbook/tokendb_studio/`](../tokendb_studio/README.md).
 
 ## Install
 
-The write and read paths use optional dependencies (`pyarrow`, `duckdb`, `aiohttp`):
+The write and read paths use optional dependencies (`pyarrow`, `duckdb`):
 
 ```bash
 pip install 'tinker-cookbook[tokendb]'
 ```
 
-A run with `token_db` disabled never imports any of these.
+A run with `token_db` disabled never imports any of these. The viewer app needs the `tokendb-studio` extra (adds `aiohttp`); see the [studio README](../tokendb_studio/README.md).
 
 ## Enabling capture on an RL run
 
@@ -31,21 +33,11 @@ Every rollout transition is then written as one row (one row per turn) under `{l
 
 ## Live viewer
 
-```bash
-python -m tinker_cookbook.tokendb.serve log_path=~/runs/my-run  # http://127.0.0.1:7423
-```
+The live web viewer (chat-first analysis of one run or every registered run) is the studio app; see the [studio README](../tokendb_studio/README.md) for the quickstart.
 
-The viewer is chat-first: ask questions about the run in plain language (see [Chat](#chat)) and the agent queries the token DB for you, linking the rollouts it cites. A per-rollout detail view shows the full transcript with tokens colored by logprob and a raw-token-ID toggle.
+## Run registry
 
-## Multi-run dashboard and run registry
-
-Start the server with no `log_path` to see every run, including concurrently running experiments, in one dashboard:
-
-```bash
-python -m tinker_cookbook.tokendb.serve  # registry mode, http://127.0.0.1:7423
-```
-
-This works because every coordinator `TokenDbWriter` registers its run in a local **run registry**: one JSON file per run (so concurrent jobs never share an append target) recording `run_id`, `log_path`, `model_name`, `recipe_name`, `started_at`, `pid`, and `hostname`.
+Every coordinator `TokenDbWriter` registers its run in a local **run registry**: one JSON file per run (so concurrent jobs never share an append target) recording `run_id`, `log_path`, `model_name`, `recipe_name`, `started_at`, `pid`, and `hostname`. This is what lets cross-run readers (and the studio's multi-run dashboard) discover every run, including concurrently running experiments, with no extra configuration.
 
 - Default location: `~/.cache/tinker-cookbook/tokendb/runs/`
 - Override with the `TINKER_TOKENDB_REGISTRY` environment variable, or per run via `TokenDbConfig(registry_dir=...)` / `TokenDbWriter(..., registry_dir=...)`
@@ -53,18 +45,9 @@ This works because every coordinator `TokenDbWriter` registers its run in a loca
 
 Registration is best-effort: a broken registry logs a warning and never breaks training. Worker-mode writers (explicit `run_id` / `run_attempt` in context) never register; only the coordinator does.
 
-In registry mode the server exposes:
-
-- `GET /api/runs`: registered runs with a cheap liveness probe (a run is live if any `manifest-*.jsonl` was modified within the last 120 seconds)
-- `GET /api/dashboard`: per-run aggregates (row counts, filtered-row count, latest iteration, mean recent reward, a reward-per-iteration sparkline series), TTL-cached so the dashboard can poll cheaply
-- All single-run endpoints per run under `/api/runs/{run_id}/...` (rollouts, rollout detail, search, sql, labels, decode, ws), with per-run readers constructed lazily and LRU-cached
-- `/ws` (subscribe messages carry a `run_id`) and `/ws/dashboard` (pushes dashboard rows on a poll interval)
-
-Pointing the server at a specific `log_path` still works exactly as before and does not need the registry.
-
 ### Cross-run SQL (`RegistryBackend`)
 
-Registry mode also exposes one SQL surface spanning **all** registered runs: `POST /api/sql` at the registry root runs read-only DuckDB over cross-run `rollouts` / `rollouts_latest` / `trajectories` / `labels` / `runs` views (plus the promoted `correct` / `parse_errors` / `context_overflows`), with `run_id` as an ordinary column. This is what makes config-vs-outcome questions one query:
+`RegistryBackend` is one SQL surface spanning **all** registered runs: read-only DuckDB over cross-run `rollouts` / `rollouts_latest` / `trajectories` / `labels` / `runs` views (plus the promoted `correct` / `parse_errors` / `context_overflows`), with `run_id` as an ordinary column. This is what makes config-vs-outcome questions one query:
 
 ```sql
 SELECT r.temperature, avg(t.total_reward) AS mean_reward
@@ -72,12 +55,12 @@ FROM trajectories t JOIN runs r USING (run_id, run_attempt)
 GROUP BY 1 ORDER BY 1
 ```
 
-The `superseded` flag is computed per run (`PARTITION BY run_id, split, iteration`), so a resume in one run never hides another run's rows; prefer `rollouts_latest` for cross-run aggregates. The same backend powers the registry chat's `sql` tool (no `run_id` argument means cross-run) and the dashboard aggregation (one `GROUP BY run_id` pass instead of a reader per run). Programmatic use:
+The `superseded` flag is computed per run (`PARTITION BY run_id, split, iteration`), so a resume in one run never hides another run's rows; prefer `rollouts_latest` for cross-run aggregates. The same backend powers the studio's registry chat and dashboard aggregation (one `GROUP BY run_id` pass instead of a reader per run). Programmatic use:
 
 ```python
 from tinker_cookbook.tokendb import RegistryBackend
 
-backend = RegistryBackend()  # resolves the registry like the viewer does
+backend = RegistryBackend()  # resolves the registry the same way readers do
 rows = backend.sql("SELECT run_id, count(*) AS n FROM rollouts GROUP BY run_id")
 ```
 
@@ -86,24 +69,7 @@ Unlike the single-run reader, the cross-run reader is **lazy**: it keeps a DuckD
 - Cloud stores (`gs://`, `s3://`): each segment is fetched once through `Storage` and cached (segments are immutable, so existence is validity).
 - v1-shaped segments are normalized to the v2 schema at cache fill (`upgraded/`); the original files are never rewritten.
 
-The segcache defaults to `~/.cache/tinker-cookbook/tokendb/segcache`; override it with the `segcache_dir` config knob (`python -m tinker_cookbook.tokendb.serve segcache_dir=/tmp/segcache`, or the `RegistryBackend(segcache_dir=...)` argument) or the `TINKER_TOKENDB_SEGCACHE` environment variable. There is no automatic eviction yet: the cache grows with the cloud/v1 segments you have actually queried, and it is always safe to delete (`rm -rf ~/.cache/tinker-cookbook/tokendb/segcache`); segments re-stage on the next refresh.
-
-## Chat
-
-The viewer has a chat mode: ask questions about your training data in plain language and an LLM agent answers by querying the token DB for you. No SQL required. The agent can run read-only DuckDB queries (`sql`), search by regex or token-ID subsequence (`search`), pull whole trajectories (`get_rollout`), and publish self-contained HTML visuals (`publish_visual`) that render inline in the chat and in a gallery. In registry mode there is also a global cross-run chat (with `list_runs` and `dashboard` tools for comparing experiments) alongside the per-run chats.
-
-To enable it, give the server an API key for one of the supported providers:
-
-- Set `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `TINKER_API_KEY` in the server's environment, or
-- Configure the provider, model, and key at runtime in the UI settings (backed by `POST /api/agent/config`; the key is held in server memory only and is never written to disk or returned by the API).
-
-The `tinker` provider runs the agent on any model served by Tinker: the model dropdown is populated from `get_server_capabilities().supported_models` (fetched lazily and cached, so it needs `TINKER_API_KEY`), prompts are built with the model's recommended renderer, and tool calls use the renderer's native tool-call format when it has one (Qwen3, DeepSeek, Kimi, GPT-OSS, ...). For models whose renderer has no tool convention, the agent falls back to a documented JSON-in-text protocol (a fenced ```` ```json {"tool": ..., "arguments": ...}```` block).
-
-Published visuals are single HTML files with inline JS/SVG (no external CDNs). For live views the visual polls the read-only SQL endpoint on an interval and re-renders in place, so a chart of, say, reward by iteration keeps updating while training runs. The files are standalone and shareable.
-
-Turns are server-owned: a `user_message` starts an asyncio task that runs the agent loop to completion regardless of the websocket that started it, so switching tabs or navigating away never kills a turn mid-flight. Every streamed record (messages plus coalesced text deltas, tool calls/results, published visuals, and the terminal done/error/cancelled) is appended to the conversation transcript as it happens with a monotonically increasing `seq`. Websockets are subscribers: `{"type": "subscribe_conversation", "conversation_id": ..., "after_seq": N}` replays the persisted records past `N` and then tails the live turn, so a reconnecting (or second) client resumes exactly where it left off with no gaps or duplicates. `{"type": "cancel"}` stops the running turn from any subscribed client. `GET /api/chats` reports `in_flight` per conversation, and `GET /api/chats/recent?limit=5` returns the most recent conversations (across all runs in registry mode, each tagged with its `run_id`), which backs the dashboard's recent-chats card.
-
-On-disk layout: conversations are appended as JSONL to `{log_path}/tokens/chats/{conversation_id}.jsonl` and visuals are written to `{log_path}/tokens/visuals/`. The registry-level chat stores both under the registry directory (`chats/` and `visuals/`) instead. Like everything else, this goes through the `Storage` protocol, so cloud `log_path`s work.
+The segcache defaults to `~/.cache/tinker-cookbook/tokendb/segcache`; override it with the `RegistryBackend(segcache_dir=...)` argument (the studio server exposes it as the `segcache_dir` config knob) or the `TINKER_TOKENDB_SEGCACHE` environment variable. There is no automatic eviction yet: the cache grows with the cloud/v1 segments you have actually queried, and it is always safe to delete (`rm -rf ~/.cache/tinker-cookbook/tokendb/segcache`); segments re-stage on the next refresh.
 
 ## Python API
 

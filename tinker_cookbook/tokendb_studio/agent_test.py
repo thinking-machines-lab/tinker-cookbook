@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -13,8 +14,10 @@ pytest.importorskip("pyarrow")
 pytest.importorskip("duckdb")
 pytest.importorskip("aiohttp")
 
-from tinker_cookbook.stores.storage import storage_from_uri
-from tinker_cookbook.tokendb.agent import (
+from tinker_cookbook.stores.storage import LocalStorage, Storage, storage_from_uri
+from tinker_cookbook.tokendb.schema import TokenRow
+from tinker_cookbook.tokendb.writer import ParquetSegmentBackend, TokenDbWriter
+from tinker_cookbook.tokendb_studio.agent import (
     MAX_LIST_ITEMS_FOR_MODEL,
     MAX_SQL_ROWS_FOR_MODEL,
     MAX_STRING_CHARS_FOR_MODEL,
@@ -28,7 +31,7 @@ from tinker_cookbook.tokendb.agent import (
     VisualStore,
     run_chat_turn,
 )
-from tinker_cookbook.tokendb.llm import (
+from tinker_cookbook.tokendb_studio.llm import (
     Done,
     ErrorEvent,
     LLMClient,
@@ -42,8 +45,6 @@ from tinker_cookbook.tokendb.llm import (
     build_openai_responses_request,
     detect_default_provider,
 )
-from tinker_cookbook.tokendb.schema import TokenRow
-from tinker_cookbook.tokendb.writer import ParquetSegmentBackend, TokenDbWriter
 
 
 @pytest.fixture(autouse=True)
@@ -833,7 +834,7 @@ def test_registry_toolbox_routes_by_run_id(tmp_path: Path):
     readers = {run_id: ParquetSegmentBackend(storage_from_uri(str(log_path)))}
 
     def resolve(rid: str) -> ParquetSegmentBackend:
-        from tinker_cookbook.tokendb.agent import ToolExecutionError
+        from tinker_cookbook.tokendb_studio.agent import ToolExecutionError
 
         if rid not in readers:
             raise ToolExecutionError(f"unknown run_id {rid!r}")
@@ -870,3 +871,39 @@ def test_registry_toolbox_routes_by_run_id(tmp_path: Path):
     assert outcome.is_error and "run_id" in payload["error"]
     outcome, payload = _run_tool(toolbox, "sql", {"run_id": "nope", "query": "SELECT 1"})
     assert outcome.is_error and "unknown run_id" in payload["error"]
+
+
+# --- Storage flush semantics (moved from tokendb/interface_test.py) ---
+
+
+class RecordingStorage:
+    """Wraps a Storage and counts flush() calls (delegates everything else)."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.flush_calls = 0
+
+    def flush(self) -> None:
+        self.flush_calls += 1
+        self._inner.flush()
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
+def test_chat_store_append_flushes_storage(tmp_path: Path):
+    """Appends must be followed by ``Storage.flush()`` so staged cloud
+    backends never silently hold back chat transcripts."""
+    storage = RecordingStorage(LocalStorage(tmp_path))
+    store = ChatStore(cast(Storage, storage))
+    store.append_event("20240101-000000-abcd1234", {"type": "ping"})
+    assert storage.flush_calls == 1
+    assert len(store.load_records("20240101-000000-abcd1234")) == 1
+
+
+def test_visual_store_publish_flushes_storage(tmp_path: Path):
+    storage = RecordingStorage(LocalStorage(tmp_path))
+    store = VisualStore(cast(Storage, storage), url_base="/visuals")
+    store.publish("t", "d", "<html></html>")
+    assert storage.flush_calls == 1
+    assert len(store.list()) == 1

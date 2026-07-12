@@ -16,7 +16,7 @@ import tinker
 
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.role_colon import RoleColonRenderer
-from tinker_cookbook.tokendb.llm import (
+from tinker_cookbook.tokendb_studio.llm import (
     Done,
     ErrorEvent,
     LLMClient,
@@ -27,7 +27,7 @@ from tinker_cookbook.tokendb.llm import (
     ToolCallEvent,
     ToolDef,
 )
-from tinker_cookbook.tokendb.tinker_llm import (
+from tinker_cookbook.tokendb_studio.tinker_llm import (
     TinkerSession,
     base_model_name,
     parse_json_tool_blocks,

@@ -2,9 +2,9 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 // Dev server proxies API and websocket traffic to the python viewer server
-// (`python -m tinker_cookbook.tokendb.serve [log_path=...] port=7423`).
+// (`python -m tinker_cookbook.tokendb_studio.serve [log_path=...] port=7423`).
 // `npm run build` emits the static bundle the python server ships as
-// package data (tinker_cookbook/tokendb/static/).
+// package data (tinker_cookbook/tokendb_studio/static/).
 export default defineConfig({
   plugins: [react()],
   server: {

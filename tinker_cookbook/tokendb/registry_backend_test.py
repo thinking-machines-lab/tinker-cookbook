@@ -13,7 +13,6 @@ pytest.importorskip("pyarrow")
 pytest.importorskip("duckdb")
 
 from tinker_cookbook.stores.storage import LocalStorage, Storage
-from tinker_cookbook.tokendb.agent_prompt import format_schema_card
 from tinker_cookbook.tokendb.interface import TokenStoreBackend
 from tinker_cookbook.tokendb.reader import ParquetSegmentReader
 from tinker_cookbook.tokendb.reader_test import make_row, write_v1_segment
@@ -392,14 +391,6 @@ class TestSchemaCard:
         assert set(card["runs"]) == {keyed_runs["a"], keyed_runs["b"]}
         assert card["runs"][keyed_runs["a"]]["metrics_keys"] == ["acc", "shared"]
         assert card["runs"][keyed_runs["b"]]["metrics_keys"] == ["shared"]
-
-    def test_prompt_rendering_attributes_partial_keys(self, keyed_runs: dict):
-        text = format_schema_card(make_backend().schema_card())
-        assert "Observed keys across runs (2 runs)" in text
-        # `acc` exists only in run a; `shared` everywhere (no suffix).
-        assert f"`acc` (only: {keyed_runs['a']})" in text
-        assert "`shared` (only:" not in text
-        assert "`shared`" in text
 
 
 class TestProtocolAndConcurrency:

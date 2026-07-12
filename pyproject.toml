@@ -54,6 +54,10 @@ multiplayer-rl = [
     "textarena>=0.7.4",
 ]
 tokendb = [
+    "duckdb>=1.0.0",
+    "pyarrow>=15.0.0",
+]
+tokendb-studio = [
     "aiohttp>=3.9.0",
     "duckdb>=1.0.0",
     "pyarrow>=15.0.0",
@@ -158,8 +162,8 @@ version-file = "tinker_cookbook/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
 # The token DB viewer's frontend source (ui/) stays out of the wheel; the
-# built bundle in tinker_cookbook/tokendb/static/ ships as package data.
-exclude = ["*_test.py", "**/results/", "tinker_cookbook/tokendb/ui/"]
+# built bundle in tinker_cookbook/tokendb_studio/static/ ships as package data.
+exclude = ["*_test.py", "**/results/", "tinker_cookbook/tokendb_studio/ui/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]

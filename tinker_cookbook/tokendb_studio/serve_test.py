@@ -15,8 +15,8 @@ pytest.importorskip("aiohttp")
 from aiohttp.test_utils import TestClient, TestServer
 
 from tinker_cookbook.tokendb.schema import TokenRow, compute_ob_delta
-from tinker_cookbook.tokendb.serve import build_app
 from tinker_cookbook.tokendb.writer import TokenDbWriter
+from tinker_cookbook.tokendb_studio.serve import build_app
 
 
 def make_row(**overrides) -> TokenRow:
@@ -690,12 +690,12 @@ def test_registry_mode_requires_registry(monkeypatch: pytest.MonkeyPatch):
 
 # --- Chat agent endpoints (websocket chat, config, visuals) ---
 
-from tinker_cookbook.tokendb.agent_test import (  # noqa: E402
+from tinker_cookbook.tokendb_studio.agent_test import (  # noqa: E402
     GatedTransport,
     ScriptedTransport,
     anthropic_script,
 )
-from tinker_cookbook.tokendb.llm import DEFAULT_MODELS, KNOWN_MODELS  # noqa: E402
+from tinker_cookbook.tokendb_studio.llm import DEFAULT_MODELS, KNOWN_MODELS  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -1038,7 +1038,7 @@ def test_chat_system_prompt_includes_schema_card(maps_store: Path):
 
 
 def test_format_schema_card_truncation_note():
-    from tinker_cookbook.tokendb.agent_prompt import format_schema_card
+    from tinker_cookbook.tokendb_studio.agent_prompt import format_schema_card
 
     card = {
         "metrics_keys": ["acc"],
