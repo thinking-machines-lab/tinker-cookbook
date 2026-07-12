@@ -197,24 +197,34 @@ Old stores keep working: v1 segments (`metrics` as a JSON string, no `attrs` / `
 
 Two opt-in paths for code outside the RL loop:
 
-`capture_samples` observes every sample made through `TinkerTokenCompleter` / `TinkerMessageCompleter` inside the block, writing `source="sample"` rows (prompt as `ob_tokens`, sampled tokens/logprobs/stop reason as the action (`ac_*`) fields, keyword metadata into the `extra` column):
+`capture_samples` observes every sample made through `TinkerTokenCompleter` / `TinkerMessageCompleter` inside the block, writing `source="sample"` rows (prompt as `ob_tokens`, sampled tokens/logprobs/stop reason as the action (`ac_*`) fields). Categorical dimensions (teacher model, dataset, ...) go to the typed `attrs` map and numeric values to the typed `metrics` map, so they are directly filterable in SQL; extra keyword metadata lands in the free-form `extra` JSON column:
 
 ```python
 from tinker_cookbook.tokendb import TokenDbWriter, capture_samples
 
 with TokenDbWriter("~/runs/distill-data") as writer:
-    with capture_samples(writer, dataset="multilingual"):
+    with capture_samples(
+        writer,
+        attrs={"teacher_model": "Qwen/Qwen3.6-35B-A3B", "source_dataset": "multilingual"},
+        metrics={"temperature": 0.15},
+    ):
         results = await asyncio.gather(*[completer(mi, stop) for mi in prompts])
 ```
 
-Code that calls `sample_async` directly can record explicitly:
+Code that calls `sample_async` directly can record explicitly; the reserved attrs key `"row_id"` promotes to the `env_row_id` column (same routing as rollout capture):
 
 ```python
 result = await sampling_client.sample_async(prompt=model_input, sampling_params=params, num_samples=1)
-writer.record_sample(model_input, result.sequences[0], group_idx=i, tokenizer=tokenizer, prompt_id=pid)
+writer.record_sample(
+    model_input,
+    result.sequences[0],
+    group_idx=i,
+    tokenizer=tokenizer,
+    attrs={"teacher_model": teacher_model, "source_dataset": dataset_name, "row_id": pid},
+)
 ```
 
-See `recipes/prompt_distillation/create_data.py` (`token_db_path=...`) for a worked example.
+See `recipes/prompt_distillation/create_data.py` (`token_db_path=...`) for a worked `record_sample` example; the on-policy distillation and SDFT recipes (`recipes/distillation/`, `recipes/sdft/`) expose the same `token_db_path` flag and capture the student's on-policy samples through `capture_samples`.
 
 ## Storage layout
 

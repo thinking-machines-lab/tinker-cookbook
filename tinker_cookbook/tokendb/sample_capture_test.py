@@ -134,6 +134,23 @@ class TestCaptureSamples:
         assert row.sampling_client_step == 3
         assert row.tags == ["t1"]
 
+    def test_attrs_and_metrics_stamped_on_rows(self):
+        writer = ListWriter()
+        with capture_samples(
+            writer,
+            attrs={"teacher_model": "qwen", "dataset": "deepmath"},
+            metrics={"round": 3.0},
+            purpose="distill",
+        ):
+            run_completer(make_completer())
+        (row,) = writer.rows
+        assert row.attrs == {"teacher_model": "qwen", "dataset": "deepmath"}
+        assert row.metrics == {"round": 3.0}
+        # Keyword metadata still lands in extra, alongside the completer's
+        # sampling metadata.
+        assert row.extra["purpose"] == "distill"
+        assert row.extra["completer"] == "TinkerTokenCompleter"
+
     def test_sink_restored_on_exit(self):
         sentinel = lambda mi, seqs, meta: None  # noqa: E731
         completers.set_sample_sink(sentinel)
@@ -164,6 +181,29 @@ class TestCaptureSamples:
 
 
 class TestSampleToRow:
+    def test_attrs_and_metrics_route_to_typed_columns(self):
+        seq = FakeSequence(tokens=[7, 8])
+        row = sample_to_row(
+            tinker.ModelInput.from_ints([1]),
+            seq,
+            attrs={"teacher_model": "qwen", "source_dataset": "multilingual"},
+            metrics={"difficulty": 2.0},
+            extra={"note": "free-form"},
+        )
+        assert row.attrs == {"teacher_model": "qwen", "source_dataset": "multilingual"}
+        assert row.metrics == {"difficulty": 2.0}
+        assert row.extra == {"note": "free-form"}
+        assert row.env_row_id is None
+
+    def test_attrs_row_id_promotes_to_env_row_id(self):
+        attrs = {"row_id": "multilingual/4", "teacher_model": "qwen"}
+        row = sample_to_row(tinker.ModelInput.from_ints([1]), FakeSequence(tokens=[7]), attrs=attrs)
+        assert row.env_row_id == "multilingual/4"
+        # row_id is promoted, not duplicated into the attrs map ...
+        assert row.attrs == {"teacher_model": "qwen"}
+        # ... and the caller's mapping is not mutated.
+        assert attrs == {"row_id": "multilingual/4", "teacher_model": "qwen"}
+
     def test_tokens_with_logprobs_input(self):
         seq = completers.TokensWithLogprobs(tokens=[7, 8], maybe_logprobs=None)
         row = sample_to_row(tinker.ModelInput.from_ints([1]), seq)
@@ -204,3 +244,32 @@ class TestRecordSample:
         assert record["ac_text"] == "t10 t11"
         assert json.loads(record["extra"]) == {"prompt_id": "p4"}
         assert record["run_id"] == writer.run_id
+
+    def test_attrs_and_metrics_parquet_roundtrip(self, tmp_path: Path):
+        seq = FakeSequence(tokens=[10, 11])
+        with TokenDbWriter(tmp_path, flush_interval_s=3600) as writer:
+            writer.record_sample(
+                tinker.ModelInput.from_ints([1, 2]),
+                seq,
+                group_idx=7,
+                attrs={
+                    "teacher_model": "qwen",
+                    "source_dataset": "multilingual.txt",
+                    "row_id": "multilingual/7",
+                },
+                metrics={"difficulty": 2.0},
+                sentence="hola",
+            )
+        table = read_all_segments(tmp_path)
+        assert table.num_rows == 1
+        record = table.to_pylist()[0]
+        # attrs/metrics land in the typed map columns, not extra.
+        assert dict(record["attrs"]) == {
+            "teacher_model": "qwen",
+            "source_dataset": "multilingual.txt",
+        }
+        assert dict(record["metrics"]) == {"difficulty": pytest.approx(2.0)}
+        # Reserved row_id promotes to the env_row_id column.
+        assert record["env_row_id"] == "multilingual/7"
+        # Free-form kwargs stay in the extra JSON column.
+        assert json.loads(record["extra"]) == {"sentence": "hola"}

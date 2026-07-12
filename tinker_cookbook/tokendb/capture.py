@@ -488,15 +488,25 @@ def sample_to_row(
     tags: Sequence[str] = (),
     tokenizer: SupportsDecode | None = None,
     store_text: bool = True,
+    attrs: Mapping[str, str] | None = None,
+    metrics: Mapping[str, float] | None = None,
     extra: Mapping[str, Any] | None = None,
 ) -> TokenRow:
     """Build a ``source="sample"`` :class:`TokenRow` from one sampled sequence.
 
     The prompt's text-chunk tokens become ``ob_tokens`` (full, never
     delta-encoded; image chunks set ``has_images``), and the sampled tokens /
-    logprobs / stop reason become the ``ac`` fields. *extra* lands in the
-    row's ``extra`` JSON column.
+    logprobs / stop reason become the ``ac`` fields.
+
+    Typed metadata goes to the typed map columns: *attrs* (categorical
+    dimensions, e.g. teacher model or source dataset) to the ``attrs``
+    string map and *metrics* (numeric per-row values) to the ``metrics``
+    float map. The reserved attrs key ``"row_id"`` promotes to the
+    ``env_row_id`` column, mirroring the metadata routing in
+    :func:`record_groups`. *extra* stays the free-form JSON escape hatch.
     """
+    row_attrs = dict(attrs or {})
+    env_row_id = row_attrs.pop("row_id", None)
     ob_tokens, has_images = extract_ob_tokens(model_input)
     ac_tokens = list(sequence.tokens)
     ob_text: str | None = None
@@ -519,7 +529,10 @@ def sample_to_row(
         has_images=has_images,
         ob_text=ob_text,
         ac_text=ac_text,
+        attrs=row_attrs,
+        metrics=dict(metrics or {}),
         extra=dict(extra or {}),
+        env_row_id=str(env_row_id) if env_row_id is not None else None,
         sampling_client_step=sampling_client_step,
         tags=list(tags),
         source="sample",
@@ -529,6 +542,9 @@ def sample_to_row(
 @contextmanager
 def capture_samples(
     writer_or_active: TokenWriter | ActiveCapture,
+    *,
+    attrs: Mapping[str, str] | None = None,
+    metrics: Mapping[str, float] | None = None,
     **metadata: Any,
 ) -> Iterator[None]:
     """Capture every completer sample in the ``with`` block to the token DB.
@@ -542,8 +558,13 @@ def capture_samples(
     Row identity: split / iteration / step / tags come from
     :data:`capture_context` when set (falling back to ``split="sample"``,
     ``iteration=-1``); ``group_idx`` is a per-``capture_samples`` counter over
-    sample calls and ``traj_idx`` indexes the sequences within one call. The
-    keyword *metadata* plus the completer's sampling metadata land in the
+    sample calls and ``traj_idx`` indexes the sequences within one call.
+
+    *attrs* / *metrics* are stamped onto every captured row's typed map
+    columns (categorical dimensions like teacher model / dataset in
+    ``attrs``, numeric values in ``metrics``; a reserved attrs ``"row_id"``
+    promotes to ``env_row_id`` — see :func:`sample_to_row`). The keyword
+    *metadata* plus the completer's sampling metadata land in the free-form
     ``extra`` column.
 
     The sink never raises (capture failures are logged), and the previous
@@ -584,6 +605,8 @@ def capture_samples(
                     tags=ctx.tags if ctx is not None else (),
                     tokenizer=tokenizer,
                     store_text=store_text,
+                    attrs=attrs,
+                    metrics=metrics,
                     extra=extra,
                 )
                 for traj_idx, sequence in enumerate(sequences)

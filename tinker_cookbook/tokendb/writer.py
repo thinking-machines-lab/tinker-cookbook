@@ -256,6 +256,8 @@ class TokenDbWriter:
         tags: Sequence[str] = (),
         tokenizer: Any = None,
         store_text: bool = True,
+        attrs: Mapping[str, str] | None = None,
+        metrics: Mapping[str, float] | None = None,
         **metadata: Any,
     ) -> TokenRow:
         """Record one directly sampled sequence as a ``source="sample"`` row.
@@ -276,7 +278,12 @@ class TokenDbWriter:
             tags: Logging tags for the row.
             tokenizer: Optional ``decode(list[int]) -> str`` for text columns.
             store_text: Store decoded text when *tokenizer* is given.
-            **metadata: Recorded in the row's ``extra`` JSON column.
+            attrs: Categorical dimensions (teacher model, source dataset, ...)
+                for the typed ``attrs`` string-map column. The reserved key
+                ``"row_id"`` promotes to the ``env_row_id`` column.
+            metrics: Numeric per-row values for the typed ``metrics``
+                float-map column.
+            **metadata: Recorded in the row's free-form ``extra`` JSON column.
 
         Returns:
             The buffered :class:`TokenRow`.
@@ -293,6 +300,8 @@ class TokenDbWriter:
             tags=tags,
             tokenizer=tokenizer,
             store_text=store_text,
+            attrs=attrs,
+            metrics=metrics,
             extra=metadata,
         )
         self.append_rows([row])

@@ -140,9 +140,15 @@ async def create_data_async(
                 result.sequences[0],
                 group_idx=sentence_idx,
                 tokenizer=tokenizer,
+                # Categorical row dimensions go to the typed attrs column;
+                # "row_id" promotes to the env_row_id column.
+                attrs={
+                    "teacher_model": TEACHER_MODEL,
+                    "source_dataset": "multilingual.txt",
+                    "row_id": f"multilingual/{sentence_idx}",
+                },
+                # Free-form payloads stay in the extra JSON column.
                 sentence=sentence,
-                teacher_model=TEACHER_MODEL,
-                source_dataset="multilingual.txt",
             )
         response = tokenizer.decode(result.sequences[0].tokens)
         # parse the final answer from the response using regex for example: Final Answer: xx where xx is two character label for each language and nothing else. xx is one of the following: en, fr, es, hi, ja, ko, ru, ot.
