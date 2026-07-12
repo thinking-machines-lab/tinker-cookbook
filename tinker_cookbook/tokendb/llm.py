@@ -1,15 +1,16 @@
-"""Minimal provider-agnostic chat-completions client for the tokendb chat agent.
+"""Minimal provider-agnostic chat client for the tokendb chat agent.
 
-Speaks the Anthropic Messages API and the OpenAI Chat Completions API over
-plain HTTP (aiohttp + server-sent events); no provider SDK dependencies. A
-third provider, ``tinker``, samples from any Tinker-served model through the
+Speaks the Anthropic Messages API and the OpenAI Responses API over plain
+HTTP (aiohttp + server-sent events); no provider SDK dependencies. A third
+provider, ``tinker``, samples from any Tinker-served model through the
 tinker SDK and the cookbook's renderer machinery (see
 :mod:`tinker_cookbook.tokendb.tinker_llm`). All providers are normalized into
 one internal representation:
 
 - :class:`Message` / :class:`ToolCall` / :class:`ToolDef` describe the
   conversation and tools once; ``build_anthropic_request`` /
-  ``build_openai_request`` serialize them into each provider's wire format.
+  ``build_openai_responses_request`` serialize them into each provider's wire
+  format.
 - :meth:`LLMClient.stream` yields typed :data:`LLMEvent` objects
   (:class:`TextDelta`, :class:`ToolCallEvent`, :class:`Done`,
   :class:`ErrorEvent`) regardless of provider.
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
-OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_API_URL = "https://api.openai.com/v1/responses"
 
 # Plain-constant defaults; override via LLMConfig(model=...) or the viewer's
 # agent-config endpoint. The tinker default is a static fallback; the viewer
@@ -138,6 +139,9 @@ class LLMConfig:
     api_key: str | None = None  # explicit key beats the environment variable
     max_tokens: int = DEFAULT_MAX_TOKENS
     base_url: str | None = None  # override for proxies / compatible servers
+    # OpenAI Responses API reasoning effort ("none" | "low" | "medium" | ...).
+    # None omits the field entirely, leaving the model's default in place.
+    reasoning_effort: str | None = None
 
     def resolved_model(self) -> str:
         return self.model or DEFAULT_MODELS[self.provider]
@@ -221,54 +225,64 @@ def build_anthropic_request(
     return config.base_url or ANTHROPIC_API_URL, headers, payload
 
 
-def build_openai_request(
+def build_openai_responses_request(
     config: LLMConfig,
     api_key: str,
     system: str,
     messages: Sequence[Message],
     tools: Sequence[ToolDef],
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
-    """Serialize a conversation into an OpenAI Chat Completions request."""
-    wire_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    """Serialize a conversation into an OpenAI Responses API request.
+
+    The Responses API (unlike Chat Completions) supports function tools on
+    reasoning models without forcing ``reasoning_effort`` to ``"none"``. The
+    system prompt travels as top-level ``instructions``; assistant tool calls
+    and tool results become ``function_call`` / ``function_call_output`` input
+    items linked by ``call_id``.
+    """
+    input_items: list[dict[str, Any]] = []
     for msg in messages:
         if msg.role == "assistant":
-            entry: dict[str, Any] = {"role": "assistant", "content": msg.content or None}
-            if msg.tool_calls:
-                entry["tool_calls"] = [
+            if msg.content:
+                input_items.append({"role": "assistant", "content": msg.content})
+            for call in msg.tool_calls:
+                input_items.append(
                     {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": call.name,
-                            "arguments": json.dumps(call.arguments),
-                        },
+                        "type": "function_call",
+                        "call_id": call.id,
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments),
                     }
-                    for call in msg.tool_calls
-                ]
-            wire_messages.append(entry)
+                )
         elif msg.role == "tool":
-            wire_messages.append(
-                {"role": "tool", "tool_call_id": msg.tool_call_id, "content": msg.content}
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.tool_call_id,
+                    "output": msg.content,
+                }
             )
         else:
-            wire_messages.append({"role": "user", "content": msg.content})
+            input_items.append({"role": "user", "content": msg.content})
     payload: dict[str, Any] = {
         "model": config.resolved_model(),
-        # OpenAI deprecated "max_tokens" for chat completions; current models
-        # (gpt-5.x and later) reject it outright.
-        "max_completion_tokens": config.max_tokens,
-        "messages": wire_messages,
+        "instructions": system,
+        "input": input_items,
+        "max_output_tokens": config.max_tokens,
         "stream": True,
+        # The full conversation is threaded client-side, so opt out of
+        # server-side response storage.
+        "store": False,
     }
+    if config.reasoning_effort:
+        payload["reasoning"] = {"effort": config.reasoning_effort}
     if tools:
         payload["tools"] = [
             {
                 "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.input_schema,
-                },
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.input_schema,
             }
             for t in tools
         ]
@@ -285,9 +299,9 @@ def build_openai_request(
 class SSETransport(Protocol):
     """POST a JSON payload and yield ``(event_name, data)`` per SSE event.
 
-    ``event_name`` is the SSE ``event:`` field (``None`` when absent, as in
-    OpenAI streams) and ``data`` is the parsed JSON of the ``data:`` field.
-    OpenAI's ``data: [DONE]`` sentinel is not yielded; the stream just ends.
+    ``event_name`` is the SSE ``event:`` field (``None`` when absent) and
+    ``data`` is the parsed JSON of the ``data:`` field. A ``data: [DONE]``
+    sentinel is not yielded; the stream just ends.
     """
 
     def stream_sse(
@@ -388,46 +402,67 @@ async def _stream_anthropic(
     yield Done(stop_reason)
 
 
-async def _stream_openai(
+async def _stream_openai_responses(
     sse: AsyncIterator[tuple[str | None, dict[str, Any]]],
 ) -> AsyncIterator[LLMEvent]:
-    """Normalize OpenAI Chat Completions streaming chunks."""
+    """Normalize OpenAI Responses API streaming events.
+
+    Function-call arguments arrive as string deltas keyed by ``item_id`` and
+    are accumulated until the item's ``response.output_item.done``, which also
+    carries the authoritative complete ``arguments`` string.
+    """
     stop_reason: str | None = None
-    # Tool-call fragments accumulate by index across chunks.
-    pending_tools: dict[int, dict[str, Any]] = {}
-    async for _, data in sse:
-        if "error" in data:
-            error = data["error"]
-            message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
-            yield ErrorEvent(str(message))
+    emitted_tool_call = False
+    # In-flight function_call output items by item id (arguments accumulate
+    # across response.function_call_arguments.delta events).
+    pending_tools: dict[str, dict[str, Any]] = {}
+    async for name, data in sse:
+        event_type = name or data.get("type")
+        if event_type == "response.output_text.delta":
+            yield TextDelta(data.get("delta", ""))
+        elif event_type == "response.output_item.added":
+            item = data.get("item", {})
+            if item.get("type") == "function_call":
+                pending_tools[str(item.get("id", ""))] = {
+                    "call_id": item.get("call_id", ""),
+                    "name": item.get("name", ""),
+                    "json": item.get("arguments") or "",
+                }
+        elif event_type == "response.function_call_arguments.delta":
+            pending = pending_tools.get(str(data.get("item_id", "")))
+            if pending is not None:
+                pending["json"] += data.get("delta", "")
+        elif event_type == "response.output_item.done":
+            item = data.get("item", {})
+            if item.get("type") == "function_call":
+                pending = pending_tools.pop(str(item.get("id", "")), None) or {
+                    "call_id": "",
+                    "name": "",
+                    "json": "",
+                }
+                raw = item.get("arguments") or pending["json"]
+                arguments = json.loads(raw) if raw.strip() else {}
+                call_id = item.get("call_id") or pending["call_id"]
+                tool_name = item.get("name") or pending["name"]
+                yield ToolCallEvent(ToolCall(call_id, tool_name, arguments))
+                emitted_tool_call = True
+        elif event_type == "response.completed":
+            stop_reason = "tool_calls" if emitted_tool_call else "stop"
+        elif event_type == "response.incomplete":
+            details = (data.get("response") or {}).get("incomplete_details") or {}
+            stop_reason = details.get("reason") or "incomplete"
+        elif event_type == "response.failed":
+            error = (data.get("response") or {}).get("error") or {}
+            yield ErrorEvent(str(error.get("message", error)))
             return
-        choices = data.get("choices") or []
-        if not choices:
-            continue
-        choice = choices[0]
-        delta = choice.get("delta") or {}
-        if delta.get("content"):
-            yield TextDelta(delta["content"])
-        for fragment in delta.get("tool_calls") or []:
-            index = int(fragment.get("index", 0))
-            pending = pending_tools.setdefault(index, {"id": "", "name": "", "json": ""})
-            if fragment.get("id"):
-                pending["id"] = fragment["id"]
-            function = fragment.get("function") or {}
-            if function.get("name"):
-                pending["name"] += function["name"]
-            if function.get("arguments"):
-                pending["json"] += function["arguments"]
-        if choice.get("finish_reason"):
-            stop_reason = choice["finish_reason"]
-    for _, pending in sorted(pending_tools.items()):
-        arguments = json.loads(pending["json"]) if pending["json"].strip() else {}
-        yield ToolCallEvent(ToolCall(pending["id"], pending["name"], arguments))
+        elif event_type == "error":
+            yield ErrorEvent(str(data.get("message", data)))
+            return
     yield Done(stop_reason)
 
 
 class LLMClient:
-    """Streaming chat-completions client over an :class:`SSETransport`."""
+    """Streaming chat client over an :class:`SSETransport`."""
 
     def __init__(
         self,
@@ -483,10 +518,14 @@ class LLMClient:
                 yield ErrorEvent(str(e))
             return
         build = (
-            build_anthropic_request if self.config.provider == "anthropic" else build_openai_request
+            build_anthropic_request
+            if self.config.provider == "anthropic"
+            else build_openai_responses_request
         )
         url, headers, payload = build(self.config, api_key, system, messages, tools)
-        normalize = _stream_anthropic if self.config.provider == "anthropic" else _stream_openai
+        normalize = (
+            _stream_anthropic if self.config.provider == "anthropic" else _stream_openai_responses
+        )
         try:
             async for event in normalize(self.transport.stream_sse(url, headers, payload)):
                 yield event
