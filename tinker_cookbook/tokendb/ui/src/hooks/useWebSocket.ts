@@ -8,6 +8,10 @@ export interface WsOptions {
   onMessage: (msg: Record<string, unknown>) => void;
   /** Message to send once the socket opens (e.g. a subscribe request). */
   sendOnOpen?: unknown;
+  /** Called after every (re)connect. Kept in a ref: changing it does not
+   * reconnect. Use it to resubscribe with up-to-date state (e.g. the last
+   * seen transcript seq), which a static `sendOnOpen` can't carry. */
+  onOpen?: () => void;
   /** Reconnect delay after a drop (ms). */
   reconnectMs?: number;
 }
@@ -27,6 +31,8 @@ export function useWebSocket(path: string | null, options: WsOptions): WsHandle 
   const [status, setStatus] = useState<WsStatus>("connecting");
   const onMessageRef = useRef(options.onMessage);
   onMessageRef.current = options.onMessage;
+  const onOpenRef = useRef(options.onOpen);
+  onOpenRef.current = options.onOpen;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectMs = options.reconnectMs ?? 2000;
   const sendOnOpenJson =
@@ -44,6 +50,7 @@ export function useWebSocket(path: string | null, options: WsOptions): WsHandle 
       ws.onopen = () => {
         setStatus("live");
         if (sendOnOpenJson !== null) ws.send(sendOnOpenJson);
+        onOpenRef.current?.();
       };
       ws.onmessage = (event) => {
         try {

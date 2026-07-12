@@ -1,9 +1,9 @@
 // Dashboard screen (registry mode): every registered run in one table,
 // live-updated over the dashboard websocket.
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { getJSON, type DashboardRun } from "../api";
+import { getJSON, type DashboardRun, type RecentChat } from "../api";
 import { Badge } from "../components/Badge";
 import { CellValue, DataTable } from "../components/DataTable";
 import { Sparkline } from "../components/Sparkline";
@@ -69,6 +69,70 @@ function RunRow({ run }: { run: DashboardRun }) {
         />
       </td>
     </tr>
+  );
+}
+
+/** How often the recent-chats card refreshes (activity + in_flight). */
+const RECENT_CHATS_POLL_MS = 10000;
+
+/** The 5 most recent conversations across every run (and the cross-run
+ * chat); clicking one opens that chat with the conversation loaded. An
+ * in-flight turn shows a spinner and keeps ticking while you're here. */
+function RecentChats() {
+  const navigate = useNavigate();
+  const recent = useApi(
+    () => getJSON<{ conversations: RecentChat[] }>("/api/chats/recent", { limit: "5" }),
+    [],
+  );
+  useEffect(() => {
+    const timer = setInterval(() => recent.reload(), RECENT_CHATS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [recent.reload]);
+
+  const chats = recent.data?.conversations ?? [];
+  if (recent.data !== null && chats.length === 0) return null;
+
+  const open = (chat: RecentChat) => {
+    const search = `?c=${encodeURIComponent(chat.conversation_id)}`;
+    navigate({
+      pathname: chat.run_id !== null ? `/runs/${encodeURIComponent(chat.run_id)}/chat` : "/chat",
+      search,
+    });
+  };
+
+  return (
+    <div className="recent-chats">
+      <div className="recent-chats-label turn-label">Recent chats</div>
+      {recent.data === null && !recent.error && (
+        <div className="recent-chats-list">
+          {[0, 1, 2].map((i) => (
+            <div key={i} aria-hidden="true" className="recent-chat">
+              <span className="skeleton skeleton-line" style={{ width: `${64 - i * 12}%` }} />
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="recent-chats-list">
+        {chats.map((chat) => (
+          <div
+            key={`${chat.run_id ?? "global"}/${chat.conversation_id}`}
+            className="recent-chat clickable"
+            onClick={() => open(chat)}
+          >
+            {chat.in_flight === true ? (
+              <span className="spinner" aria-label="turn running" />
+            ) : (
+              <span className="recent-chat-dot" aria-hidden="true" />
+            )}
+            <span className="recent-chat-title">{chat.title || "(empty chat)"}</span>
+            <span className="recent-chat-run mono muted">{chat.run_id ?? "all runs"}</span>
+            <span className="recent-chat-time muted">
+              {chat.in_flight === true ? "running…" : fmtRelative(chat.mtime)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -148,6 +212,7 @@ export function Dashboard() {
             description="rows dropped by filters"
           />
         </div>
+        <RecentChats />
         <div className="dashboard-actions">
           <Link to="/chat">
             <button className="primary" tabIndex={-1}>

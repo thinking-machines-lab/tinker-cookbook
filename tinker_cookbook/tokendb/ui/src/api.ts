@@ -131,21 +131,41 @@ export interface ConversationSummary {
   title: string;
   n_records: number;
   mtime: number | null;
+  /** Whether a turn is currently running server-side on this conversation. */
+  in_flight?: boolean;
 }
 
-/** One JSONL transcript line: a conversation message or a replayable UI event. */
+/** One /api/chats/recent entry: a conversation summary tagged with its run. */
+export interface RecentChat extends ConversationSummary {
+  /** The run the chat belongs to; null for the single run / cross-run chat. */
+  run_id: string | null;
+}
+
+/**
+ * One JSONL transcript record: a conversation message or a streamed UI event
+ * (coalesced text deltas, tool calls/results, published visuals, terminal
+ * done/error/cancelled). Records carry a monotonically increasing per-
+ * conversation `seq`; the chat websocket replays and tails them verbatim.
+ */
 export interface ChatRecord {
   kind: string; // "message" | "event"
+  seq?: number;
   ts?: string;
   // kind == "message":
   role?: string;
   content?: string;
   tool_calls?: { id: string; name: string; arguments: Record<string, unknown> }[];
   tool_call_id?: string;
-  // kind == "event" (e.g. visual_published):
+  // kind == "event":
   type?: string;
-  name?: string;
-  url?: string;
+  text?: string; // text_delta
+  id?: string; // tool_call / tool_result
+  arguments?: Record<string, unknown>; // tool_call
+  is_error?: boolean; // tool_result
+  preview?: string; // tool_result
+  error?: string; // error
+  name?: string; // tool_call / tool_result / visual_published
+  url?: string; // visual_published
   title?: string;
   description?: string;
 }

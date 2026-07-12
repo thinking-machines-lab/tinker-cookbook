@@ -657,7 +657,11 @@ def test_registry_mode_requires_registry(monkeypatch: pytest.MonkeyPatch):
 
 # --- Chat agent endpoints (websocket chat, config, visuals) ---
 
-from tinker_cookbook.tokendb.agent_test import ScriptedTransport, anthropic_script  # noqa: E402
+from tinker_cookbook.tokendb.agent_test import (  # noqa: E402
+    GatedTransport,
+    ScriptedTransport,
+    anthropic_script,
+)
 from tinker_cookbook.tokendb.llm import DEFAULT_MODELS, KNOWN_MODELS  # noqa: E402
 
 
@@ -669,17 +673,27 @@ def _no_ambient_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TINKER_API_KEY", raising=False)
 
 
+async def _collect_until_terminal(ws) -> list[dict]:
+    """Collect frames through the terminal record (done/error/cancelled)."""
+    frames = []
+    while True:
+        frames.append(json.loads((await ws.receive(timeout=10.0)).data))
+        if frames[-1].get("type") in ("done", "error", "cancelled"):
+            return frames
+
+
 async def _chat_frames(ws, text: str, conversation_id: str | None = None) -> list[dict]:
     """Send a user_message and collect frames through the terminal one."""
     message: dict = {"type": "user_message", "text": text}
     if conversation_id is not None:
         message["conversation_id"] = conversation_id
     await ws.send_str(json.dumps(message))
-    frames = []
-    while True:
-        frames.append(json.loads((await ws.receive(timeout=10.0)).data))
-        if frames[-1]["type"] in ("done", "error", "cancelled"):
-            return frames
+    return await _collect_until_terminal(ws)
+
+
+def _shapes(frames: list[dict]) -> list[tuple]:
+    """(kind, role-or-type) per frame; acks/transient errors have kind None."""
+    return [(f.get("kind"), f.get("role") or f.get("type")) for f in frames]
 
 
 def test_chat_ws_end_to_end(populated_store: Path):
@@ -704,19 +718,25 @@ def test_chat_ws_end_to_end(populated_store: Path):
                 frames = await _chat_frames(ws, "how many rows?")
             assert frames[0]["type"] == "conversation"
             conversation_id = frames[0]["conversation_id"]
-            types = [f["type"] for f in frames]
-            assert types == [
-                "conversation",
-                "text_delta",
-                "tool_call",
-                "tool_result",
-                "text_delta",
-                "done",
+            # After the ack, the stream is the persisted transcript records.
+            assert _shapes(frames) == [
+                (None, "conversation"),
+                ("message", "user"),
+                ("event", "text_delta"),
+                ("event", "tool_call"),
+                ("message", "assistant"),
+                ("event", "tool_result"),
+                ("message", "tool"),
+                ("event", "text_delta"),
+                ("message", "assistant"),
+                ("event", "done"),
             ]
-            assert frames[1]["text"] == "Checking."
-            assert frames[2]["name"] == "sql"
-            assert not frames[3]["is_error"]
-            assert frames[4]["text"] == "There are 6 rows."
+            records = frames[1:]
+            assert [r["seq"] for r in records] == list(range(len(records)))
+            assert frames[2]["text"] == "Checking."
+            assert frames[3]["name"] == "sql"
+            assert not frames[5]["is_error"]
+            assert frames[7]["text"] == "There are 6 rows."
 
             # The system prompt carried the run's SQL endpoint and schema docs.
             system = transport.requests[0][2]["system"]
@@ -728,16 +748,234 @@ def test_chat_ws_end_to_end(populated_store: Path):
             conversations = (await resp.json())["conversations"]
             assert [c["conversation_id"] for c in conversations] == [conversation_id]
             assert conversations[0]["title"] == "how many rows?"
+            assert conversations[0]["in_flight"] is False
             resp = await client.get(f"/api/chats/{conversation_id}")
-            records = (await resp.json())["records"]
-            assert [r.get("role") for r in records if r["kind"] == "message"] == [
-                "user",
-                "assistant",
-                "tool",
-                "assistant",
-            ]
+            assert (await resp.json())["records"] == records
             resp = await client.get("/api/chats/nope-id")
             assert resp.status == 404
+
+    asyncio.run(main())
+
+
+async def _poll_records(client, path: str, done: bool = True, timeout: float = 10.0) -> list[dict]:
+    """Poll a chat-detail endpoint until the transcript has a terminal event."""
+    deadline = time.monotonic() + timeout
+    while True:
+        resp = await client.get(path)
+        if resp.status == 200:
+            records = (await resp.json())["records"]
+            if any(r.get("type") in ("done", "error", "cancelled") for r in records):
+                return records
+        if time.monotonic() > deadline:
+            raise AssertionError(f"no terminal event in {path} within {timeout}s")
+        await asyncio.sleep(0.02)
+
+
+def test_chat_ws_disconnect_does_not_cancel_turn(populated_store: Path):
+    """The turn is server-owned: dropping the socket mid-turn changes nothing."""
+    gate = asyncio.Event()
+    transport = GatedTransport(
+        [
+            anthropic_script(
+                text="Checking.",
+                tool_calls=[("t1", "sql", {"query": "SELECT count(*) AS n FROM rollouts"})],
+            ),
+            anthropic_script(text="There are 6 rows."),
+        ],
+        gates={1: gate},  # park the turn before its second model call
+    )
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, llm_transport=transport
+        )
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            ws = await client.ws_connect("/api/chat")
+            await ws.send_str(json.dumps({"type": "user_message", "text": "how many rows?"}))
+            first = json.loads((await ws.receive(timeout=10.0)).data)
+            assert first["type"] == "conversation"
+            conversation_id = first["conversation_id"]
+            # Read up to the tool message, then drop the socket mid-turn.
+            frames = []
+            while not frames or frames[-1].get("role") != "tool":
+                frames.append(json.loads((await ws.receive(timeout=10.0)).data))
+            last_seq = frames[-1]["seq"]
+            # While parked: the conversation reports in_flight everywhere.
+            chats = (await (await client.get("/api/chats")).json())["conversations"]
+            assert chats[0]["conversation_id"] == conversation_id
+            assert chats[0]["in_flight"] is True
+            recent = (await (await client.get("/api/chats/recent")).json())["conversations"]
+            assert recent[0]["in_flight"] is True
+            # A second user_message on the same conversation is rejected.
+            await ws.send_str(
+                json.dumps(
+                    {"type": "user_message", "text": "again", "conversation_id": conversation_id}
+                )
+            )
+            busy = json.loads((await ws.receive(timeout=10.0)).data)
+            assert busy["type"] == "error"
+            assert busy["code"] == "turn_in_flight"
+            await ws.close()
+
+            gate.set()
+            records = await _poll_records(client, f"/api/chats/{conversation_id}")
+            # The turn finished after the disconnect: complete transcript.
+            assert records[-1]["type"] == "done"
+            assert [r["seq"] for r in records] == list(range(len(records)))
+            assert any(r.get("content") == "There are 6 rows." for r in records)
+
+            # A fresh socket resumes from the last seen seq with no dupes.
+            async with client.ws_connect("/api/chat") as ws2:
+                await ws2.send_str(
+                    json.dumps(
+                        {
+                            "type": "subscribe_conversation",
+                            "conversation_id": conversation_id,
+                            "after_seq": last_seq,
+                        }
+                    )
+                )
+                ack = json.loads((await ws2.receive(timeout=10.0)).data)
+                assert ack["type"] == "subscribed_conversation"
+                assert ack["in_flight"] is False
+                tail = await _collect_until_terminal(ws2)
+            assert [r["seq"] for r in tail] == list(range(last_seq + 1, len(records)))
+            assert tail == records[last_seq + 1 :]
+
+            chats = (await (await client.get("/api/chats")).json())["conversations"]
+            assert chats[0]["in_flight"] is False
+
+    asyncio.run(main())
+
+
+def test_chat_ws_cancel_running_turn(populated_store: Path):
+    """A cancel frame stops the manager task; the transcript records it."""
+    gate = asyncio.Event()
+    transport = GatedTransport([anthropic_script(text="never sent")], gates={0: gate})
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, llm_transport=transport
+        )
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            async with client.ws_connect("/api/chat") as ws:
+                await ws.send_str(json.dumps({"type": "user_message", "text": "hello"}))
+                first = json.loads((await ws.receive(timeout=10.0)).data)
+                conversation_id = first["conversation_id"]
+                user = json.loads((await ws.receive(timeout=10.0)).data)
+                assert user["role"] == "user"
+                await ws.send_str(json.dumps({"type": "cancel"}))
+                cancelled = json.loads((await ws.receive(timeout=10.0)).data)
+                assert cancelled["type"] == "cancelled"
+            records = (await (await client.get(f"/api/chats/{conversation_id}")).json())["records"]
+            assert [r.get("role") or r.get("type") for r in records] == ["user", "cancelled"]
+
+    asyncio.run(main())
+
+
+def test_chat_ws_subscribe_replays_full_transcript(populated_store: Path):
+    """subscribe_conversation with the default after_seq replays everything."""
+    transport = ScriptedTransport([anthropic_script(text="Hi there.")])
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, llm_transport=transport
+        )
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            async with client.ws_connect("/api/chat") as ws:
+                frames = await _chat_frames(ws, "hello")
+            conversation_id = frames[0]["conversation_id"]
+            async with client.ws_connect("/api/chat") as ws:
+                await ws.send_str(
+                    json.dumps(
+                        {"type": "subscribe_conversation", "conversation_id": conversation_id}
+                    )
+                )
+                ack = json.loads((await ws.receive(timeout=10.0)).data)
+                assert ack == {
+                    "type": "subscribed_conversation",
+                    "conversation_id": conversation_id,
+                    "in_flight": False,
+                }
+                replay = await _collect_until_terminal(ws)
+            assert replay == frames[1:]
+            # Bad subscriptions get error frames.
+            async with client.ws_connect("/api/chat") as ws:
+                await ws.send_str(
+                    json.dumps({"type": "subscribe_conversation", "conversation_id": "bad id!"})
+                )
+                msg = json.loads((await ws.receive(timeout=10.0)).data)
+                assert msg["type"] == "error"
+
+    asyncio.run(main())
+
+
+def test_chats_recent_single_run(populated_store: Path):
+    transport = ScriptedTransport(
+        [anthropic_script(text="First answer."), anthropic_script(text="Second answer.")]
+    )
+
+    async def main():
+        app = build_app(
+            populated_store, static_dir=None, load_tokenizer=False, llm_transport=transport
+        )
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            async with client.ws_connect("/api/chat") as ws:
+                first = await _chat_frames(ws, "first question")
+            async with client.ws_connect("/api/chat") as ws:
+                second = await _chat_frames(ws, "second question")
+            resp = await client.get("/api/chats/recent")
+            entries = (await resp.json())["conversations"]
+            assert [e["title"] for e in entries] == ["second question", "first question"]
+            assert [e["conversation_id"] for e in entries] == [
+                second[0]["conversation_id"],
+                first[0]["conversation_id"],
+            ]
+            for entry in entries:
+                assert entry["run_id"] is None
+                assert entry["in_flight"] is False
+                assert entry["mtime"] is not None
+            resp = await client.get("/api/chats/recent", params={"limit": "1"})
+            entries = (await resp.json())["conversations"]
+            assert [e["title"] for e in entries] == ["second question"]
+
+    asyncio.run(main())
+
+
+def test_chats_recent_registry_aggregates_across_runs(registry_stores: dict):
+    live_id = registry_stores["live_id"]
+    transport = ScriptedTransport(
+        [anthropic_script(text="Global answer."), anthropic_script(text="Run answer.")]
+    )
+
+    async def main():
+        app = build_app(None, static_dir=None, load_tokenizer=False, llm_transport=transport)
+        async with TestClient(TestServer(app)) as client:
+            await client.post("/api/agent/config", json={"api_key": "sk-test"})
+            # One cross-run (registry-level) chat and one per-run chat.
+            async with client.ws_connect("/api/chat") as ws:
+                global_frames = await _chat_frames(ws, "global question")
+            async with client.ws_connect(f"/api/runs/{live_id}/chat") as ws:
+                run_frames = await _chat_frames(ws, "run question")
+            resp = await client.get("/api/chats/recent?limit=5")
+            entries = (await resp.json())["conversations"]
+            by_id = {e["conversation_id"]: e for e in entries}
+            assert set(by_id) == {
+                global_frames[0]["conversation_id"],
+                run_frames[0]["conversation_id"],
+            }
+            assert by_id[global_frames[0]["conversation_id"]]["run_id"] is None
+            assert by_id[run_frames[0]["conversation_id"]]["run_id"] == live_id
+            for entry in entries:
+                assert entry["in_flight"] is False
+                assert entry["title"]
+                assert entry["mtime"] is not None
+            # Newest activity first.
+            assert entries[0]["conversation_id"] == run_frames[0]["conversation_id"]
 
     asyncio.run(main())
 
@@ -1051,7 +1289,7 @@ def test_visuals_publish_list_and_serve(populated_store: Path):
             await client.post("/api/agent/config", json={"api_key": "sk-test"})
             async with client.ws_connect("/api/chat") as ws:
                 frames = await _chat_frames(ws, "chart the reward")
-            visual = next(f for f in frames if f["type"] == "visual_published")
+            visual = next(f for f in frames if f.get("type") == "visual_published")
             assert visual["title"] == "Reward"
             assert visual["url"].startswith("/visuals/reward-")
 
@@ -1100,7 +1338,7 @@ def test_registry_global_chat_lists_runs(registry_stores: dict):
                 frames = await _chat_frames(ws, "what runs exist?")
             assert frames[-1]["type"] == "done"
             list_result = next(
-                f for f in frames if f["type"] == "tool_result" and f["name"] == "list_runs"
+                f for f in frames if f.get("type") == "tool_result" and f["name"] == "list_runs"
             )
             assert '"runs"' in list_result["preview"]
             # The model saw the full (untruncated-by-preview) run listing.
@@ -1111,7 +1349,7 @@ def test_registry_global_chat_lists_runs(registry_stores: dict):
             )
             assert live_id in list_runs_record["content"]
             sql_result = next(
-                f for f in frames if f["type"] == "tool_result" and f["name"] == "sql"
+                f for f in frames if f.get("type") == "tool_result" and f["name"] == "sql"
             )
             assert '"n": 3' in sql_result["preview"]
             # Registry-mode prompt teaches the per-run SQL endpoint template.

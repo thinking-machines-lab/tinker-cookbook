@@ -23,6 +23,8 @@ from tinker_cookbook.tokendb.agent import (
     RegistryToolbox,
     RunToolbox,
     ToolExecutionError,
+    TurnBusyError,
+    TurnManager,
     VisualStore,
     run_chat_turn,
 )
@@ -81,6 +83,32 @@ class ScriptedTransport:
         if not self.scripts:
             raise AssertionError("ScriptedTransport ran out of scripted responses")
         for event in self.scripts.pop(0):
+            yield event
+
+
+class GatedTransport(ScriptedTransport):
+    """ScriptedTransport that blocks on a per-call gate before replying.
+
+    Lets tests hold a turn in flight at a known point (the n-th model call)
+    while they subscribe, disconnect, cancel, or poll in-flight status.
+    """
+
+    def __init__(
+        self,
+        scripts: list[list[tuple[str | None, dict]]],
+        gates: dict[int, asyncio.Event],
+    ) -> None:
+        super().__init__(scripts)
+        self.gates = gates
+        self.calls_started = 0
+
+    async def stream_sse(self, url: str, headers: dict, payload: dict):
+        index = self.calls_started
+        self.calls_started += 1
+        gate = self.gates.get(index)
+        if gate is not None:
+            await gate.wait()
+        async for event in super().stream_sse(url, headers, payload):
             yield event
 
 
@@ -558,38 +586,41 @@ def test_chat_turn_multi_tool_and_persistence(store_toolbox, tmp_path: Path):
     frames = collect(
         run_chat_turn(client, toolbox, chat_store, "conv-1", "count rows please", "SYSTEM")
     )
-    types = [f["type"] for f in frames]
-    assert types == [
-        "text_delta",
-        "tool_call",
-        "tool_call",
-        "tool_result",
-        "visual_published",
-        "tool_result",
-        "text_delta",
-        "done",
+    # Every frame is a persisted transcript record: conversation messages
+    # interleaved with UI events, with a monotonically increasing seq.
+    shapes = [(f["kind"], f.get("role") or f.get("type")) for f in frames]
+    assert shapes == [
+        ("message", "user"),
+        ("event", "text_delta"),
+        ("event", "tool_call"),
+        ("event", "tool_call"),
+        ("message", "assistant"),
+        ("event", "tool_result"),
+        ("message", "tool"),
+        ("event", "visual_published"),
+        ("event", "tool_result"),
+        ("message", "tool"),
+        ("event", "text_delta"),
+        ("message", "assistant"),
+        ("event", "done"),
     ]
-    sql_result = next(f for f in frames if f["type"] == "tool_result" and f["name"] == "sql")
+    assert [f["seq"] for f in frames] == list(range(len(frames)))
+    sql_result = next(f for f in frames if f.get("type") == "tool_result" and f["name"] == "sql")
     assert not sql_result["is_error"]
     assert '"n"' in sql_result["preview"]
+    deltas = [f["text"] for f in frames if f.get("type") == "text_delta"]
+    assert deltas == ["Let me look.", "All done."]
 
     # The second model call got the tool results threaded back.
     second_payload = transport.requests[1][2]
     roles = [m["role"] for m in second_payload["messages"]]
     assert roles == ["user", "assistant", "user", "user"]  # tool results as user blocks
 
-    # Transcript: JSONL, one message/event per line, reloadable.
+    # Transcript: JSONL, one record per line; the frame stream IS the file.
     records = chat_store.load_records("conv-1")
-    kinds = [(r["kind"], r.get("role")) for r in records]
-    assert kinds == [
-        ("message", "user"),
-        ("message", "assistant"),
-        ("message", "tool"),
-        ("event", None),  # visual_published
-        ("message", "tool"),
-        ("message", "assistant"),
-    ]
-    assert records[1]["tool_calls"][0]["name"] == "sql"
+    assert records == frames
+    assistant = next(r for r in records if r.get("role") == "assistant")
+    assert assistant["tool_calls"][0]["name"] == "sql"
     messages = chat_store.load_messages("conv-1")
     assert messages[-1].content == "All done."
     assert chat_store.list_conversations()[0]["conversation_id"] == "conv-1"
@@ -604,7 +635,194 @@ def test_chat_turn_llm_error_frame(store_toolbox):
         transport=ScriptedTransport([[("error", {"error": {"message": "overloaded"}})]]),
     )
     frames = collect(run_chat_turn(client, toolbox, chat_store, "conv-2", "hi", "SYSTEM"))
-    assert frames == [{"type": "error", "error": "overloaded"}]
+    shapes = [(f["kind"], f.get("role") or f.get("type")) for f in frames]
+    assert shapes == [("message", "user"), ("event", "error")]
+    assert frames[-1]["error"] == "overloaded"
+    # The error is persisted too, so a late subscriber sees how the turn ended.
+    assert chat_store.load_records("conv-2") == frames
+
+
+def test_chat_store_backfills_seq_for_old_transcripts(store_toolbox):
+    _, storage, _ = store_toolbox
+    # A transcript written before seq existed: records get their line index.
+    old_lines = (
+        json.dumps({"kind": "message", "role": "user", "content": "hi"})
+        + "\n"
+        + json.dumps({"kind": "message", "role": "assistant", "content": "hello"})
+        + "\n"
+    )
+    storage.append("tokens/chats/conv-old.jsonl", old_lines.encode())
+    chat_store = ChatStore(storage)
+    records = chat_store.load_records("conv-old")
+    assert [r["seq"] for r in records] == [0, 1]
+    assert chat_store.last_seq("conv-old") == 1
+    # New appends continue the sequence.
+    record = chat_store.append_message("conv-old", Message(role="user", content="more"))
+    assert record["seq"] == 2
+    assert [r["seq"] for r in chat_store.load_records("conv-old")] == [0, 1, 2]
+    assert chat_store.last_seq("conv-missing") == -1
+
+
+# --- TurnManager ---
+
+
+def _turn_frames(
+    client: LLMClient, toolbox, chat_store: ChatStore, conversation_id: str, text: str
+):
+    return run_chat_turn(client, toolbox, chat_store, conversation_id, text, "SYSTEM")
+
+
+def test_turn_manager_completes_turn_with_no_subscriber(store_toolbox):
+    """A scripted multi-tool turn runs to completion with nobody attached."""
+    toolbox, storage, _ = store_toolbox
+    chat_store = ChatStore(storage)
+    transport = ScriptedTransport(
+        [
+            anthropic_script(
+                text="Looking.",
+                tool_calls=[
+                    ("t1", "sql", {"query": "SELECT count(*) AS n FROM rollouts"}),
+                    ("t2", "search", {"regex": "give up"}),
+                ],
+            ),
+            anthropic_script(text="All done."),
+        ]
+    )
+    client = LLMClient(LLMConfig(provider="anthropic", api_key="k"), transport=transport)
+
+    async def main():
+        manager = TurnManager()
+        task = manager.start_turn(
+            "run", "conv-bg", chat_store, _turn_frames(client, toolbox, chat_store, "conv-bg", "go")
+        )
+        assert manager.in_flight("run", "conv-bg")
+        assert manager.in_flight_ids("run") == {"conv-bg"}
+        await task
+        assert not manager.in_flight("run", "conv-bg")
+
+    asyncio.run(main())
+    records = chat_store.load_records("conv-bg")
+    assert records[-1]["type"] == "done"
+    assert [r["seq"] for r in records] == list(range(len(records)))
+    tool_results = [r for r in records if r.get("type") == "tool_result"]
+    assert [r["name"] for r in tool_results] == ["sql", "search"]
+    assert [r.get("role") for r in records if r["kind"] == "message"] == [
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+    ]
+
+
+def test_turn_manager_mid_turn_subscriber_replay_plus_live(store_toolbox):
+    """Attach mid-turn: file replay + live tail join with seq continuity."""
+    toolbox, storage, _ = store_toolbox
+    chat_store = ChatStore(storage)
+
+    async def main():
+        gate = asyncio.Event()
+        transport = GatedTransport(
+            [
+                anthropic_script(
+                    text="Counting.",
+                    tool_calls=[("t1", "sql", {"query": "SELECT count(*) AS n FROM rollouts"})],
+                ),
+                anthropic_script(text="All done."),
+            ],
+            gates={1: gate},  # hold the turn before its second model call
+        )
+        client = LLMClient(LLMConfig(provider="anthropic", api_key="k"), transport=transport)
+        manager = TurnManager()
+        task = manager.start_turn(
+            "run",
+            "conv-mid",
+            chat_store,
+            _turn_frames(client, toolbox, chat_store, "conv-mid", "count"),
+        )
+        # Wait until the tool result is persisted (the turn is now parked at
+        # the gate), then attach a subscriber and snapshot the transcript.
+        while not any(r.get("role") == "tool" for r in chat_store.load_records("conv-mid")):
+            await asyncio.sleep(0.005)
+        queue = manager.subscribe("run", "conv-mid")
+        replayed = chat_store.load_records("conv-mid")
+        gate.set()
+        await task
+        live = []
+        while not queue.empty():
+            live.append(queue.get_nowait())
+        manager.unsubscribe("run", "conv-mid", queue)
+        after_seq = replayed[-1]["seq"]
+        combined = replayed + [r for r in live if r["seq"] > after_seq]
+        # No gaps, no duplicates, and the join equals the persisted transcript.
+        assert [r["seq"] for r in combined] == list(range(len(combined)))
+        assert combined == chat_store.load_records("conv-mid")
+        assert combined[-1]["type"] == "done"
+
+    asyncio.run(main())
+
+
+def test_turn_manager_rejects_concurrent_turn_and_cancels(store_toolbox):
+    toolbox, storage, _ = store_toolbox
+    chat_store = ChatStore(storage)
+
+    async def main():
+        gate = asyncio.Event()
+        transport = GatedTransport([anthropic_script(text="never sent")], gates={0: gate})
+        client = LLMClient(LLMConfig(provider="anthropic", api_key="k"), transport=transport)
+        manager = TurnManager()
+        task = manager.start_turn(
+            "run",
+            "conv-c",
+            chat_store,
+            _turn_frames(client, toolbox, chat_store, "conv-c", "first"),
+        )
+        # Wait for the user message so the cancelled turn has a transcript.
+        while not chat_store.load_records("conv-c"):
+            await asyncio.sleep(0.005)
+        # A second concurrent turn on the same conversation is rejected...
+        second = _turn_frames(client, toolbox, chat_store, "conv-c", "second")
+        with pytest.raises(TurnBusyError):
+            manager.start_turn("run", "conv-c", chat_store, second)
+        await second.aclose()
+        # ...but another conversation is fine (and cancels cleanly too).
+        assert not manager.in_flight("run", "conv-other")
+        assert manager.cancel("run", "conv-c")
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not manager.in_flight("run", "conv-c")
+        assert not manager.cancel("run", "conv-c")  # nothing left to cancel
+
+    asyncio.run(main())
+    records = chat_store.load_records("conv-c")
+    assert records[0]["role"] == "user"
+    assert records[-1]["type"] == "cancelled"
+    assert [r["seq"] for r in records] == list(range(len(records)))
+
+
+def test_turn_manager_shutdown_cancels_running_turns(store_toolbox):
+    toolbox, storage, _ = store_toolbox
+    chat_store = ChatStore(storage)
+
+    async def main():
+        gate = asyncio.Event()
+        transport = GatedTransport([anthropic_script(text="never sent")], gates={0: gate})
+        client = LLMClient(LLMConfig(provider="anthropic", api_key="k"), transport=transport)
+        manager = TurnManager()
+        manager.start_turn(
+            "run",
+            "conv-s",
+            chat_store,
+            _turn_frames(client, toolbox, chat_store, "conv-s", "hello"),
+        )
+        while not chat_store.load_records("conv-s"):
+            await asyncio.sleep(0.005)
+        await manager.shutdown()
+        assert not manager.in_flight("run", "conv-s")
+
+    asyncio.run(main())
+    records = chat_store.load_records("conv-s")
+    assert records[-1]["type"] == "cancelled"
 
 
 def test_registry_toolbox_routes_by_run_id(tmp_path: Path):

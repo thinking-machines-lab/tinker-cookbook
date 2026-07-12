@@ -47,7 +47,6 @@ text plus raw token IDs (both stored, so nothing is lost).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import dataclasses
 import json
 import logging
@@ -67,6 +66,8 @@ from tinker_cookbook.tokendb.agent import (
     RegistryToolbox,
     RunToolbox,
     ToolExecutionError,
+    TurnBusyError,
+    TurnManager,
     VisualStore,
     new_conversation_id,
     run_chat_turn,
@@ -159,6 +160,8 @@ LIVE_WINDOW_KEY = web.AppKey("live_window_s", float)
 LOAD_TOKENIZER_KEY = web.AppKey("load_tokenizer", bool)
 # Chat agent: provider/model/api_key held in server memory only (never persisted).
 AGENT_STATE_KEY: web.AppKey[dict[str, Any]] = web.AppKey("agent_state")
+# Chat turns run as server-owned background tasks (see agent.TurnManager).
+TURN_MANAGER_KEY: web.AppKey[TurnManager] = web.AppKey("turn_manager")
 LLM_TRANSPORT_KEY: web.AppKey[SSETransport | None] = web.AppKey("llm_transport")
 # Tinker model list: fetched lazily from server capabilities and cached.
 TINKER_MODELS_TTL_S = 300.0
@@ -759,6 +762,18 @@ def _run_schema_card(ctx: RunContext) -> dict[str, Any] | None:
     return None
 
 
+def _chat_scope_key(request: web.Request) -> str:
+    """The TurnManager scope key for this request's chat mount.
+
+    Must be stable per conversation store: single-run mode, the registry's
+    global (cross-run) chat, and each per-run mount get distinct keys.
+    """
+    if request.app[SINGLE_CTX_KEY] is not None:
+        return "run"
+    run_id = request.match_info.get("run_id")
+    return f"run:{run_id}" if run_id is not None else "registry"
+
+
 def _chat_scope(request: web.Request, *, include_prompt: bool = False) -> ChatScope:
     """Resolve the chat scope for this request.
 
@@ -921,9 +936,62 @@ async def _handle_agent_config_post(request: web.Request) -> web.Response:
 
 async def _handle_chats_list(request: web.Request) -> web.Response:
     scope = _chat_scope(request)
-    return _json_response(
-        {"conversations": await asyncio.to_thread(scope.chat_store.list_conversations)}
-    )
+    in_flight_ids = request.app[TURN_MANAGER_KEY].in_flight_ids(_chat_scope_key(request))
+    conversations = await asyncio.to_thread(scope.chat_store.list_conversations)
+    for conversation in conversations:
+        conversation["in_flight"] = conversation["conversation_id"] in in_flight_ids
+    return _json_response({"conversations": conversations})
+
+
+async def _handle_chats_recent(request: web.Request) -> web.Response:
+    """The most recent conversations, newest activity first.
+
+    Registry mode aggregates across every registered run's chat store plus
+    the registry-level (cross-run) chats; single-run mode is scoped to the
+    run. Each entry carries ``run_id`` (``None`` for the single run / the
+    cross-run chat) and ``in_flight`` from the turn manager.
+    """
+    try:
+        limit = max(1, min(int(request.rel_url.query.get("limit", "5")), 50))
+    except ValueError as e:
+        return _error_response(str(e), 400)
+    app = request.app
+    manager = app[TURN_MANAGER_KEY]
+
+    def _collect() -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+
+        def _extend(store: ChatStore, run_id: str | None, scope_key: str) -> None:
+            try:
+                conversations = store.list_conversations()
+            except Exception:
+                logger.warning("Could not list chats for %s", run_id or scope_key, exc_info=True)
+                return
+            for conversation in conversations:
+                conversation_id = str(conversation["conversation_id"])
+                entries.append(
+                    {
+                        **conversation,
+                        "run_id": run_id,
+                        "in_flight": manager.in_flight(scope_key, conversation_id),
+                    }
+                )
+
+        ctx = app[SINGLE_CTX_KEY]
+        if ctx is not None:
+            _extend(ChatStore(ctx.storage), None, "run")
+        else:
+            _extend(ChatStore(_registry_storage(app), prefix="chats"), None, "registry")
+            for record in list_runs(app[REGISTRY_DIR_KEY], live_window_s=app[LIVE_WINDOW_KEY]):
+                run_id = record.get("run_id")
+                log_path = record.get("log_path")
+                if not run_id or not log_path:
+                    continue
+                _extend(ChatStore(storage_from_uri(str(log_path))), str(run_id), f"run:{run_id}")
+        entries.sort(key=lambda c: c["mtime"] or 0, reverse=True)
+        return entries[:limit]
+
+    return _json_response({"conversations": await asyncio.to_thread(_collect)})
 
 
 async def _handle_chat_detail(request: web.Request) -> web.Response:
@@ -958,44 +1026,68 @@ async def _handle_visual_file(request: web.Request) -> web.Response:
     )
 
 
-async def _pump_chat_turn(
-    ws: web.WebSocketResponse,
-    client: LLMClient,
-    scope: ChatScope,
-    conversation_id: str,
-    text: str,
-) -> None:
-    try:
-        async for frame in run_chat_turn(
-            client, scope.toolbox, scope.chat_store, conversation_id, text, scope.system_prompt
-        ):
-            await ws.send_str(_json_dumps(frame))
-    except asyncio.CancelledError:
-        with contextlib.suppress(Exception):
-            await ws.send_str(
-                _json_dumps({"type": "cancelled", "conversation_id": conversation_id})
-            )
-        raise
-    except Exception as e:
-        logger.warning("Chat turn failed: %s", e, exc_info=True)
-        with contextlib.suppress(Exception):
-            await ws.send_str(_json_dumps({"type": "error", "error": str(e)}))
-
-
 async def _handle_chat_ws(request: web.Request) -> web.WebSocketResponse:
-    """Chat websocket.
+    """Chat websocket: a *subscriber* to server-owned background turns.
 
-    Client frames: ``{"type": "user_message", "conversation_id"?: str,
-    "text": str}`` starts a turn; ``{"type": "cancel"}`` cancels the running
-    turn. Server frames are the agent's event stream (``conversation``,
-    ``text_delta``, ``tool_call``, ``tool_result``, ``visual_published``,
-    ``done`` / ``error`` / ``cancelled``). Missing API key yields a structured
-    ``{"type": "error", "code": "no_api_key"}`` frame the UI can render as a
-    setup hint.
+    Client frames:
+
+    - ``{"type": "user_message", "conversation_id"?: str, "text": str}``
+      starts a turn via the :class:`~tinker_cookbook.tokendb.agent.TurnManager`
+      (which runs it to completion regardless of this socket) and implies a
+      subscription to that conversation. A second user_message while a turn
+      is in flight on the same conversation gets a
+      ``{"type": "error", "code": "turn_in_flight"}`` frame.
+    - ``{"type": "subscribe_conversation", "conversation_id": str,
+      "after_seq"?: int}`` replays persisted transcript records with
+      ``seq > after_seq`` (default -1: everything), then tails the live turn.
+      Acked with ``{"type": "subscribed_conversation", ..., "in_flight"}``.
+      A new subscription replaces the socket's previous one; multiple sockets
+      can subscribe to the same conversation.
+    - ``{"type": "cancel", "conversation_id"?: str}`` cancels that
+      conversation's running turn (defaults to the subscribed conversation).
+
+    Server frames are transcript records as persisted (``kind: "message"`` /
+    ``kind: "event"``, each with a monotonically increasing ``seq``) plus
+    transient acks/errors (no ``seq``): ``conversation``,
+    ``subscribed_conversation``, and ``error`` (a missing API key uses
+    ``code: "no_api_key"`` so the UI can render a setup hint). Disconnecting
+    only drops the subscription; in-flight turns keep running.
     """
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
-    turn_task: asyncio.Task[None] | None = None
+    manager = request.app[TURN_MANAGER_KEY]
+    scope_key = _chat_scope_key(request)
+    tail_task: asyncio.Task[None] | None = None
+    tail_conversation: str | None = None
+
+    async def _tail(conversation_id: str, after_seq: int, chat_store: ChatStore) -> None:
+        # Subscribe before reading the file so records published during the
+        # replay are buffered in the queue; the seq filter dedupes overlap.
+        queue = manager.subscribe(scope_key, conversation_id)
+        try:
+            last = after_seq
+            records = await asyncio.to_thread(chat_store.load_records, conversation_id)
+            for record in [*records, *_drain(queue)]:
+                seq = record.get("seq", -1)
+                if isinstance(seq, int) and seq > last:
+                    await ws.send_str(_json_dumps(record))
+                    last = seq
+            while True:
+                record = await queue.get()
+                seq = record.get("seq", -1)
+                if isinstance(seq, int) and seq > last:
+                    await ws.send_str(_json_dumps(record))
+                    last = seq
+        finally:
+            manager.unsubscribe(scope_key, conversation_id, queue)
+
+    def _resubscribe(conversation_id: str, after_seq: int, chat_store: ChatStore) -> None:
+        nonlocal tail_task, tail_conversation
+        if tail_task is not None:
+            tail_task.cancel()
+        tail_conversation = conversation_id
+        tail_task = asyncio.create_task(_tail(conversation_id, after_seq, chat_store))
+
     try:
         async for msg in ws:
             if msg.type != WSMsgType.TEXT:
@@ -1007,31 +1099,63 @@ async def _handle_chat_ws(request: web.Request) -> web.WebSocketResponse:
                 continue
             msg_type = data.get("type")
             if msg_type == "cancel":
-                if turn_task is not None and not turn_task.done():
-                    turn_task.cancel()
+                conversation_id = data.get("conversation_id") or tail_conversation
+                if conversation_id is not None:
+                    manager.cancel(scope_key, str(conversation_id))
+                continue
+            if msg_type == "subscribe_conversation":
+                conversation_id = str(data.get("conversation_id") or "")
+                try:
+                    after_seq = int(data.get("after_seq", -1))
+                    if not valid_conversation_id(conversation_id):
+                        raise ValueError(f"bad conversation id {conversation_id!r}")
+                    scope = _chat_scope(request)
+                except (TypeError, ValueError) as e:
+                    await ws.send_str(_json_dumps({"type": "error", "error": str(e)}))
+                    continue
+                except web.HTTPNotFound as e:
+                    await ws.send_str(
+                        _json_dumps({"type": "error", "error": e.text or "not found"})
+                    )
+                    continue
+                # Ack before the tail starts so the client always sees the
+                # ack ahead of any replayed record.
+                await ws.send_str(
+                    _json_dumps(
+                        {
+                            "type": "subscribed_conversation",
+                            "conversation_id": conversation_id,
+                            "in_flight": manager.in_flight(scope_key, conversation_id),
+                        }
+                    )
+                )
+                _resubscribe(conversation_id, after_seq, scope.chat_store)
                 continue
             if msg_type != "user_message":
                 await ws.send_str(
                     _json_dumps({"type": "error", "error": f"unknown message type {msg_type!r}"})
                 )
                 continue
-            if turn_task is not None and not turn_task.done():
-                await ws.send_str(
-                    _json_dumps({"type": "error", "error": "a turn is already running"})
-                )
-                continue
             text = data.get("text")
-            conversation_id = data.get("conversation_id") or new_conversation_id()
-            if (
-                not text
-                or not isinstance(text, str)
-                or not valid_conversation_id(str(conversation_id))
-            ):
+            conversation_id = str(data.get("conversation_id") or new_conversation_id())
+            if not text or not isinstance(text, str) or not valid_conversation_id(conversation_id):
                 await ws.send_str(
                     _json_dumps(
                         {
                             "type": "error",
                             "error": "user_message needs non-empty 'text' (and a well-formed conversation_id)",
+                        }
+                    )
+                )
+                continue
+            if manager.in_flight(scope_key, conversation_id):
+                await ws.send_str(
+                    _json_dumps(
+                        {
+                            "type": "error",
+                            "code": "turn_in_flight",
+                            "conversation_id": conversation_id,
+                            "error": "a turn is already running on this conversation",
                         }
                     )
                 )
@@ -1061,15 +1185,47 @@ async def _handle_chat_ws(request: web.Request) -> web.WebSocketResponse:
                 continue
             client = LLMClient(config, transport=request.app[LLM_TRANSPORT_KEY])
             await ws.send_str(
-                _json_dumps({"type": "conversation", "conversation_id": str(conversation_id)})
+                _json_dumps({"type": "conversation", "conversation_id": conversation_id})
             )
-            turn_task = asyncio.create_task(
-                _pump_chat_turn(ws, client, scope, str(conversation_id), text)
+            # user_message implies a subscription: attach (tail-only past
+            # what is already persisted) before the turn starts so no record
+            # of the new turn is missed. An existing subscription to this
+            # conversation is kept as-is.
+            if tail_conversation != conversation_id:
+                after_seq = await asyncio.to_thread(scope.chat_store.last_seq, conversation_id)
+                _resubscribe(conversation_id, after_seq, scope.chat_store)
+            frames = run_chat_turn(
+                client, scope.toolbox, scope.chat_store, conversation_id, text, scope.system_prompt
             )
+            try:
+                manager.start_turn(scope_key, conversation_id, scope.chat_store, frames)
+            except TurnBusyError as e:  # lost a start race with another socket
+                await frames.aclose()
+                await ws.send_str(
+                    _json_dumps(
+                        {
+                            "type": "error",
+                            "code": "turn_in_flight",
+                            "conversation_id": conversation_id,
+                            "error": str(e),
+                        }
+                    )
+                )
     finally:
-        if turn_task is not None:
-            turn_task.cancel()
+        # Only this socket's subscription; any running turn is unaffected.
+        if tail_task is not None:
+            tail_task.cancel()
     return ws
+
+
+def _drain(queue: asyncio.Queue[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Everything currently buffered in *queue*, without waiting."""
+    records: list[dict[str, Any]] = []
+    while True:
+        try:
+            records.append(queue.get_nowait())
+        except asyncio.QueueEmpty:
+            return records
 
 
 def _add_chat_routes(
@@ -1109,6 +1265,12 @@ async def _load_tokenizer(ctx: RunContext) -> None:
         # Best-effort: the UI falls back to whole-turn text + raw token IDs.
         ctx.tokenizer_error = str(e)
         logger.warning("Could not load tokenizer (per-token view degraded): %s", e)
+
+
+async def _shutdown_turn_manager(app: web.Application) -> None:
+    """Cancel in-flight chat turns on shutdown (transcripts keep everything
+    persisted so far, plus the terminal ``cancelled`` event)."""
+    await app[TURN_MANAGER_KEY].shutdown()
 
 
 async def _start_tokenizer_load(app: web.Application) -> None:
@@ -1169,8 +1331,13 @@ def build_app(
     app[LLM_TRANSPORT_KEY] = llm_transport
     app[TINKER_MODELS_FETCHER_KEY] = tinker_models_fetcher
     app[TINKER_MODELS_CACHE_KEY] = {}
+    app[TURN_MANAGER_KEY] = TurnManager()
+    app.on_cleanup.append(_shutdown_turn_manager)
     app.router.add_get("/api/agent/config", _handle_agent_config_get)
     app.router.add_post("/api/agent/config", _handle_agent_config_post)
+    # Before the chat routes: /api/chats/recent must win over the
+    # /api/chats/{conversation_id} pattern ("recent" is a valid id).
+    app.router.add_get("/api/chats/recent", _handle_chats_recent)
 
     if log_path is not None:
         # Single-run mode: endpoints at their original paths.

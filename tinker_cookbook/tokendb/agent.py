@@ -22,6 +22,13 @@ Persistence, all through the ``Storage`` protocol:
 Results sent to the model are capped (row counts, long strings, long token
 lists) so a broad ``SELECT *`` cannot blow the context window; truncation is
 always reported so the model knows to aggregate instead.
+
+Turns are decoupled from websocket lifetimes: :class:`TurnManager` runs each
+turn as an asyncio task to completion and fans persisted transcript records
+out to any number of subscribers, so navigating away from the viewer never
+kills an in-flight turn. Every record carries a monotonically increasing
+``seq`` per conversation, letting a client resume from the last record it saw
+(replay from the JSONL, then tail live) with no gaps or duplicates.
 """
 
 from __future__ import annotations
@@ -31,7 +38,7 @@ import json
 import logging
 import re
 import secrets
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -52,6 +59,10 @@ from tinker_cookbook.tokendb.reader import reconstruct_full_ob
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ITERATIONS = 20
+# Streamed assistant text is persisted (and fanned out) as coalesced
+# text_delta events: buffer until roughly this many characters. Small enough
+# to still feel like streaming, large enough to keep transcripts compact.
+TEXT_DELTA_COALESCE_CHARS = 80
 MAX_SQL_ROWS_FOR_MODEL = 200
 MAX_SEARCH_ROWS_FOR_MODEL = 50
 MAX_STRING_CHARS_FOR_MODEL = 2000
@@ -182,20 +193,24 @@ class ChatStore:
 
     One record per line: ``{"kind": "message", "role": ..., ...}`` for
     conversation messages (reloaded as model context on the next turn) and
-    ``{"kind": "event", ...}`` for UI events worth replaying (published
-    visuals). Appends go through ``Storage.append``.
+    ``{"kind": "event", "type": ..., ...}`` for the streamed UI events of a
+    turn (coalesced text deltas, tool calls/results, published visuals, and
+    the terminal done/error/cancelled). Every record gets a monotonically
+    increasing per-conversation ``seq`` so subscribers can resume from the
+    last record they saw. Appends go through ``Storage.append``.
     """
 
     def __init__(self, storage: Storage, prefix: str = CHATS_PREFIX) -> None:
         self._storage = storage
         self._prefix = prefix
+        self._next_seq: dict[str, int] = {}
 
     def _path(self, conversation_id: str) -> str:
         if not valid_conversation_id(conversation_id):
             raise ValueError(f"bad conversation id {conversation_id!r}")
         return f"{self._prefix}/{conversation_id}.jsonl"
 
-    def append_message(self, conversation_id: str, message: Message) -> None:
+    def append_message(self, conversation_id: str, message: Message) -> dict[str, Any]:
         record: dict[str, Any] = {
             "kind": "message",
             "role": message.role,
@@ -208,14 +223,15 @@ class ChatStore:
             ]
         if message.tool_call_id is not None:
             record["tool_call_id"] = message.tool_call_id
-        self._append(conversation_id, record)
+        return self._append(conversation_id, record)
 
-    def append_event(self, conversation_id: str, event: dict[str, Any]) -> None:
-        self._append(
+    def append_event(self, conversation_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        return self._append(
             conversation_id, {"kind": "event", "ts": datetime.now(UTC).isoformat(), **event}
         )
 
-    def _append(self, conversation_id: str, record: dict[str, Any]) -> None:
+    def _append(self, conversation_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        record["seq"] = self._take_seq(conversation_id)
         self._storage.append(self._path(conversation_id), (_to_json(record) + "\n").encode())
         # FsspecStorage stages append()s locally and only uploads on flush();
         # nothing else flushes this storage, so without this chat transcripts
@@ -223,6 +239,22 @@ class ChatStore:
         # LocalStorage.flush() is a no-op, and FsspecStorage re-uploads only
         # files with staged appends (here: one small transcript).
         self._storage.flush()
+        return record
+
+    def _take_seq(self, conversation_id: str) -> int:
+        """The next seq for this conversation (initialized from the JSONL)."""
+        next_seq = self._next_seq.get(conversation_id)
+        if next_seq is None:
+            next_seq = self.last_seq(conversation_id) + 1
+        self._next_seq[conversation_id] = next_seq + 1
+        return next_seq
+
+    def last_seq(self, conversation_id: str) -> int:
+        """The highest persisted seq, or -1 for an empty/new conversation."""
+        records = self.load_records(conversation_id)
+        if not records:
+            return -1
+        return max(int(r.get("seq", -1)) for r in records)
 
     def load_records(self, conversation_id: str) -> list[dict[str, Any]]:
         try:
@@ -237,6 +269,11 @@ class ChatStore:
                 records.append(json.loads(line))
             except json.JSONDecodeError:
                 logger.warning("Skipping corrupt chat line in %s", conversation_id)
+        # Transcripts written before seq existed: backfill with the line
+        # index so replay-from-seq works uniformly (indices stay below any
+        # explicitly assigned seq, which starts at max+1).
+        for index, record in enumerate(records):
+            record.setdefault("seq", index)
         return records
 
     def load_messages(self, conversation_id: str) -> list[Message]:
@@ -578,70 +615,225 @@ async def run_chat_turn(
     conversation_id: str,
     user_text: str,
     system_prompt: str,
-) -> AsyncIterator[dict[str, Any]]:
-    """Run one user turn of the chat agent, streaming UI event frames.
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Run one user turn of the chat agent, streaming persisted records.
 
-    Frames: ``text_delta`` (assistant text), ``tool_call`` / ``tool_result``
-    (activity summaries), ``visual_published`` (with the served URL), and a
-    terminal ``done`` or ``error``. Every message is persisted to the
-    conversation's JSONL as it happens, so a reconnecting client can replay
-    the transcript via the chats endpoints.
+    Every yielded frame is a transcript record (with its ``seq``) that was
+    appended to the conversation's JSONL *before* being yielded, so a
+    subscriber can attach at any point and replay records past its last seen
+    seq with no gaps. The stream interleaves ``kind: "message"`` records (the
+    user message, assistant segments, tool results as model context) with
+    ``kind: "event"`` records: ``text_delta`` (assistant text, coalesced into
+    ~:data:`TEXT_DELTA_COALESCE_CHARS`-char chunks), ``tool_call`` /
+    ``tool_result`` (activity summaries), ``visual_published`` (with the
+    served URL), and a terminal ``done`` or ``error``.
     """
     messages = chat_store.load_messages(conversation_id)
     user_message = Message(role="user", content=user_text)
     messages.append(user_message)
-    chat_store.append_message(conversation_id, user_message)
+    yield chat_store.append_message(conversation_id, user_message)
 
     tool_defs = toolbox.tool_defs()
     for _ in range(MAX_TOOL_ITERATIONS):
         text_parts: list[str] = []
         calls: list[ToolCall] = []
+        pending_text: list[str] = []
+
+        def _flush_text() -> dict[str, Any] | None:
+            if not pending_text:
+                return None
+            record = chat_store.append_event(
+                conversation_id, {"type": "text_delta", "text": "".join(pending_text)}
+            )
+            pending_text.clear()
+            return record
+
         async for event in client.stream(system_prompt, messages, tool_defs):
             if isinstance(event, TextDelta):
                 text_parts.append(event.text)
-                yield {"type": "text_delta", "text": event.text}
+                pending_text.append(event.text)
+                if sum(len(part) for part in pending_text) >= TEXT_DELTA_COALESCE_CHARS:
+                    flushed = _flush_text()
+                    if flushed is not None:
+                        yield flushed
             elif isinstance(event, ToolCallEvent):
+                flushed = _flush_text()
+                if flushed is not None:
+                    yield flushed
                 calls.append(event.call)
-                yield {
-                    "type": "tool_call",
-                    "id": event.call.id,
-                    "name": event.call.name,
-                    "arguments": event.call.arguments,
-                }
+                yield chat_store.append_event(
+                    conversation_id,
+                    {
+                        "type": "tool_call",
+                        "id": event.call.id,
+                        "name": event.call.name,
+                        "arguments": event.call.arguments,
+                    },
+                )
             elif isinstance(event, ErrorEvent):
+                flushed = _flush_text()
+                if flushed is not None:
+                    yield flushed
                 if text_parts:  # keep any partial assistant text in the transcript
                     partial = Message(role="assistant", content="".join(text_parts))
-                    chat_store.append_message(conversation_id, partial)
-                yield {"type": "error", "error": event.message}
+                    yield chat_store.append_message(conversation_id, partial)
+                yield chat_store.append_event(
+                    conversation_id, {"type": "error", "error": event.message}
+                )
                 return
             # Done carries only the stop reason; the presence/absence of tool
             # calls decides whether the loop continues.
+        flushed = _flush_text()
+        if flushed is not None:
+            yield flushed
 
         assistant = Message(role="assistant", content="".join(text_parts), tool_calls=calls)
         messages.append(assistant)
-        chat_store.append_message(conversation_id, assistant)
+        yield chat_store.append_message(conversation_id, assistant)
         if not calls:
-            yield {"type": "done", "conversation_id": conversation_id}
+            yield chat_store.append_event(
+                conversation_id, {"type": "done", "conversation_id": conversation_id}
+            )
             return
 
         for call in calls:
             outcome = await asyncio.to_thread(toolbox.execute, call)
             for frame in outcome.frames or []:
-                chat_store.append_event(conversation_id, frame)
-                yield frame
+                yield chat_store.append_event(conversation_id, frame)
             preview = outcome.content[:TOOL_RESULT_PREVIEW_CHARS]
-            yield {
-                "type": "tool_result",
-                "id": call.id,
-                "name": call.name,
-                "is_error": outcome.is_error,
-                "preview": preview,
-            }
+            yield chat_store.append_event(
+                conversation_id,
+                {
+                    "type": "tool_result",
+                    "id": call.id,
+                    "name": call.name,
+                    "is_error": outcome.is_error,
+                    "preview": preview,
+                },
+            )
             tool_message = Message(role="tool", content=outcome.content, tool_call_id=call.id)
             messages.append(tool_message)
-            chat_store.append_message(conversation_id, tool_message)
+            yield chat_store.append_message(conversation_id, tool_message)
 
-    yield {
-        "type": "error",
-        "error": f"stopped after {MAX_TOOL_ITERATIONS} tool iterations without a final answer",
-    }
+    yield chat_store.append_event(
+        conversation_id,
+        {
+            "type": "error",
+            "error": f"stopped after {MAX_TOOL_ITERATIONS} tool iterations without a final answer",
+        },
+    )
+
+
+# --- Turn manager: server-owned background turns + subscriber fanout ---
+
+
+class TurnBusyError(Exception):
+    """A second turn was started on a conversation that already has one."""
+
+
+class TurnManager:
+    """Registry of running chat turns, keyed by ``(scope, conversation_id)``.
+
+    :meth:`start_turn` drives a :func:`run_chat_turn` iterator inside an
+    asyncio task that runs to completion regardless of any websocket: the
+    records it yields are already persisted, and are additionally fanned out
+    to every subscriber queue for that conversation. Disconnecting a
+    subscriber never touches the turn; :meth:`cancel` (or :meth:`shutdown`)
+    cancels the task, persisting a terminal ``cancelled`` event so the
+    transcript keeps everything that streamed before the cancellation.
+    """
+
+    def __init__(self) -> None:
+        self._tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._subscribers: dict[tuple[str, str], list[asyncio.Queue[dict[str, Any]]]] = {}
+
+    def in_flight(self, scope: str, conversation_id: str) -> bool:
+        return (scope, conversation_id) in self._tasks
+
+    def in_flight_ids(self, scope: str) -> set[str]:
+        """Conversation IDs with a running turn under this scope."""
+        return {cid for (s, cid) in self._tasks if s == scope}
+
+    def start_turn(
+        self,
+        scope: str,
+        conversation_id: str,
+        chat_store: ChatStore,
+        frames: AsyncIterator[dict[str, Any]],
+    ) -> asyncio.Task[None]:
+        """Run *frames* (a :func:`run_chat_turn` iterator) to completion.
+
+        Raises :class:`TurnBusyError` if this conversation already has a
+        running turn.
+        """
+        key = (scope, conversation_id)
+        if key in self._tasks:
+            raise TurnBusyError(f"a turn is already running on conversation {conversation_id!r}")
+        task = asyncio.create_task(self._run(key, chat_store, frames))
+        self._tasks[key] = task
+        return task
+
+    async def _run(
+        self,
+        key: tuple[str, str],
+        chat_store: ChatStore,
+        frames: AsyncIterator[dict[str, Any]],
+    ) -> None:
+        _, conversation_id = key
+        try:
+            async for record in frames:
+                self._publish(key, record)
+        except asyncio.CancelledError:
+            record = chat_store.append_event(
+                conversation_id, {"type": "cancelled", "conversation_id": conversation_id}
+            )
+            self._publish(key, record)
+            raise
+        except Exception as e:  # keep the failure in the transcript + fanout
+            logger.warning("Chat turn failed: %s", e, exc_info=True)
+            record = chat_store.append_event(conversation_id, {"type": "error", "error": str(e)})
+            self._publish(key, record)
+        finally:
+            self._tasks.pop(key, None)
+
+    def _publish(self, key: tuple[str, str], record: dict[str, Any]) -> None:
+        for queue in self._subscribers.get(key, []):
+            queue.put_nowait(record)
+
+    def subscribe(self, scope: str, conversation_id: str) -> asyncio.Queue[dict[str, Any]]:
+        """A queue receiving every record of this conversation's live turns.
+
+        Valid whether or not a turn is currently running (records start
+        flowing when one starts). Pair with :meth:`unsubscribe`.
+        """
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._subscribers.setdefault((scope, conversation_id), []).append(queue)
+        return queue
+
+    def unsubscribe(
+        self, scope: str, conversation_id: str, queue: asyncio.Queue[dict[str, Any]]
+    ) -> None:
+        key = (scope, conversation_id)
+        queues = self._subscribers.get(key)
+        if queues is None:
+            return
+        if queue in queues:
+            queues.remove(queue)
+        if not queues:
+            del self._subscribers[key]
+
+    def cancel(self, scope: str, conversation_id: str) -> bool:
+        """Cancel the running turn, if any; returns whether one was cancelled."""
+        task = self._tasks.get((scope, conversation_id))
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
+    async def shutdown(self) -> None:
+        """Cancel every running turn and wait for the tasks to finish."""
+        tasks = list(self._tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
