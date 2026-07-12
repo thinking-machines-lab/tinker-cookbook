@@ -214,6 +214,8 @@ def test_openai_request_shape():
     assert headers["authorization"] == "Bearer sk-test"
     assert payload["model"] == "my-model"
     assert payload["stream"] is True
+    assert payload["max_completion_tokens"] == config.max_tokens
+    assert "max_tokens" not in payload
     assert payload["messages"][0] == {"role": "system", "content": "SYSTEM"}
     assert payload["messages"][1] == {"role": "user", "content": "how is reward trending?"}
     assert payload["messages"][2] == {
