@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import chz
@@ -190,6 +190,11 @@ class RubricGradedEnvGroupBuilder(EnvGroupBuilder):
             )
             for _ in range(self.group_size)
         ]
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        # Token DB capture dimensions. RubricBasedDatapoint carries no id
+        # field, so there is no row_id to promote yet.
+        return {"num_rubrics": len(self.datapoint.rubric_items)}
 
 
 @dataclass(frozen=True)

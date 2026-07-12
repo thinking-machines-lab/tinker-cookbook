@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
 
 import chz
@@ -35,8 +35,14 @@ def _load_deepcoder_split(split: Literal["train", "test"]) -> Dataset:
     datasets = []
     for name in names:
         logger.info(f"  Loading {name}...")
-        ds = load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split=split)
-        datasets.append(cast(Dataset, ds))
+        ds = cast(
+            Dataset, load_dataset("agentica-org/DeepCoder-Preview-Dataset", name=name, split=split)
+        )
+        # Tag each row with its sub-dataset before concatenating, so the source
+        # survives the shuffle. Row order (and therefore training behavior) is
+        # unchanged; the tag is used for token DB capture dimensions only.
+        ds = ds.add_column("__subset", [name] * len(ds))
+        datasets.append(ds)
 
     return cast(Dataset, concatenate_datasets(datasets))
 
@@ -140,11 +146,13 @@ def load_deepcoder_tasks(
         if isinstance(starter_code, str) and not starter_code.strip():
             starter_code = None
 
+        source = row.get("__subset")
         tasks.append(
             DeepcoderTask(
                 problem=problem,
                 tests=tests,
                 starter_code=starter_code if isinstance(starter_code, str) else None,
+                source=str(source) if source is not None else None,
             )
         )
 
@@ -215,6 +223,12 @@ class DeepcoderEnvGroupBuilder(EnvGroupBuilder):
 
     def logging_tags(self) -> list[str]:
         return ["deepcoder"]
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        meta: dict[str, str | int | float] = {"dataset": "deepcoder"}
+        if self.task.source is not None:
+            meta["source"] = self.task.source
+        return meta
 
 
 class DeepcoderDataset(RLDataset):
