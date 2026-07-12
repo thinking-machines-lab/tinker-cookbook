@@ -60,6 +60,9 @@ API_KEY_ENV_VARS = {
     "tinker": "TINKER_API_KEY",
 }
 DEFAULT_MAX_TOKENS = 8192
+# Order in which providers are considered when picking a default (first one
+# with an available API key wins).
+PROVIDER_PREFERENCE = ("anthropic", "openai", "tinker")
 
 
 # --- Internal message / tool representation ---
@@ -145,6 +148,19 @@ class LLMConfig:
             return self.api_key
         env_var = API_KEY_ENV_VARS.get(self.provider)
         return os.environ.get(env_var) if env_var else None
+
+
+def detect_default_provider(api_key: str | None = None) -> str:
+    """The first provider (in PROVIDER_PREFERENCE order) with an available key.
+
+    A key is available if ``api_key`` (a runtime-configured key) is set or the
+    provider's environment variable is. Falls back to ``"anthropic"`` when no
+    provider has a key, so the viewer still has something to prompt for.
+    """
+    for provider in PROVIDER_PREFERENCE:
+        if LLMConfig(provider=provider, api_key=api_key).resolve_api_key() is not None:
+            return provider
+    return "anthropic"
 
 
 # --- Provider wire formats ---
