@@ -69,6 +69,7 @@ from tinker_cookbook.rl.types import (
     RLDataset,
     TrajectoryGroup,
 )
+from tinker_cookbook.tokendb.capture import CaptureContext, set_capture_context
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import split_list
@@ -931,22 +932,26 @@ async def main(
             # raw sampling so that group_size > 1 and multi-turn environments
             # work out of the box. With the default group_size=1, this is
             # equivalent to a single sample_async call per problem.
+            # The capture context carries batch identity to any registered
+            # token DB sample sink (e.g. `capture_samples` in the SDFT
+            # recipe); it is inert when no sink is registered.
             async with trace.scope_span("sample"):
-                trajectory_groups_raw = await asyncio.gather(
-                    *[
-                        asyncio.create_task(
-                            do_group_rollout_and_filter_constant_reward(
-                                sampling_client,
-                                builder,
-                                temperature=cfg.temperature,
-                                max_tokens=cfg.max_tokens,
-                                do_remove_constant_reward_groups=False,
-                            ),
-                            name=f"sample_task_{i}",
-                        )
-                        for i, builder in enumerate(builders_P)
-                    ],
-                )
+                with set_capture_context(CaptureContext(split="train", iteration=i_batch)):
+                    trajectory_groups_raw = await asyncio.gather(
+                        *[
+                            asyncio.create_task(
+                                do_group_rollout_and_filter_constant_reward(
+                                    sampling_client,
+                                    builder,
+                                    temperature=cfg.temperature,
+                                    max_tokens=cfg.max_tokens,
+                                    do_remove_constant_reward_groups=False,
+                                ),
+                                name=f"sample_task_{i}",
+                            )
+                            for i, builder in enumerate(builders_P)
+                        ],
+                    )
             trajectory_groups_P: list[TrajectoryGroup] = [
                 tg for tg in trajectory_groups_raw if tg is not None
             ]

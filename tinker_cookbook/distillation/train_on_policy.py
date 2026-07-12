@@ -42,6 +42,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     TrajectoryGroup,
 )
+from tinker_cookbook.tokendb.capture import CaptureContext, set_capture_context
 from tinker_cookbook.tokenizer_utils import Tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
@@ -318,24 +319,28 @@ async def do_sync_training(
                         eval_metrics = await evaluator(sampling_client)
                         metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
 
-            # Get batch and sample trajectories
+            # Get batch and sample trajectories. The capture context carries
+            # batch identity to any registered token DB sample sink (e.g.
+            # `capture_samples` in the distillation recipes); it is inert
+            # when no sink is registered.
             env_group_builders_P, dataset_indices_P = dataset.get_batch(i_batch)
             async with trace.scope_span("sample"):
-                trajectory_groups_P = await asyncio.gather(
-                    *[
-                        asyncio.create_task(
-                            do_group_rollout_and_filter_constant_reward(
-                                sampling_client,
-                                builder,
-                                temperature=config.temperature,
-                                max_tokens=config.max_tokens,
-                                do_remove_constant_reward_groups=False,
-                            ),
-                            name=f"sample_task_{i}",
-                        )
-                        for i, builder in enumerate(env_group_builders_P)
-                    ],
-                )
+                with set_capture_context(CaptureContext(split="train", iteration=i_batch)):
+                    trajectory_groups_P = await asyncio.gather(
+                        *[
+                            asyncio.create_task(
+                                do_group_rollout_and_filter_constant_reward(
+                                    sampling_client,
+                                    builder,
+                                    temperature=config.temperature,
+                                    max_tokens=config.max_tokens,
+                                    do_remove_constant_reward_groups=False,
+                                ),
+                                name=f"sample_task_{i}",
+                            )
+                            for i, builder in enumerate(env_group_builders_P)
+                        ],
+                    )
             trajectory_groups_P = [
                 trajectory_group
                 for trajectory_group in trajectory_groups_P

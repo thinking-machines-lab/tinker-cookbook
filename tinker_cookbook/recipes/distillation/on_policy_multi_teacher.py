@@ -18,10 +18,11 @@ Example usage:
 """
 
 import asyncio
+import contextlib
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chz
 from tinker.types import LossFnType
@@ -89,6 +90,25 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps: int | None = None
+
+    # Optional token DB capture of the student's on-policy samples (prompt,
+    # sampled tokens, logprobs) for inspection with tinker_cookbook.tokendb.
+    # Requires the tokendb extra: pip install 'tinker-cookbook[tokendb]'
+    token_db_path: str | None = None
+
+
+def _token_db_attrs(cli_config: CLIConfig) -> dict[str, str]:
+    """Attrs stamped onto every captured sample row (token_db_path set).
+
+    Samples are made by the student across both datasets, so both teachers
+    are recorded as run-level dimensions.
+    """
+    return {
+        "student_model": cli_config.model_name,
+        "deepmath_teacher_model": cli_config.deepmath_teacher_model,
+        "tulu3_teacher_model": cli_config.tulu3_teacher_model,
+        "dataset": "deepmath+tulu3",
+    }
 
 
 async def cli_main(cli_config: CLIConfig):
@@ -188,8 +208,37 @@ async def cli_main(cli_config: CLIConfig):
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
-    # Run training
-    await train_on_policy.main(config)
+    # Run training, optionally capturing the student's samples to a token DB.
+    with contextlib.ExitStack() as stack:
+        if cli_config.token_db_path is not None:
+            from tinker_cookbook.tokendb import (
+                ActiveCapture,
+                TokenDbWriter,
+                capture_samples,
+                check_token_db_dependencies,
+            )
+            from tinker_cookbook.tokendb.capture import SupportsDecode
+            from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+            check_token_db_dependencies()
+            writer = stack.enter_context(
+                TokenDbWriter(
+                    cli_config.token_db_path,
+                    context={
+                        "recipe_name": "distillation/on_policy_multi_teacher",
+                        "model_name": cli_config.model_name,
+                    },
+                )
+            )
+            # The HF tokenizer's decode(list[int]) returns str at runtime.
+            tokenizer = cast(SupportsDecode, get_tokenizer(cli_config.model_name))
+            stack.enter_context(
+                capture_samples(
+                    ActiveCapture(writer, tokenizer=tokenizer),
+                    attrs=_token_db_attrs(cli_config),
+                )
+            )
+        await train_on_policy.main(config)
 
 
 if __name__ == "__main__":

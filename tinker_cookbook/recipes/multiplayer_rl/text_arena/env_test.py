@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from tinker_cookbook.recipes.multiplayer_rl.text_arena.tictactoe import (
     OptimalOpponent,
     RandomOpponent,
@@ -105,7 +107,7 @@ def test_optimal_vs_optimal_always_draws():
     opponent_x = OptimalOpponent()
 
     # Simulate a full game
-    import textarena as ta
+    ta = pytest.importorskip("textarena")
 
     env = ta.make("TicTacToe-v0")
     env.reset(num_players=2)
@@ -128,3 +130,53 @@ def test_optimal_vs_optimal_always_draws():
     rewards = env.state.rewards
     assert rewards is not None
     assert rewards[0] == 0 and rewards[1] == 0, f"Expected draw, got {rewards}"
+
+
+def test_two_player_builder_metadata_self_play():
+    pytest.importorskip("textarena")
+    from typing import Any, cast
+
+    from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import TwoPlayerEnvGroupBuilder
+
+    builder = TwoPlayerEnvGroupBuilder(
+        game_name="TicTacToe-v0", renderer=cast(Any, None), num_envs=2, self_play=True
+    )
+    assert builder.metadata() == {"game": "TicTacToe-v0", "opponent": "self_play"}
+
+
+def test_two_player_builder_metadata_fixed_opponent():
+    pytest.importorskip("textarena")
+    from typing import Any, cast
+
+    from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import TwoPlayerEnvGroupBuilder
+
+    builder = TwoPlayerEnvGroupBuilder(
+        game_name="TicTacToe-v0",
+        renderer=cast(Any, None),
+        num_envs=2,
+        self_play=False,
+        opponent_policy=cast(Any, object()),
+        opponent_name="optimal",
+    )
+    assert builder.metadata() == {"game": "TicTacToe-v0", "opponent": "optimal"}
+
+
+def test_step_attrs_carry_player_id():
+    pytest.importorskip("textarena")
+    from typing import Any, cast
+    from unittest.mock import MagicMock
+
+    from tinker_cookbook.recipes.multiplayer_rl.text_arena.env import TwoPlayerEnv
+
+    coordinator = MagicMock()
+    coordinator.game_done = True
+    env = TwoPlayerEnv(
+        player_id=1,
+        coordinator=coordinator,
+        self_play=True,
+        renderer=cast(Any, None),
+        opponent_policy=None,
+    )
+    result = asyncio.run(env.step([1]))
+    assert result.episode_done
+    assert result.attrs == {"player_id": "1"}

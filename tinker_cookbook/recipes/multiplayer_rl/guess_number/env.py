@@ -1,6 +1,6 @@
 import random
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import chz
@@ -114,6 +114,11 @@ class GuessNumberEnvGroupBuilder(EnvGroupBuilder):
 
     async def make_envs(self) -> Sequence[Env]:
         return [GuessNumberEnv(self.answer, self.renderer) for _ in range(self.num_envs)]
+
+    def metadata(self) -> Mapping[str, str | int | float]:
+        # Token DB capture dimensions: the target number is the dataset row
+        # identity (the dataset indexes into the list of possible answers).
+        return {"game": "guess_number", "row_id": f"guess_number-{self.answer}"}
 
 
 # The dataset just indexes into the list of possible answers.

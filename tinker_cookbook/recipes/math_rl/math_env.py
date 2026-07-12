@@ -1,8 +1,8 @@
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import partial
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import chz
 from datasets import Dataset, concatenate_datasets, get_dataset_config_names, load_dataset
@@ -117,6 +117,42 @@ def extract_gsm8k_final_answer(text: str) -> str:
     raise ValueError("No GSM8K final answer found")
 
 
+def _coerce_difficulty(value: Any) -> str | int | float:
+    """Coerce a dataset difficulty/level field to a number when possible.
+
+    Hendrycks MATH stores levels as strings like ``"Level 3"``; MATH-500 and
+    DeepMath store plain numbers. Numeric values route to the token DB
+    ``metrics`` map, so parse out the number when there is one.
+    """
+    if isinstance(value, (int, float)):
+        return value
+    text = str(value)
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    if match is None:
+        return text
+    number = float(match.group(0))
+    return int(number) if number.is_integer() else number
+
+
+def _problem_row_metadata(
+    dataset: str, split: str, row_idx: int, x: Mapping[str, Any]
+) -> dict[str, str | int | float]:
+    """Group metadata for one dataset row (token DB capture only).
+
+    Includes the dataset name, a ``row_id`` (the dataset's own id when the
+    row carries one, else the row's position in the shuffled split), and the
+    difficulty/level when the row has one.
+    """
+    meta: dict[str, str | int | float] = {"dataset": dataset}
+    unique_id = x.get("unique_id")
+    meta["row_id"] = str(unique_id) if unique_id else f"{dataset}-{split}-{row_idx}"
+    for key in ("level", "difficulty"):
+        value = x.get(key)
+        if value is not None:
+            meta[key] = _coerce_difficulty(value)
+    return meta
+
+
 def _get_hendrycks_math_test() -> Dataset:
     test_dataset = load_dataset("HuggingFaceH4/MATH-500", name="default", split="test")
     return cast(Dataset, test_dataset)
@@ -165,6 +201,7 @@ class MathDataset(RLDataset):
         self.group_size = group_size if split == "train" else 1
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.split = split
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
@@ -172,15 +209,22 @@ class MathDataset(RLDataset):
         assert batch_start < batch_end, "Incorrect batch size"
         return [
             builder
-            for row in self.ds.select(range(batch_start, batch_end))
-            if (builder := self._make_env_group_builder(row, self.group_size)) is not None  # pyright: ignore[reportArgumentType]
+            for offset, row in enumerate(self.ds.select(range(batch_start, batch_end)))
+            if (
+                builder := self._make_env_group_builder(
+                    row,  # pyright: ignore[reportArgumentType]
+                    self.group_size,
+                    batch_start + offset,
+                )
+            )
+            is not None
         ]
 
     def __len__(self) -> int:
         return math.ceil(len(self.ds) / self.batch_size)
 
     def _make_env_group_builder(
-        self, x: dict[str, str], group_size: int
+        self, x: dict[str, str], group_size: int, row_idx: int
     ) -> ProblemGroupBuilder | None:
         try:
             answer = extract_boxed(x["solution"])
@@ -192,6 +236,7 @@ class MathDataset(RLDataset):
                 MathEnv, x["problem"], answer, self.renderer, convo_prefix=self.convo_prefix
             ),
             num_envs=group_size,
+            group_metadata=_problem_row_metadata("math", self.split, row_idx, x),
         )
 
 
@@ -242,9 +287,10 @@ class PolarisDataset(MathDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.split = "train"
 
     def _make_env_group_builder(
-        self, x: dict[str, str], group_size: int
+        self, x: dict[str, str], group_size: int, row_idx: int
     ) -> ProblemGroupBuilder | None:
         # Extract problem and answer from the dataset
         problem = x.get("problem", "")
@@ -257,6 +303,7 @@ class PolarisDataset(MathDataset):
             ),
             num_envs=group_size,
             dataset_name="polaris",
+            group_metadata=_problem_row_metadata("polaris", self.split, row_idx, x),
         )
 
 
@@ -293,9 +340,10 @@ class DeepMathDataset(MathDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.split = "train"
 
     def _make_env_group_builder(
-        self, x: dict[str, str], group_size: int
+        self, x: dict[str, str], group_size: int, row_idx: int
     ) -> ProblemGroupBuilder | None:
         # Extract problem and answer from the dataset
         problem = x.get("question", "")
@@ -308,6 +356,7 @@ class DeepMathDataset(MathDataset):
             ),
             num_envs=group_size,
             dataset_name="deepmath",
+            group_metadata=_problem_row_metadata("deepmath", self.split, row_idx, x),
         )
 
 
@@ -348,6 +397,7 @@ class Gsm8kDataset(RLDataset):
         self.group_size = group_size if split == "train" else 1
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.split = split
 
     @classmethod
     def question_suffix(cls) -> str:
@@ -359,15 +409,22 @@ class Gsm8kDataset(RLDataset):
         assert batch_start < batch_end, "Incorrect batch size"
         return [
             builder
-            for row in self.ds.select(range(batch_start, batch_end))
-            if (builder := self._make_env_group_builder(row, self.group_size)) is not None  # pyright: ignore[reportArgumentType]
+            for offset, row in enumerate(self.ds.select(range(batch_start, batch_end)))
+            if (
+                builder := self._make_env_group_builder(
+                    row,  # pyright: ignore[reportArgumentType]
+                    self.group_size,
+                    batch_start + offset,
+                )
+            )
+            is not None
         ]
 
     def __len__(self) -> int:
         return math.ceil(len(self.ds) / self.batch_size)
 
     def _make_env_group_builder(
-        self, x: dict[str, str], group_size: int
+        self, x: dict[str, str], group_size: int, row_idx: int
     ) -> ProblemGroupBuilder | None:
         try:
             problem = x["question"]
@@ -380,6 +437,7 @@ class Gsm8kDataset(RLDataset):
                 MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
             ),
             num_envs=group_size,
+            group_metadata=_problem_row_metadata("gsm8k", self.split, row_idx, x),
         )
 
 
