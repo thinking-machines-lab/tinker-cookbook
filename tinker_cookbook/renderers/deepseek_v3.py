@@ -6,6 +6,7 @@ Includes:
 - DeepSeekV3DisableThinkingRenderer: V3 models with thinking disabled
 """
 
+import dataclasses
 import json
 import re
 import warnings
@@ -24,6 +25,7 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     UnparsedToolCall,
     ensure_text,
+    message_content_byte_count,
     parse_response_for_stop_token,
     parse_think_blocks,
 )
@@ -103,6 +105,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
         follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
 
         content = message["content"]
+        thinking_rendered = True
 
         if message["role"] == "system":
             # HF template collects all system messages at the start without role tokens
@@ -132,6 +135,7 @@ class _DeepSeekV3BaseRenderer(Renderer):
             should_strip_thinking = (
                 self.strip_thinking_from_history and not has_tool_calls and not ctx.is_last
             )
+            thinking_rendered = not should_strip_thinking
 
             if isinstance(content, list):
                 # Structured content - handle with list operations
@@ -193,14 +197,17 @@ class _DeepSeekV3BaseRenderer(Renderer):
             output_tokens.append(self._end_message_token)
 
         output: list[tinker.ModelInputChunk] = [tinker.types.EncodedTextChunk(tokens=output_tokens)]
+        content_byte_count = message_content_byte_count(message, include_thinking=thinking_rendered)
         # Only include header if non-empty; tinker rejects empty token chunks with
         # "Chunk N has empty tokens list". This happens for system messages at idx=0.
         if header_tokens:
             return RenderedMessage(
-                header=tinker.types.EncodedTextChunk(tokens=header_tokens), output=output
+                header=tinker.types.EncodedTextChunk(tokens=header_tokens),
+                output=output,
+                content_byte_count=content_byte_count,
             )
         else:
-            return RenderedMessage(output=output)
+            return RenderedMessage(output=output, content_byte_count=content_byte_count)
 
     def _get_special_token(self, name: str) -> int:
         sep = chr(65372)
@@ -473,7 +480,7 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
             think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
             old_header_tokens = list(rendered.header.tokens) if rendered.header else []
             new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + think_close_tokens)
-            rendered = RenderedMessage(header=new_header, output=rendered.output)
+            rendered = dataclasses.replace(rendered, header=new_header)
 
         return rendered
 
@@ -563,6 +570,6 @@ class DeepSeekV3DisableThinkingRenderer(_DeepSeekV3BaseRenderer):
             think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
             old_header_tokens = list(rendered.header.tokens) if rendered.header else []
             new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + think_close_tokens)
-            rendered = RenderedMessage(header=new_header, output=rendered.output)
+            rendered = dataclasses.replace(rendered, header=new_header)
 
         return rendered

@@ -1,5 +1,7 @@
 import logging
 import math
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 import tinker
@@ -96,6 +98,7 @@ def compute_bpb(
     weights_list: list[tinker.TensorData],
     target_tokens_list: list[tinker.TensorData],
     tokenizer: Tokenizer,
+    content_bytes_list: Sequence[int | None] | None = None,
 ) -> float:
     """Compute bits-per-byte (BPB) across a batch: a tokenizer-independent NLL.
 
@@ -103,33 +106,46 @@ def compute_bpb(
     models that use different tokenizers: a coarser tokenizer packs more text
     into each token (higher nats/token) while a finer one spreads it over more
     tokens (lower nats/token), even at equal modeling quality. Bits-per-byte
-    removes this dependence by dividing the *total* log-loss (converted to bits)
-    by the number of UTF-8 bytes of the target text::
+    removes this dependence by dividing the *total* log-loss (converted to
+    bits) by a byte count of the target text.
+
+    A datum is scored in one of two modes:
+
+    **Content-byte mode** (used when its ``content_bytes_list`` entry is not
+    ``None``, as reported by the renderer via
+    ``Renderer.build_supervised_example_with_metadata``)::
+
+        bpb = -sum(logprob_i for i where weight_i > 0) / (ln(2) * content_bytes)
+
+    The numerator is the model's *entire* trained code length, including
+    chat-template scaffolding (think tags, tool-call framing, end-of-turn
+    markers). The denominator counts only the UTF-8 bytes of the semantic
+    message content, which depends on *what* content the renderer trains on
+    but not on how its template formats it (see
+    ``message_content_byte_count``; renderers that render more content -- e.g.
+    preserved thinking in historical turns -- count those bytes and also train
+    on them). Scaffolding therefore never pads the denominator: a template
+    whose markup costs real bits pays for them in the numerator (a cost that
+    vanishes as the template is learned), and a verbose template gains no
+    artificial BPB advantage from its extra markup bytes. This is the
+    preferred mode for cross-model comparison.
+
+    **Token-byte fallback** (entry is ``None``: renderer without content-byte
+    support, or the trained region was truncated by ``max_length``)::
 
         bpb = -sum(logprob_i for i in counted) / (ln(2) * bytes(counted tokens))
 
-    A token is *counted* iff it is trained (``weight > 0``) and is not a special
-    token (per ``tokenizer.all_special_ids``). The same mask drives both the
-    numerator and the byte denominator, so they always cover the identical span.
+    where a token is *counted* iff it is trained (``weight > 0``) and not a
+    special token (per ``tokenizer.all_special_ids``). The same mask drives
+    both sides, so they cover the identical span. Caveat: non-special
+    scaffolding that renderers inject as plain text (e.g. ``<think></think>``)
+    is counted as target bytes here, which slightly deflates BPB by an amount
+    that varies with the chat template.
 
-    Two properties matter:
-
-    * Weights are used only as a ``> 0`` mask, not as multipliers, so the total
-      nats stay correct even when weights are normalized per example
-      (``reduction="mean"``, the SFT default, where a datum's weights sum to 1.0
-      instead of being 0/1).
-    * Special / structural tokens (e.g. end-of-turn markers like ``<|im_end|>``
-      or ``<|eot_id|>``) are excluded from *both* sides. They carry no
-      natural-language bytes and their number varies by chat template, so
-      counting their NLL while dropping their bytes would bias BPB — worst for
-      short completions — and break comparability across templates.
-
-    The denominator counts the UTF-8 bytes of the decoded counted tokens, fixed
-    by the raw text rather than by the tokenization; combined with the matched
-    numerator this yields a proper compression rate comparable across
-    tokenizers. (If a tokenizer does not expose ``all_special_ids``, no tokens
-    are treated as special, but both sides still share the same mask and stay
-    consistent.)
+    In both modes weights are used only as a ``> 0`` mask, not as multipliers,
+    so the total nats stay correct even when weights are normalized per example
+    (``reduction="mean"``, the SFT default, where a datum's weights sum to 1.0
+    instead of being 0/1).
 
     Args:
         logprobs_list (list[tinker.TensorData]): Per-token log-probabilities,
@@ -138,23 +154,42 @@ def compute_bpb(
             with ``logprobs_list``.
         target_tokens_list (list[tinker.TensorData]): Per-token target IDs
             (``loss_fn_inputs["target_tokens"]``) aligned with ``weights_list``,
-            used to recover the target text for the byte count.
-        tokenizer (Tokenizer): Tokenizer used to decode target tokens to bytes.
+            used to recover the target text for the byte count in fallback mode.
+        tokenizer (Tokenizer): Tokenizer used to decode target tokens to bytes
+            in fallback mode.
+        content_bytes_list (Sequence[int | None] | None): Per-datum semantic
+            content byte counts (``DatumWithContentBytes.trained_content_bytes``),
+            aligned with ``logprobs_list``. ``None`` (or a ``None`` entry)
+            selects the token-byte fallback for the batch (or that datum).
 
     Returns:
         float: Bits per byte, or ``nan`` if the counted target has zero bytes.
     """
+    if content_bytes_list is not None and len(content_bytes_list) != len(logprobs_list):
+        raise ValueError(
+            f"content_bytes_list has length {len(content_bytes_list)}, "
+            f"expected {len(logprobs_list)}"
+        )
     special_ids = frozenset(getattr(tokenizer, "all_special_ids", None) or [])
     total_nll_nats = 0.0
     total_bytes = 0
 
-    for logprobs, weights, target_tokens in zip(
-        logprobs_list, weights_list, target_tokens_list, strict=True
+    for i, (logprobs, weights, target_tokens) in enumerate(
+        zip(logprobs_list, weights_list, target_tokens_list, strict=True)
     ):
+        content_bytes = content_bytes_list[i] if content_bytes_list is not None else None
+        if content_bytes is not None:
+            # Content-byte mode: full trained NLL over renderer-reported
+            # content bytes.
+            trained_mask = weights.to_torch() > 0
+            total_nll_nats += float(-logprobs.to_torch()[trained_mask].sum())
+            total_bytes += content_bytes
+            continue
         token_ids = [int(t) for t in target_tokens.data]
-        # A token contributes iff it is trained (weight > 0) and not special.
-        # This single mask is used for both the numerator and the byte
-        # denominator, guaranteeing they cover the identical span.
+        # Token-byte fallback: a token contributes iff it is trained
+        # (weight > 0) and not special. This single mask is used for both the
+        # numerator and the byte denominator, guaranteeing they cover the
+        # identical span.
         counted = [
             weight > 0 and token_id not in special_ids
             for weight, token_id in zip(weights.data, token_ids, strict=True)
@@ -226,11 +261,34 @@ def create_rightshifted_model_input_and_leftshifted_targets(
     return tinker.ModelInput(chunks=input_chunks), target_tokens
 
 
+@dataclass(frozen=True)
+class DatumWithContentBytes(tinker.Datum):
+    """A ``tinker.Datum`` carrying client-side metadata for metric computation.
+
+    ``trained_content_bytes`` is a plain Python attribute, deliberately *not*
+    a ``loss_fn_inputs`` entry: the Tinker SDK serializes datums from
+    ``model_input`` and ``loss_fn_inputs`` only, so this field never reaches
+    the service (which restricts ``loss_fn_inputs`` keys), and the datum can
+    be passed to ``forward_backward`` / ``forward_backward_custom`` unchanged.
+    Read it with ``getattr(datum, "trained_content_bytes", None)`` so plain
+    datums keep working.
+
+    Attributes:
+        trained_content_bytes: UTF-8 bytes of the semantic content of the
+            loss-weighted messages (see
+            ``tinker_cookbook.renderers.message_content_byte_count``). Used as
+            the bits-per-byte denominator by :func:`compute_bpb`.
+    """
+
+    trained_content_bytes: int | None = None
+
+
 def datum_from_model_input_weights(
     model_input: tinker.ModelInput,
     weights: torch.Tensor,
     max_length: int | None = None,
     reduction: Literal["none", "mean"] = "none",
+    trained_content_bytes: int | None = None,
 ) -> tinker.Datum:
     """Create a training Datum from a ModelInput and per-token weights tensor.
 
@@ -252,6 +310,14 @@ def datum_from_model_input_weights(
             per example (token-mean loss), making gradient magnitudes
             consistent across variable-length sequences.
             Defaults to ``"none"``.
+        trained_content_bytes (int | None): Semantic content byte count of the
+            loss-weighted messages, as reported by
+            ``Renderer.build_supervised_example_with_metadata``. When provided
+            and no loss-weighted token is lost to truncation, the returned
+            datum is a :class:`DatumWithContentBytes` carrying the count for
+            the bits-per-byte metric. If truncation removes any trained token,
+            the count no longer matches the surviving tokens and is dropped
+            (the metric then falls back to token-based byte counting).
 
     Returns:
         tinker.Datum: A datum whose ``model_input`` holds the right-shifted
@@ -311,7 +377,15 @@ def datum_from_model_input_weights(
     input_model_input, target_tokens = create_rightshifted_model_input_and_leftshifted_targets(
         model_input_chunks
     )
+    # Trained-token count over the full (untruncated) sequence, post-shift.
+    n_trained_full = int((weights[1:] > 0).sum())
     weights = weights[1 : len(target_tokens) + 1]
+
+    if trained_content_bytes is not None and int((weights > 0).sum()) != n_trained_full:
+        # Truncation removed loss-weighted tokens, so the content byte count no
+        # longer describes the surviving trained span. Drop it; BPB falls back
+        # to token-based byte counting for this datum.
+        trained_content_bytes = None
 
     # Apply weight reduction
     if reduction == "mean":
@@ -324,18 +398,22 @@ def datum_from_model_input_weights(
     elif reduction != "none":
         raise ValueError(f"Unknown reduction mode: {reduction!r}")
 
-    return tinker.Datum(
-        model_input=input_model_input,
-        loss_fn_inputs={
-            "weights": tinker.TensorData(
-                data=weights.tolist(),
-                dtype="float32",
-                shape=list(weights.shape),
-            ),
-            "target_tokens": tinker.TensorData(
-                data=target_tokens,
-                dtype="int64",
-                shape=[len(target_tokens)],
-            ),
-        },
-    )
+    loss_fn_inputs = {
+        "weights": tinker.TensorData(
+            data=weights.tolist(),
+            dtype="float32",
+            shape=list(weights.shape),
+        ),
+        "target_tokens": tinker.TensorData(
+            data=target_tokens,
+            dtype="int64",
+            shape=[len(target_tokens)],
+        ),
+    }
+    if trained_content_bytes is not None:
+        return DatumWithContentBytes(
+            model_input=input_model_input,
+            loss_fn_inputs=loss_fn_inputs,
+            trained_content_bytes=trained_content_bytes,
+        )
+    return tinker.Datum(model_input=input_model_input, loss_fn_inputs=loss_fn_inputs)

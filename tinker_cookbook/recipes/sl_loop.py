@@ -145,7 +145,14 @@ def main(config: Config):
         train_target_tokens = [d.loss_fn_inputs["target_tokens"] for d in batch]
         train_nll = compute_mean_nll(train_logprobs, train_weights)
         # Bits per byte: a tokenizer-independent counterpart to train_mean_nll.
-        train_bpb = compute_bpb(train_logprobs, train_weights, train_target_tokens, tokenizer)
+        train_content_bytes = [getattr(d, "trained_content_bytes", None) for d in batch]
+        train_bpb = compute_bpb(
+            train_logprobs,
+            train_weights,
+            train_target_tokens,
+            tokenizer,
+            content_bytes_list=train_content_bytes,
+        )
 
         # Log metrics
         metrics.update(

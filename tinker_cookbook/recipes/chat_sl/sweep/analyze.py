@@ -575,8 +575,11 @@ def generate_sft_sweep_md(
         "cross-entropy and are **not comparable across models with different "
         "tokenizers** (a coarser tokenizer has fewer, higher-loss tokens; a finer "
         "one has more, lower-loss tokens). Where present, `Test BPB` / `Train BPB` "
-        "(bits per byte) normalize by the target text's UTF-8 byte count instead of "
-        "the token count and *are* comparable across tokenizers."
+        "(bits per byte) normalize by the UTF-8 byte count of the trained message "
+        "content instead of the token count, making them comparable across "
+        "tokenizers and chat templates (chat-template scaffolding is not counted; "
+        "see the sweep README for caveats on thinking-in-history and truncated or "
+        "custom-renderer datums)."
     )
     lines.append("")
 

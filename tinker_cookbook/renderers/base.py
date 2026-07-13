@@ -22,6 +22,7 @@ from typing import (
     Protocol,
     TypedDict,
     Union,
+    final,
 )
 
 import pydantic
@@ -1069,6 +1070,58 @@ def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
     }
 
 
+def message_content_byte_count(
+    message: Message,
+    *,
+    include_thinking: bool = True,
+    include_tool_calls: bool = True,
+) -> int:
+    """UTF-8 byte count of the semantic content of a message.
+
+    Counts the payload that survives round-tripping through ``parse_response``:
+    text parts, thinking parts (when ``include_thinking`` is True), and
+    tool-call function names and arguments (when ``include_tool_calls`` is
+    True). Everything a renderer injects *around* that payload -- role headers,
+    think tags, tool-call framing, end-of-turn markers -- is excluded, so for
+    the same flags the count does not depend on how a renderer formats the
+    message. (Renderers may still legitimately differ in *what* they render --
+    e.g. whether thinking is preserved in historical turns -- and pass
+    different flags accordingly.) Image parts contribute zero bytes.
+
+    Renderers use this to report ``RenderedMessage.content_byte_count``, which
+    feeds the bits-per-byte (BPB) denominator. Callers must pass flags that
+    match what the renderer actually rendered (e.g. ``include_thinking=False``
+    for a historical message whose thinking was stripped), so the count covers
+    exactly the content present in the output tokens.
+
+    Args:
+        message (Message): The message to measure.
+        include_thinking (bool): Count ThinkingPart payloads. Set False when
+            the renderer strips thinking from this message.
+        include_tool_calls (bool): Count tool-call function names and argument
+            strings. Set False for renderers that do not render tool calls.
+
+    Returns:
+        int: Total UTF-8 bytes of the counted content.
+    """
+    total = 0
+    content = message["content"]
+    if isinstance(content, str):
+        total += len(content.encode("utf-8"))
+    else:
+        for part in content:
+            if part["type"] == "text":
+                total += len(part["text"].encode("utf-8"))
+            elif part["type"] == "thinking" and include_thinking:
+                total += len(part["thinking"].encode("utf-8"))
+            # Image parts contribute zero bytes.
+    if include_tool_calls:
+        for tool_call in message.get("tool_calls") or []:
+            total += len(tool_call.function.name.encode("utf-8"))
+            total += len(tool_call.function.arguments.encode("utf-8"))
+    return total
+
+
 @dataclass(frozen=True)
 class RenderedMessage:
     """
@@ -1112,6 +1165,42 @@ class RenderedMessage:
 
     stop_overlap: tinker.EncodedTextChunk | None = None
     """Tokens that overlap between stop sequence and next message's header."""
+
+    content_byte_count: int | None = None
+    """UTF-8 bytes of the semantic content rendered into ``output``.
+
+    Counts only the message payload (text, rendered thinking, tool-call names
+    and arguments) -- not renderer-injected scaffolding such as think tags,
+    tool-call framing, or end-of-turn markers. Computed with
+    :func:`message_content_byte_count` using flags that match what was actually
+    rendered. ``None`` means the renderer does not report content bytes; the
+    bits-per-byte metric then falls back to token-based byte counting.
+    """
+
+
+@dataclass(frozen=True)
+class SupervisedExample:
+    """A supervised training example plus rendering metadata.
+
+    Returned by :meth:`Renderer.build_supervised_example_with_metadata`. The
+    ``model_input``/``weights`` pair is identical to what
+    :meth:`Renderer.build_supervised_example` returns.
+
+    Attributes:
+        model_input: Full token sequence for the conversation.
+        weights: Per-token loss weights aligned with ``model_input``.
+        trained_content_bytes: Total UTF-8 bytes of the semantic content of the
+            messages that received loss weight (see
+            :func:`message_content_byte_count`). Excludes renderer scaffolding:
+            it reflects what content the renderer trains on, independent of how
+            the template formats it, and serves as the bits-per-byte
+            denominator. ``None`` when the renderer does not report content
+            bytes.
+    """
+
+    model_input: tinker.ModelInput
+    weights: torch.Tensor
+    trained_content_bytes: int | None = None
 
 
 class TrainOnWhat(StrEnum):
@@ -1565,10 +1654,13 @@ class Renderer(ABC):
         Build tokens and per-token weights for supervised fine-tuning.
 
         This default implementation concatenates rendered messages in order. Override
-        this method if your build_generation_prompt does anything that breaks the simple
-        concatenation assumption—for example, if it strips thinking blocks from history
-        (like Qwen3Renderer), injects default system prompts (like KimiK2Renderer), or
-        otherwise modifies the token sequence.
+        :meth:`_build_supervised_example_impl` if your build_generation_prompt does
+        anything that breaks the simple concatenation assumption—for example, if it
+        strips thinking blocks from history (like Qwen3Renderer), injects default
+        system prompts (like KimiK2Renderer), or otherwise modifies the token sequence.
+        (Overriding this method still works and is supported for backward
+        compatibility, but such renderers won't report content bytes for the
+        bits-per-byte metric.)
 
         The supervised example tokens should match what build_generation_prompt would
         produce for the same conversation prefix, so the model trains on the same
@@ -1590,6 +1682,73 @@ class Renderer(ABC):
                 tuple where weights is a 1-D float tensor with the same length
                 as the total number of tokens.
         """
+        # Calling the impl chain directly (rather than the metadata dispatcher)
+        # makes super().build_supervised_example() from a legacy override run
+        # the parent's implementation, exactly as before this method existed.
+        example = self._build_supervised_example_impl(messages, train_on_what)
+        return example.model_input, example.weights
+
+    @final
+    def build_supervised_example_with_metadata(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+    ) -> SupervisedExample:
+        """
+        Build a supervised example plus rendering metadata.
+
+        Same tokens and weights as :meth:`build_supervised_example`, plus
+        ``trained_content_bytes``: the UTF-8 byte count of the semantic content
+        of the loss-weighted messages, used as the bits-per-byte denominator.
+
+        This method is a final dispatcher; renderers customize supervised
+        example construction by overriding :meth:`_build_supervised_example_impl`
+        (or, for pre-existing code, :meth:`build_supervised_example`). Whenever
+        *any* class in the MRO overrides ``build_supervised_example``, that
+        override is what a direct call to :meth:`build_supervised_example`
+        resolves to, so it is honored here too -- its tokens and weights are
+        returned with ``trained_content_bytes=None`` (the override may transform
+        messages in ways the content accounting cannot see). This guarantees the
+        two entry points always agree about the tokens: legacy overrides that
+        call ``super().build_supervised_example()`` still reach the most-derived
+        ``_build_supervised_example_impl`` through :meth:`build_supervised_example`,
+        so impl overrides participate on both paths.
+
+        Args:
+            messages (list[Message]): A list of messages to render.
+            train_on_what (TrainOnWhat): Controls which tokens receive non-zero
+                training weight. See :meth:`build_supervised_example`.
+
+        Returns:
+            SupervisedExample: The tokenized example with per-token weights and
+                ``trained_content_bytes`` (``None`` if the resolved
+                implementation does not report content bytes).
+        """
+        if type(self).build_supervised_example is not Renderer.build_supervised_example:
+            # Some class overrides the legacy method, so a direct
+            # build_supervised_example() call would run that override. Route
+            # through it so both entry points return identical tokens. Content
+            # bytes are unavailable on that path.
+            model_input, weights = self.build_supervised_example(
+                messages, train_on_what=train_on_what
+            )
+            return SupervisedExample(model_input, weights, None)
+        return self._build_supervised_example_impl(messages, train_on_what)
+
+    def _build_supervised_example_impl(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat,
+    ) -> SupervisedExample:
+        """Supervised-example construction shared by the two public entry points.
+
+        This is the single override point for renderers that customize
+        supervised example construction (like the protected rendering hooks,
+        e.g. ``_render_tool_calls``): both :meth:`build_supervised_example`
+        and :meth:`build_supervised_example_with_metadata` route here, so an
+        override automatically keeps the two public entry points consistent
+        and reports content bytes for the bits-per-byte metric.
+        """
         # Warn if training on multiple assistant messages with a renderer that doesn't
         # satisfy the extension property. In that case, each assistant message sees a
         # different context prefix, so they should be trained as separate examples.
@@ -1608,6 +1767,7 @@ class Renderer(ABC):
             )
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
+        trained_content_bytes: int | None = 0
         if self._bos_tokens:
             model_input_chunks_weights.append(
                 (tinker.types.EncodedTextChunk(tokens=self._bos_tokens), 0.0)
@@ -1667,6 +1827,14 @@ class Renderer(ABC):
                 case _:
                     raise RendererError(f"Unknown train_on_what: {train_on_what}")
 
+            if output_has_weight:
+                if rendered_message.content_byte_count is None:
+                    # A trained message without content accounting invalidates
+                    # the total for the whole example.
+                    trained_content_bytes = None
+                elif trained_content_bytes is not None:
+                    trained_content_bytes += rendered_message.content_byte_count
+
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
             ]
@@ -1680,7 +1848,9 @@ class Renderer(ABC):
         weights_tensor = torch.tensor(weights_data)
 
         model_input_chunks = [chunk for chunk, _ in model_input_chunks_weights]
-        return tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        return SupervisedExample(
+            tinker.ModelInput(chunks=model_input_chunks), weights_tensor, trained_content_bytes
+        )
 
 
 def tokens_weights_from_strings_weights(

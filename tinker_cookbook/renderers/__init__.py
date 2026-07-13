@@ -27,6 +27,7 @@ from tinker_cookbook.renderers.base import (
     StreamingMessageHeader,
     StreamingTextDelta,
     StreamingThinkingDelta,
+    SupervisedExample,
     TextPart,
     ThinkingPart,
     ToolCall,
@@ -37,6 +38,7 @@ from tinker_cookbook.renderers.base import (
     ensure_text,
     format_content_as_string,
     get_text_content,
+    message_content_byte_count,
     parse_content_blocks,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -303,11 +305,13 @@ __all__ = [
     # Renderer base
     "RenderContext",
     "Renderer",
+    "SupervisedExample",
     "TrainOnWhat",
     # Utility functions
     "ensure_text",
     "format_content_as_string",
     "get_text_content",
+    "message_content_byte_count",
     "parse_content_blocks",
     # Registry
     "register_renderer",

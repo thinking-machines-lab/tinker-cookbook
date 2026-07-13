@@ -74,6 +74,25 @@ from tinker_cookbook.renderers.base import (
 )
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 
+_LOW_EFFORT_SUFFIX = "\n\n{reasoning effort: low}"
+_MEDIUM_EFFORT_SUFFIX = "\n\n{reasoning effort: efficient}"
+
+
+def _discount_injected_suffix(rendered: RenderedMessage, suffix: str) -> RenderedMessage:
+    """Remove a renderer-injected suffix's bytes from the content byte count.
+
+    The reasoning-effort suffix is baked into the message content before
+    rendering (so it tokenizes exactly like the HF template), but it is
+    renderer-injected scaffolding, not semantic content -- it must not count
+    toward the bits-per-byte denominator.
+    """
+    if rendered.content_byte_count is None:
+        return rendered
+    return dataclasses.replace(
+        rendered,
+        content_byte_count=rendered.content_byte_count - len(suffix.encode("utf-8")),
+    )
+
 
 def _render_extra_keys(obj: Mapping[str, object], handled_keys: set[str]) -> list[str]:
     """Render extra dict keys as XML, mirroring the HF template's render_extra_keys macro.
@@ -172,7 +191,12 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         """
         return super().build_generation_prompt(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
 
-    def build_supervised_example(self, messages: list[Message], *args: object, **kwargs: object):  # type: ignore[override]
+    def _build_supervised_example_impl(
+        self,
+        messages: list[Message],
+        *args: object,
+        **kwargs: object,
+    ):  # type: ignore[override]
         """Build supervised example, prepending an empty system message if none exists.
 
         Args:
@@ -181,10 +205,14 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             **kwargs: Additional keyword arguments passed to the parent.
 
         Returns:
-            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
-                per-token weight tensor.
+            SupervisedExample: The tokenized model input, per-token weight tensor,
+                and content byte count of the loss-weighted messages.
         """
-        return super().build_supervised_example(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
+        return super()._build_supervised_example_impl(
+            self._normalize_messages(messages),
+            *args,  # type: ignore[arg-type]
+            **kwargs,  # type: ignore[arg-type]
+        )
 
     def _assistant_header_suffix(self, message: Message, ctx: RenderContext) -> str:
         """Prepend <think></think> when thinking will not appear in the output.
@@ -390,7 +418,10 @@ class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
                 "Nemotron-3 low-thinking mode is text-only; list content not supported"
             )
             message = message.copy()
-            message["content"] = content + "\n\n{reasoning effort: low}"
+            message["content"] = content + _LOW_EFFORT_SUFFIX
+            return _discount_injected_suffix(
+                super().render_message(message, ctx), _LOW_EFFORT_SUFFIX
+            )
         return super().render_message(message, ctx)
 
 
@@ -451,7 +482,10 @@ class Nemotron3UltraMediumThinkingRenderer(Nemotron3UltraRenderer):
                 "Nemotron-3 Ultra medium-thinking mode is text-only; list content not supported"
             )
             message = message.copy()
-            message["content"] = content + "\n\n{reasoning effort: efficient}"
+            message["content"] = content + _MEDIUM_EFFORT_SUFFIX
+            return _discount_injected_suffix(
+                super().render_message(message, ctx), _MEDIUM_EFFORT_SUFFIX
+            )
         return super().render_message(message, ctx)
 
 

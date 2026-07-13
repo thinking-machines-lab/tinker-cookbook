@@ -50,7 +50,10 @@ def conversation_to_datum(
 
     Returns:
         tinker.Datum: A training datum with model input, target tokens,
-        and per-token loss weights.
+        and per-token loss weights. When the renderer reports content bytes
+        (and no trained token is lost to truncation), this is a
+        ``DatumWithContentBytes`` whose ``trained_content_bytes`` feeds the
+        bits-per-byte metric.
 
     Example::
 
@@ -65,10 +68,16 @@ def conversation_to_datum(
         ]
         datum = conversation_to_datum(messages, renderer, max_length=2048)
     """
-    model_input, weights = renderer.build_supervised_example(
+    example = renderer.build_supervised_example_with_metadata(
         conversation, train_on_what=train_on_what
     )
-    return datum_from_model_input_weights(model_input, weights, max_length, reduction=reduction)
+    return datum_from_model_input_weights(
+        example.model_input,
+        example.weights,
+        max_length,
+        reduction=reduction,
+        trained_content_bytes=example.trained_content_bytes,
+    )
 
 
 def _one_of(a: Any, b: Any) -> bool:
