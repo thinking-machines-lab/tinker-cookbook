@@ -172,7 +172,12 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         """
         return super().build_generation_prompt(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
 
-    def build_supervised_example(self, messages: list[Message], *args: object, **kwargs: object):  # type: ignore[override]
+    def build_supervised_example_with_metadata(
+        self,
+        messages: list[Message],
+        *args: object,
+        **kwargs: object,
+    ):  # type: ignore[override]
         """Build supervised example, prepending an empty system message if none exists.
 
         Args:
@@ -181,10 +186,14 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             **kwargs: Additional keyword arguments passed to the parent.
 
         Returns:
-            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
-                per-token weight tensor.
+            SupervisedExample: The tokenized model input, per-token weight tensor,
+                and content byte count of the loss-weighted messages.
         """
-        return super().build_supervised_example(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
+        return super().build_supervised_example_with_metadata(
+            self._normalize_messages(messages),
+            *args,  # type: ignore[arg-type]
+            **kwargs,  # type: ignore[arg-type]
+        )
 
     def _assistant_header_suffix(self, message: Message, ctx: RenderContext) -> str:
         """Prepend <think></think> when thinking will not appear in the output.

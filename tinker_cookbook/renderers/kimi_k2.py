@@ -16,6 +16,7 @@ from tinker_cookbook.renderers.base import (
     RenderedMessage,
     Renderer,
     Role,
+    SupervisedExample,
     TextPart,
     ToolCall,
     ToolSpec,
@@ -23,6 +24,7 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     ensure_list,
     ensure_text,
+    message_content_byte_count,
     parse_response_for_stop_token,
     parse_think_blocks,
 )
@@ -272,7 +274,17 @@ class KimiK2Renderer(Renderer):
 
         header = tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(header_str))
 
-        return RenderedMessage(header=header, output=output)
+        # Thinking survives rendering only for the last assistant message (or
+        # always when strip_thinking_from_history is False); the injected empty
+        # <think></think> block is scaffolding and not counted as content.
+        thinking_rendered = ctx.is_last or not self.strip_thinking_from_history
+        return RenderedMessage(
+            header=header,
+            output=output,
+            content_byte_count=message_content_byte_count(
+                message, include_thinking=thinking_rendered
+            ),
+        )
 
     def _encode_multipart_content(self, content: list[ContentPart]) -> list[tinker.ModelInputChunk]:
         raise NotImplementedError(
@@ -394,11 +406,11 @@ class KimiK2Renderer(Renderer):
 
         return supervised_examples
 
-    def build_supervised_example(
+    def build_supervised_example_with_metadata(
         self,
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
-    ) -> tuple[tinker.ModelInput, torch.Tensor]:
+    ) -> SupervisedExample:
         """Build a single supervised training example with proper thinking preservation.
 
         Ensures a default system message is present and preserves thinking content
@@ -410,8 +422,8 @@ class KimiK2Renderer(Renderer):
             train_on_what (TrainOnWhat): Which message tokens to assign training weight.
 
         Returns:
-            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
-                per-token weight tensor.
+            SupervisedExample: The tokenized model input, per-token weight tensor,
+                and content byte count of the loss-weighted messages.
         """
         messages = self._ensure_system_message(messages)
 
@@ -426,6 +438,7 @@ class KimiK2Renderer(Renderer):
                 break
 
         model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
+        trained_content_bytes: int | None = 0
 
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:
@@ -482,6 +495,12 @@ class KimiK2Renderer(Renderer):
                 case _:
                     raise RendererError(f"Unknown train_on_what: {train_on_what}")
 
+            if output_has_weight:
+                if rendered_message.content_byte_count is None:
+                    trained_content_bytes = None
+                elif trained_content_bytes is not None:
+                    trained_content_bytes += rendered_message.content_byte_count
+
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
             ]
@@ -490,7 +509,9 @@ class KimiK2Renderer(Renderer):
         weights_tensor = torch.tensor(weights_data)
 
         model_input_chunks = [chunk for chunk, _ in model_input_chunks_weights]
-        return tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        return SupervisedExample(
+            tinker.ModelInput(chunks=model_input_chunks), weights_tensor, trained_content_bytes
+        )
 
     @property
     def _end_message_token(self) -> int:

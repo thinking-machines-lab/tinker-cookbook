@@ -51,9 +51,13 @@ cross-entropy, which is not comparable across models with different tokenizers �
 a coarser tokenizer packs more text into each token (higher nats/token) while a
 finer one spreads it over more (lower nats/token). Training also logs
 `train_mean_bpb` / `test/bpb` (bits per byte), which divide the total log-loss by
-the number of UTF-8 bytes of the target text instead of by the token count, so
-they *are* comparable across tokenizers. Sweeping over models? Select on bits per
-byte:
+the number of UTF-8 bytes of the *semantic content* of the trained messages
+(message text, preserved thinking, tool-call names/arguments) instead of by the
+token count. Chat-template scaffolding — think tags, role markers, end-of-turn
+tokens — is never counted as bytes, so a verbose template gains no artificial
+BPB advantage, and the denominator is identical across renderers for the same
+data. That makes BPB comparable across tokenizers *and* chat templates.
+Sweeping over models? Select on bits per byte:
 
 ```bash
 python -m tinker_cookbook.recipes.chat_sl.sweep \

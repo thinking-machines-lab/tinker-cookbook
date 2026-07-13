@@ -11,7 +11,7 @@ Use these as a reference when choosing learning rate and LoRA rank for your mode
 
 > **Note:** Wall times are approximate and depend on server load at the time of the run. They may fluctuate significantly between runs.
 
-> **Comparing across models:** `Test NLL` / `Train NLL` are *per-token* cross-entropy and are **not comparable across models with different tokenizers** (a coarser tokenizer has fewer, higher-loss tokens; a finer one has more, lower-loss tokens). Where present, `Test BPB` / `Train BPB` (bits per byte) normalize by the target text's UTF-8 byte count instead of the token count and *are* comparable across tokenizers. (These tables predate the BPB metric, so the columns are not yet shown; they will appear when the sweep is re-run and this doc is regenerated.)
+> **Comparing across models:** `Test NLL` / `Train NLL` are *per-token* cross-entropy and are **not comparable across models with different tokenizers** (a coarser tokenizer has fewer, higher-loss tokens; a finer one has more, lower-loss tokens). Where present, `Test BPB` / `Train BPB` (bits per byte) normalize by the UTF-8 byte count of the trained message content instead of the token count — chat-template scaffolding is never counted as bytes — and *are* comparable across tokenizers and chat templates. (These tables predate the BPB metric, so the columns are not yet shown; they will appear when the sweep is re-run and this doc is regenerated.)
 
 ## Key Findings
 

@@ -8,6 +8,7 @@ import tinker
 import torch
 
 from tinker_cookbook.supervised.common import (
+    DatumWithContentBytes,
     _counted_byte_count,
     compute_bpb,
     datum_from_model_input_weights,
@@ -276,3 +277,136 @@ def test_counted_byte_count_splits_runs():
     tok = _fake_tokenizer({1: "ab", 2: "GAP", 3: "cde"})
     n = _counted_byte_count([1, 2, 3], [True, False, True], tok)
     assert n == len("ab") + len("cde")  # 2 + 3; the middle token is excluded
+
+
+def test_compute_bpb_content_bytes_mode_hand_computation():
+    """With renderer-reported content bytes, the numerator is the FULL trained
+    NLL (including special/scaffolding tokens) and the denominator is the
+    provided byte count."""
+    tok = _fake_tokenizer({1: "hi", 99: "<|end|>"}, special_ids={99})
+    logprobs = _td([-1.0, -0.25], "float32")  # trained content + trained special
+    weights = _td([1.0, 1.0], "float32")
+    targets = _td([1, 99], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok, content_bytes_list=[2])
+    # Numerator = 1.0 + 0.25 (the special token's nats ARE charged);
+    # denominator = 2 content bytes (the special token adds no bytes).
+    expected = 1.25 / (math.log(2) * 2)
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_content_bytes_mode_invariant_to_weight_magnitude():
+    """Content-byte mode also treats weights as a mask (mean-reduction safe)."""
+    tok = _fake_tokenizer({1: "ab", 2: "cd"})
+    logprobs = _td([-1.0, -3.0], "float32")
+    targets = _td([1, 2], "int64")
+    expected = 4.0 / (math.log(2) * 4)
+    bpb_binary = compute_bpb(
+        [logprobs], [_td([1.0, 1.0], "float32")], [targets], tok, content_bytes_list=[4]
+    )
+    bpb_mean = compute_bpb(
+        [logprobs], [_td([0.5, 0.5], "float32")], [targets], tok, content_bytes_list=[4]
+    )
+    assert math.isclose(bpb_binary, expected, rel_tol=1e-6)
+    assert math.isclose(bpb_mean, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_content_bytes_denominator_excludes_scaffolding():
+    """Non-special scaffolding (e.g. <think></think> rendered as plain tokens)
+    pads the token-byte fallback denominator but not the content-byte one."""
+    tok = _fake_tokenizer({1: "<think></think>", 2: "hi"})
+    logprobs = _td([-0.0, -1.0], "float32")  # scaffolding fully learned
+    weights = _td([1.0, 1.0], "float32")
+    targets = _td([1, 2], "int64")
+    fallback = compute_bpb([logprobs], [weights], [targets], tok)
+    content = compute_bpb([logprobs], [weights], [targets], tok, content_bytes_list=[len("hi")])
+    # Fallback counts 15 scaffolding bytes in the denominator, deflating BPB.
+    assert math.isclose(fallback, 1.0 / (math.log(2) * 17), rel_tol=1e-6)
+    assert math.isclose(content, 1.0 / (math.log(2) * 2), rel_tol=1e-6)
+
+
+def test_compute_bpb_mixed_batch_uses_fallback_per_datum():
+    """A None entry falls back to token-byte counting for that datum only."""
+    tok = _fake_tokenizer({1: "ab", 2: "cde"})
+    logprobs = [_td([-1.0], "float32"), _td([-3.0], "float32")]
+    weights = [_td([1.0], "float32"), _td([1.0], "float32")]
+    targets = [_td([1], "int64"), _td([2], "int64")]
+    bpb = compute_bpb(logprobs, weights, targets, tok, content_bytes_list=[2, None])
+    # Datum 1: content mode (2 bytes). Datum 2: fallback decodes "cde" (3 bytes).
+    expected = 4.0 / (math.log(2) * 5)
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_content_bytes_list_length_mismatch_raises():
+    tok = _fake_tokenizer({1: "ab"})
+    logprobs = _td([-1.0], "float32")
+    weights = _td([1.0], "float32")
+    targets = _td([1], "int64")
+    with pytest.raises(ValueError, match="content_bytes_list"):
+        compute_bpb([logprobs], [weights], [targets], tok, content_bytes_list=[2, 3])
+
+
+def test_datum_carries_trained_content_bytes():
+    """datum_from_model_input_weights returns a DatumWithContentBytes carrying
+    the count, without touching loss_fn_inputs (which the service validates)."""
+    model_input = _make_model_input([10, 20, 30, 40, 50])
+    weights = torch.tensor([0.0, 0.0, 1.0, 1.0, 1.0])
+    datum = datum_from_model_input_weights(model_input, weights, trained_content_bytes=42)
+    assert isinstance(datum, tinker.Datum)
+    assert isinstance(datum, DatumWithContentBytes)
+    assert datum.trained_content_bytes == 42
+    assert set(datum.loss_fn_inputs.keys()) == {"weights", "target_tokens"}
+
+
+def test_datum_without_content_bytes_is_plain_datum():
+    model_input = _make_model_input([10, 20, 30])
+    weights = torch.tensor([0.0, 1.0, 1.0])
+    datum = datum_from_model_input_weights(model_input, weights)
+    assert type(datum) is tinker.Datum
+    assert getattr(datum, "trained_content_bytes", None) is None
+
+
+def test_datum_with_content_bytes_pickles():
+    """Datasets may cross process boundaries; the metadata must survive pickling."""
+    import pickle
+
+    model_input = _make_model_input([10, 20, 30])
+    weights = torch.tensor([0.0, 1.0, 1.0])
+    datum = datum_from_model_input_weights(model_input, weights, trained_content_bytes=7)
+    restored = pickle.loads(pickle.dumps(datum))
+    assert isinstance(restored, DatumWithContentBytes)
+    assert restored.trained_content_bytes == 7
+
+
+def test_truncation_of_trained_tokens_drops_content_bytes():
+    """If max_length cuts into the loss-weighted region, the byte count no
+    longer matches the surviving tokens and must be dropped."""
+    model_input = _make_model_input([10, 20, 30, 40, 50])
+    weights = torch.tensor([0.0, 0.0, 1.0, 1.0, 1.0])
+    datum = datum_from_model_input_weights(
+        model_input, weights, max_length=4, trained_content_bytes=42
+    )
+    assert type(datum) is tinker.Datum
+    assert getattr(datum, "trained_content_bytes", None) is None
+
+
+def test_truncation_of_untrained_tokens_keeps_content_bytes():
+    """Truncation that only removes weight-0 tokens leaves the count valid."""
+    model_input = _make_model_input([10, 20, 30, 40, 50])
+    weights = torch.tensor([0.0, 1.0, 1.0, 0.0, 0.0])
+    datum = datum_from_model_input_weights(
+        model_input, weights, max_length=4, trained_content_bytes=42
+    )
+    assert isinstance(datum, DatumWithContentBytes)
+    assert datum.trained_content_bytes == 42
+
+
+def test_content_bytes_preserved_under_mean_reduction():
+    """Mean reduction rescales weights but must not affect the byte count."""
+    model_input = _make_model_input([10, 20, 30, 40, 50])
+    weights = torch.tensor([0.0, 0.0, 1.0, 1.0, 1.0])
+    datum = datum_from_model_input_weights(
+        model_input, weights, reduction="mean", trained_content_bytes=42
+    )
+    assert isinstance(datum, DatumWithContentBytes)
+    assert datum.trained_content_bytes == 42
+    assert math.isclose(sum(_extract_weights(datum)), 1.0, rel_tol=1e-6)

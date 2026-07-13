@@ -1,6 +1,7 @@
 """Supervised learning: dataset builders, data utilities, and training loops."""
 
 from tinker_cookbook.supervised.common import (
+    DatumWithContentBytes,
     compute_bpb,
     compute_mean_nll,
     datum_from_model_input_weights,
@@ -34,6 +35,7 @@ __all__ = [
     "SupervisedDatasetFromHFDataset",
     "conversation_to_datum",
     # Helpers (common.py)
+    "DatumWithContentBytes",
     "compute_bpb",
     "compute_mean_nll",
     "datum_from_model_input_weights",

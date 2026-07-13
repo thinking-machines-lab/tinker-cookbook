@@ -493,7 +493,12 @@ async def main(config: Config):
         # letting NLL be compared across models with different tokenizers.
         if submitted.data and "target_tokens" in submitted.data[0].loss_fn_inputs:
             target_tokens = [datum.loss_fn_inputs["target_tokens"] for datum in submitted.data]
-            metrics["train_mean_bpb"] = compute_bpb(logprobs, weights, target_tokens, tokenizer)
+            content_bytes = [
+                getattr(datum, "trained_content_bytes", None) for datum in submitted.data
+            ]
+            metrics["train_mean_bpb"] = compute_bpb(
+                logprobs, weights, target_tokens, tokenizer, content_bytes_list=content_bytes
+            )
         # Merge evaluation metrics gathered before the training step was submitted
         if submitted.eval_metrics is not None:
             metrics.update(submitted.eval_metrics)

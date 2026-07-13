@@ -9,6 +9,7 @@ Includes:
 - Qwen3VLInstructRenderer: Vision-language instruct models
 """
 
+import dataclasses
 import json
 from typing import cast
 
@@ -29,6 +30,7 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     _tool_call_payload,
     image_to_chunk,
+    message_content_byte_count,
     parse_content_blocks,
     parse_response_for_stop_token,
     remove_thinking,
@@ -198,7 +200,16 @@ class Qwen3Renderer(Renderer):
                 tokens=self.tokenizer.encode(output_content, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(header=header, output=output)
+        thinking_rendered = not (
+            self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last
+        )
+        return RenderedMessage(
+            header=header,
+            output=output,
+            content_byte_count=message_content_byte_count(
+                message, include_thinking=thinking_rendered
+            ),
+        )
 
     @property
     def _end_message_token(self) -> int:
@@ -449,9 +460,7 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
                 )
                 old_header_tokens = list(rendered.header.tokens) if rendered.header else []
                 new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + empty_think_tokens)
-                rendered = RenderedMessage(
-                    header=new_header, output=rendered.output, stop_overlap=rendered.stop_overlap
-                )
+                rendered = dataclasses.replace(rendered, header=new_header)
 
         return rendered
 
@@ -651,7 +660,13 @@ class Qwen3VLRenderer(Qwen3Renderer):
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
-        return RenderedMessage(header=header, output=output_chunks_encoded)
+        return RenderedMessage(
+            header=header,
+            output=output_chunks_encoded,
+            content_byte_count=message_content_byte_count(
+                message, include_thinking=not strip_thinking
+            ),
+        )
 
 
 class Qwen3VLInstructRenderer(Qwen3VLRenderer):

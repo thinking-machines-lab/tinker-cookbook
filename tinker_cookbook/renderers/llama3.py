@@ -54,7 +54,8 @@ class Llama3Renderer(Renderer):
         """
         role = message["role"]
         header_str = f"<|start_header_id|>{role}<|end_header_id|>\n\n"
-        output_str = ensure_text(message["content"]) + "<|eot_id|>"
+        content_str = ensure_text(message["content"])
+        output_str = content_str + "<|eot_id|>"
 
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
@@ -64,7 +65,9 @@ class Llama3Renderer(Renderer):
                 tokens=self.tokenizer.encode(output_str, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(header=header, output=output)
+        return RenderedMessage(
+            header=header, output=output, content_byte_count=len(content_str.encode("utf-8"))
+        )
 
     @property
     def _bos_tokens(self) -> list[int]:

@@ -49,7 +49,8 @@ class RoleColonRenderer(Renderer):
             RenderedMessage: Header, output, and stop_overlap token chunks.
         """
         header_str = message["role"].capitalize() + ":"
-        output_str = " " + ensure_text(message["content"]) + "\n\n"
+        content_str = ensure_text(message["content"])
+        output_str = " " + content_str + "\n\n"
         # stop_overlap completes the stop sequence "\n\nUser:" for assistant messages.
         # For non-assistant messages, we use a placeholder that's never actually concatenated.
         stop_overlap_str = "User:" if message["role"] == "assistant" else "<UNUSED>"
@@ -64,7 +65,12 @@ class RoleColonRenderer(Renderer):
         stop_overlap = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(stop_overlap_str, add_special_tokens=False)
         )
-        return RenderedMessage(header=header, output=output, stop_overlap=stop_overlap)
+        return RenderedMessage(
+            header=header,
+            output=output,
+            stop_overlap=stop_overlap,
+            content_byte_count=len(content_str.encode("utf-8")),
+        )
 
     def get_stop_sequences(self) -> list[str]:
         """Return stop sequences for RoleColon generation.

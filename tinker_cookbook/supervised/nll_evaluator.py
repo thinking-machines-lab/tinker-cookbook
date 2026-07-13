@@ -65,8 +65,9 @@ class NLLEvaluator(TrainingClientEvaluator):
             and "target_tokens" in self.data[0].loss_fn_inputs
         ):
             target_tokens = [datum.loss_fn_inputs["target_tokens"] for datum in self.data]
+            content_bytes = [getattr(datum, "trained_content_bytes", None) for datum in self.data]
             metrics[f"{self.name}/bpb"] = compute_bpb(
-                logprobs, weights, target_tokens, self.tokenizer
+                logprobs, weights, target_tokens, self.tokenizer, content_bytes_list=content_bytes
             )
         return metrics
 

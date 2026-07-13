@@ -6,7 +6,6 @@ import warnings
 from datetime import datetime
 
 import tinker
-import torch
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
@@ -17,6 +16,7 @@ from tinker_cookbook.renderers.base import (
     RenderedMessage,
     Renderer,
     Role,
+    SupervisedExample,
     TextPart,
     ThinkingPart,
     ToolCall,
@@ -25,6 +25,7 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     ensure_list,
     ensure_text,
+    message_content_byte_count,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
@@ -308,7 +309,10 @@ class GptOssRenderer(Renderer):
                 tokens=self.tokenizer.encode(output_str, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(header=header, output=output)
+        # Harmony renders thinking (analysis channel) whenever it is present.
+        return RenderedMessage(
+            header=header, output=output, content_byte_count=message_content_byte_count(message)
+        )
 
     def _render_tool_calls(self, tool_calls: list[ToolCall]) -> str:
         """Render tool calls in Harmony commentary channel format.
@@ -374,7 +378,11 @@ class GptOssRenderer(Renderer):
                 tokens=self.tokenizer.encode(output_str, add_special_tokens=False)
             )
         ]
-        return RenderedMessage(header=header, output=output)
+        return RenderedMessage(
+            header=header,
+            output=output,
+            content_byte_count=len(content.encode("utf-8")),
+        )
 
     def _get_system_message(self) -> Message | None:
         """Return system message if configured, else None.
@@ -429,11 +437,11 @@ class GptOssRenderer(Renderer):
             messages = [system_msg] + list(messages)
         return super().build_generation_prompt(messages, role, prefill)
 
-    def build_supervised_example(
+    def build_supervised_example_with_metadata(
         self,
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
-    ) -> tuple[tinker.ModelInput, torch.Tensor]:
+    ) -> SupervisedExample:
         """Build supervised example, prepending system message if configured.
 
         Args:
@@ -441,14 +449,14 @@ class GptOssRenderer(Renderer):
             train_on_what (TrainOnWhat): Which message tokens to assign training weight.
 
         Returns:
-            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
-                per-token weight tensor.
+            SupervisedExample: The tokenized model input, per-token weight tensor,
+                and content byte count of the loss-weighted messages.
         """
         self._warn_if_user_system_message(messages)
         system_msg = self._get_system_message()
         if system_msg:
             messages = [system_msg] + list(messages)
-        return super().build_supervised_example(messages, train_on_what)
+        return super().build_supervised_example_with_metadata(messages, train_on_what)
 
     @property
     def _return_token(self) -> int:
