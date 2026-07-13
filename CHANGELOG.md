@@ -12,6 +12,17 @@ Each entry includes:
 - **PR**: Link to the pull request
 
 ---
+### [cookbook] Async RL no longer discards stale rollouts — staleness is enforced by pacing sampling ([#822](https://github.com/thinking-machines-lab/tinker-cookbook/pull/822))
+**Date:** 2026-07-13
+**Type:** improvement
+**Tags:** rl
+
+**Behavior change.** `do_async_training` previously enforced `max_steps_off_policy` by discarding any completed trajectory group that was too stale and requeuing its problem — silently biasing training toward fast-completing (typically easier) problems and wasting the sampler compute of every slow rollout (a problem whose rollout reliably outlived the bound was never trained on). The staleness bound is now enforced without discarding data: rollout starts are admission-controlled (at most `groups_per_batch * (max_steps_off_policy + 1)` outstanding groups), the trainer waits for rollouts at the staleness deadline, and batches are formed stalest-first — every collected group is trained on exactly once, within the bound; `max_steps_off_policy=0` is exactly synchronous. In a GSM8K A/B with difficulty-correlated rollout latency, the old semantics discarded 8–13% of sampled rollouts and covered only ~92% of slow problems; the new semantics cover 100% with no discards and match held-out accuracy when paired with `loss_fn="ppo"`.
+
+**Breaking:** `async_config` + `stream_minibatch_config` now raises `ConfigurationError` (the combination previously ran with discard semantics; the streaming path has no staleness enforcement of its own). Note that blocking enforcement *uses* its staleness budget — typical staleness sits at the bound when sampling outpaces training — so pair async training with a trust-region loss (e.g. `loss_fn="ppo"`) or keep `max_steps_off_policy` small; the default unclipped `importance_sampling` loss can destabilize when training consistently off-policy. New metrics: `async/staleness_{max,min,mean}`, `async/outstanding_groups`, `async/in_flight_groups`, `async/completed_buffer_size`, `time/waiting_for_stragglers`.
+
+---
+
 
 ### [cookbook] Fix base-model single-turn evals + replace `parse_success` bool with `ParseTermination` enum ([#688](https://github.com/thinking-machines-lab/tinker-cookbook/pull/688))
 **Date:** 2026-04-30
