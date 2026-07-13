@@ -52,11 +52,18 @@ a coarser tokenizer packs more text into each token (higher nats/token) while a
 finer one spreads it over more (lower nats/token). Training also logs
 `train_mean_bpb` / `test/bpb` (bits per byte), which divide the total log-loss by
 the number of UTF-8 bytes of the *semantic content* of the trained messages
-(message text, preserved thinking, tool-call names/arguments) instead of by the
+(message text, rendered thinking, tool-call names/arguments) instead of by the
 token count. Chat-template scaffolding — think tags, role markers, end-of-turn
-tokens — is never counted as bytes, so a verbose template gains no artificial
-BPB advantage, and the denominator is identical across renderers for the same
-data. That makes BPB comparable across tokenizers *and* chat templates.
+tokens — is not counted as bytes, so a verbose template gains no artificial BPB
+advantage: the denominator depends on *what* content a renderer trains on, not
+on how its template formats it. That makes BPB comparable across tokenizers and
+chat templates, with two caveats. Renderers that legitimately train on
+different content count different bytes — e.g. gpt-oss preserves (and counts)
+thinking in historical assistant turns that Qwen3/Kimi renderers strip — so
+cross-model comparisons are cleanest on data without thinking in historical
+turns. And datums without renderer-reported content bytes (custom renderers
+that override only `build_supervised_example`, or examples whose trained span
+was cut by `max_length`) fall back to the previous token-byte computation.
 Sweeping over models? Select on bits per byte:
 
 ```bash

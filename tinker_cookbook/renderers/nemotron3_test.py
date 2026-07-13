@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
+from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, TrainOnWhat, get_renderer
 from tinker_cookbook.renderers.nemotron3 import (
     Nemotron3DisableThinkingRenderer,
     Nemotron3LowThinkingRenderer,
@@ -909,6 +909,28 @@ def test_low_thinking_multiturn_supervised_matches_hf(
         f"Cookbook: {nemotron_super_tokenizer.decode(cookbook)}\n"
         f"HF: {nemotron_super_tokenizer.decode(hf)}"
     )
+
+
+def test_low_thinking_effort_suffix_not_counted_as_content_bytes(
+    nemotron_super_tokenizer, nemotron_low_thinking_renderer
+):
+    """The injected '{reasoning effort: low}' suffix is rendered (and trained
+    under ALL_MESSAGES) but is renderer scaffolding, so it must not count
+    toward trained_content_bytes."""
+    user_text = "What is 2+2?"
+    response_text = "2+2 equals 4."
+    messages = [
+        Message(role="user", content=user_text),
+        Message(role="assistant", content=response_text),
+    ]
+    example = nemotron_low_thinking_renderer.build_supervised_example_with_metadata(
+        messages, train_on_what=TrainOnWhat.ALL_MESSAGES
+    )
+    rendered_text = nemotron_super_tokenizer.decode(example.model_input.to_ints())
+    assert "{reasoning effort: low}" in rendered_text  # suffix IS rendered...
+    # ...but only the raw user + assistant content counts (plus the injected
+    # empty system message, which contributes zero bytes).
+    assert example.trained_content_bytes == len(user_text.encode()) + len(response_text.encode())
 
 
 # =============================================================================

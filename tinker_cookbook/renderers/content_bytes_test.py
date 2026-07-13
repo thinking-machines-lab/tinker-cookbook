@@ -3,8 +3,8 @@
 ``build_supervised_example_with_metadata`` reports the UTF-8 byte count of the
 semantic content of loss-weighted messages. The count must exclude everything
 the renderer injects (think tags, role headers, tool framing, end-of-turn
-markers) and must be identical across renderers for the same messages -- that
-is what makes the BPB metric comparable across models.
+markers), so renderers that render the same content report identical counts --
+that is what makes the BPB metric comparable across models.
 """
 
 import functools
@@ -235,3 +235,38 @@ def test_impl_override_reports_content_bytes_on_both_entry_points():
     model_input, _ = renderer.build_supervised_example(convo)
     assert example.model_input.to_ints() == model_input.to_ints()
     assert example.trained_content_bytes == RESPONSE_BYTES
+
+
+class _LegacyBaseRenderer(Qwen3Renderer):
+    """A legacy override in a BASE class of an impl-overriding subclass."""
+
+    def build_supervised_example(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+    ) -> tuple[tinker.ModelInput, torch.Tensor]:
+        messages = [Message(role="system", content="LEGACY WRAPPER")] + list(messages)
+        return super().build_supervised_example(messages, train_on_what=train_on_what)
+
+
+class _ImplChildOfLegacyBase(_LegacyBaseRenderer):
+    def _build_supervised_example_impl(self, messages, train_on_what):  # type: ignore[override]
+        return super()._build_supervised_example_impl(messages, train_on_what)
+
+
+def test_impl_override_layered_above_legacy_override_still_agrees():
+    """Reverse layering: a legacy override in a parent class with an impl-hook
+    override in the child. A direct build_supervised_example call resolves to
+    the parent's legacy override, so the metadata dispatcher must honor it too
+    -- the two entry points must return identical tokens (with the legacy
+    transformation applied) and no content bytes."""
+    tokenizer = _qwen3_tokenizer()
+    renderer = _ImplChildOfLegacyBase(tokenizer)
+    convo = _simple_convo()
+
+    model_input, weights = renderer.build_supervised_example(convo)
+    example = renderer.build_supervised_example_with_metadata(convo)
+    assert "LEGACY WRAPPER" in tokenizer.decode(model_input.to_ints())
+    assert example.model_input.to_ints() == model_input.to_ints()
+    assert torch.equal(example.weights, weights)
+    assert example.trained_content_bytes is None

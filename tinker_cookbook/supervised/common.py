@@ -120,12 +120,15 @@ def compute_bpb(
     The numerator is the model's *entire* trained code length, including
     chat-template scaffolding (think tags, tool-call framing, end-of-turn
     markers). The denominator counts only the UTF-8 bytes of the semantic
-    message content, which is identical across renderers and tokenizers (see
-    ``message_content_byte_count``). Scaffolding therefore never pads the
-    denominator: a template whose markup costs real bits pays for them in the
-    numerator (a cost that vanishes as the template is learned), and a verbose
-    template gains no artificial BPB advantage from its extra markup bytes.
-    This is the preferred mode for cross-model comparison.
+    message content, which depends on *what* content the renderer trains on
+    but not on how its template formats it (see
+    ``message_content_byte_count``; renderers that render more content -- e.g.
+    preserved thinking in historical turns -- count those bytes and also train
+    on them). Scaffolding therefore never pads the denominator: a template
+    whose markup costs real bits pays for them in the numerator (a cost that
+    vanishes as the template is learned), and a verbose template gains no
+    artificial BPB advantage from its extra markup bytes. This is the
+    preferred mode for cross-model comparison.
 
     **Token-byte fallback** (entry is ``None``: renderer without content-byte
     support, or the trained region was truncated by ``max_length``)::

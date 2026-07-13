@@ -1082,9 +1082,11 @@ def message_content_byte_count(
     text parts, thinking parts (when ``include_thinking`` is True), and
     tool-call function names and arguments (when ``include_tool_calls`` is
     True). Everything a renderer injects *around* that payload -- role headers,
-    think tags, tool-call framing, end-of-turn markers -- is excluded, so the
-    count is identical no matter which renderer formats the message. Image
-    parts contribute zero bytes.
+    think tags, tool-call framing, end-of-turn markers -- is excluded, so for
+    the same flags the count does not depend on how a renderer formats the
+    message. (Renderers may still legitimately differ in *what* they render --
+    e.g. whether thinking is preserved in historical turns -- and pass
+    different flags accordingly.) Image parts contribute zero bytes.
 
     Renderers use this to report ``RenderedMessage.content_byte_count``, which
     feeds the bits-per-byte (BPB) denominator. Callers must pass flags that
@@ -1189,10 +1191,11 @@ class SupervisedExample:
         weights: Per-token loss weights aligned with ``model_input``.
         trained_content_bytes: Total UTF-8 bytes of the semantic content of the
             messages that received loss weight (see
-            :func:`message_content_byte_count`). Excludes renderer scaffolding,
-            so it is comparable across renderers/tokenizers and serves as the
-            bits-per-byte denominator. ``None`` when the renderer does not
-            report content bytes.
+            :func:`message_content_byte_count`). Excludes renderer scaffolding:
+            it reflects what content the renderer trains on, independent of how
+            the template formats it, and serves as the bits-per-byte
+            denominator. ``None`` when the renderer does not report content
+            bytes.
     """
 
     model_input: tinker.ModelInput
@@ -1221,19 +1224,6 @@ class TrainOnWhat(StrEnum):
     ALL_TOKENS = "all_tokens"
     ALL_USER_AND_SYSTEM_MESSAGES = "all_user_and_system_messages"
     CUSTOMIZED = "customized"
-
-
-def _mro_definer_index(cls: type, method_name: str) -> int:
-    """Index in ``cls.__mro__`` of the class that provides ``method_name``.
-
-    Used to decide, per class, whether a legacy ``build_supervised_example``
-    override or a ``_build_supervised_example_impl`` override is more derived
-    (a smaller index wins the dispatch).
-    """
-    for index, klass in enumerate(cls.__mro__):
-        if method_name in vars(klass):
-            return index
-    raise AttributeError(f"{cls.__name__} has no method {method_name!r}")
 
 
 def _unpickle_renderer(
@@ -1713,12 +1703,16 @@ class Renderer(ABC):
 
         This method is a final dispatcher; renderers customize supervised
         example construction by overriding :meth:`_build_supervised_example_impl`
-        (or, for pre-existing code, :meth:`build_supervised_example`). When a
-        subclass overrides ``build_supervised_example`` at a point in the MRO
-        more derived than any ``_build_supervised_example_impl`` override, that
-        legacy override is honored -- its tokens and weights are returned with
-        ``trained_content_bytes=None`` -- so this method always agrees with
-        :meth:`build_supervised_example` about the tokens.
+        (or, for pre-existing code, :meth:`build_supervised_example`). Whenever
+        *any* class in the MRO overrides ``build_supervised_example``, that
+        override is what a direct call to :meth:`build_supervised_example`
+        resolves to, so it is honored here too -- its tokens and weights are
+        returned with ``trained_content_bytes=None`` (the override may transform
+        messages in ways the content accounting cannot see). This guarantees the
+        two entry points always agree about the tokens: legacy overrides that
+        call ``super().build_supervised_example()`` still reach the most-derived
+        ``_build_supervised_example_impl`` through :meth:`build_supervised_example`,
+        so impl overrides participate on both paths.
 
         Args:
             messages (list[Message]): A list of messages to render.
@@ -1730,13 +1724,11 @@ class Renderer(ABC):
                 ``trained_content_bytes`` (``None`` if the resolved
                 implementation does not report content bytes).
         """
-        cls = type(self)
-        legacy_index = _mro_definer_index(cls, "build_supervised_example")
-        impl_index = _mro_definer_index(cls, "_build_supervised_example_impl")
-        if cls.__mro__[legacy_index] is not Renderer and legacy_index < impl_index:
-            # A legacy build_supervised_example override is more derived than
-            # any impl override: honor it so both entry points return the same
-            # tokens. Content bytes are unavailable on that path.
+        if type(self).build_supervised_example is not Renderer.build_supervised_example:
+            # Some class overrides the legacy method, so a direct
+            # build_supervised_example() call would run that override. Route
+            # through it so both entry points return identical tokens. Content
+            # bytes are unavailable on that path.
             model_input, weights = self.build_supervised_example(
                 messages, train_on_what=train_on_what
             )
