@@ -8,7 +8,7 @@ import tinker
 import torch
 
 from tinker_cookbook.supervised.common import (
-    _weighted_target_byte_count,
+    _counted_byte_count,
     compute_bpb,
     datum_from_model_input_weights,
 )
@@ -141,17 +141,18 @@ def test_invalid_reduction_raises():
 class _FakeTokenizer:
     """Minimal tokenizer stand-in mapping each token id to a fixed string.
 
-    ``decode`` concatenates the per-token strings and, when
-    ``skip_special_tokens=True``, drops ids in ``special_ids``.
+    Exposes ``all_special_ids`` (used by ``compute_bpb`` to exclude special
+    tokens from both numerator and denominator) and a ``decode`` that renders
+    the given ids to their strings.
     """
 
     def __init__(self, vocab: dict[int, str], special_ids: set[int] | None = None):
         self.vocab = vocab
-        self.special_ids = special_ids or set()
+        self.all_special_ids = list(special_ids or [])
 
     def decode(self, ids: list[int], skip_special_tokens: bool = False) -> str:
         return "".join(
-            self.vocab[i] for i in ids if not (skip_special_tokens and i in self.special_ids)
+            self.vocab[i] for i in ids if not (skip_special_tokens and i in self.all_special_ids)
         )
 
 
@@ -210,14 +211,44 @@ def test_compute_bpb_counts_utf8_bytes_not_chars():
     assert math.isclose(bpb, expected, rel_tol=1e-6)
 
 
-def test_compute_bpb_skips_special_tokens_in_byte_count():
-    """A scored end-of-turn token contributes to nats but not to the byte count."""
+def test_compute_bpb_excludes_special_tokens_from_both_sides():
+    """A trained end-of-turn special token is excluded from BOTH the numerator
+    and the byte denominator, so it does not bias BPB."""
     tok = _fake_tokenizer({1: "hi", 99: "<|end|>"}, special_ids={99})
-    logprobs = _td([-1.0, -1.0], "float32")
+    logprobs = _td([-1.0, -5.0], "float32")  # large loss on the special token
     weights = _td([1.0, 1.0], "float32")
     targets = _td([1, 99], "int64")
     bpb = compute_bpb([logprobs], [weights], [targets], tok)
-    expected = 2.0 / (math.log(2) * len("hi"))  # only "hi" counts toward bytes
+    # Only token 1 ("hi") counts: 1 nat over 2 bytes. The special token's -5.0
+    # nats are dropped along with its (zero) bytes.
+    expected = 1.0 / (math.log(2) * len("hi"))
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_excludes_special_tokens_under_mean_reduction():
+    """Both fixes together: special tokens excluded from both sides, and weights
+    treated as a mask (mean-reduction normalized weights)."""
+    tok = _fake_tokenizer({1: "ab", 2: "cd", 99: "<|end|>"}, special_ids={99})
+    logprobs = _td([-1.0, -3.0, -9.0], "float32")  # special token has huge loss
+    weights = _td([1 / 3, 1 / 3, 1 / 3], "float32")  # normalized over 3 trained tokens
+    targets = _td([1, 2, 99], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
+    # Counted = tokens 1, 2 ("abcd"): nats = 1 + 3 = 4, bytes = 4.
+    expected = 4.0 / (math.log(2) * 4)
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_multi_turn_excludes_specials_and_splits_runs():
+    """Special tokens between trained content runs (multi-turn) are excluded from
+    both sides, and each content run is byte-counted independently."""
+    tok = _fake_tokenizer({1: "ab", 2: "cd", 3: "ef", 99: "<|end|>"}, special_ids={99})
+    # layout: run1=[1,2]  <|end|>  run2=[3]  <|end|>   (all trained)
+    logprobs = _td([-1.0, -2.0, -8.0, -3.0, -8.0], "float32")  # big loss on both specials
+    weights = _td([1.0, 1.0, 1.0, 1.0, 1.0], "float32")
+    targets = _td([1, 2, 99, 3, 99], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
+    # counted = tokens 1,2,3: nats = 1 + 2 + 3 = 6; bytes = "ab" + "cd" + "ef" = 6.
+    expected = 6.0 / (math.log(2) * 6)
     assert math.isclose(bpb, expected, rel_tol=1e-6)
 
 
@@ -240,8 +271,8 @@ def test_compute_bpb_zero_bytes_returns_nan():
     assert math.isnan(compute_bpb([logprobs], [weights], [targets], tok))
 
 
-def test_weighted_target_byte_count_splits_runs():
-    """Runs separated by a zero-weight gap are decoded independently."""
+def test_counted_byte_count_splits_runs():
+    """Counted tokens separated by an uncounted gap are decoded independently."""
     tok = _fake_tokenizer({1: "ab", 2: "GAP", 3: "cde"})
-    n = _weighted_target_byte_count([1, 2, 3], [1.0, 0.0, 1.0], tok)
-    assert n == len("ab") + len("cde")  # 2 + 3; the "GAP" token is excluded
+    n = _counted_byte_count([1, 2, 3], [True, False, True], tok)
+    assert n == len("ab") + len("cde")  # 2 + 3; the middle token is excluded
