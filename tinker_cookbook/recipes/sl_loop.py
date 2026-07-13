@@ -11,7 +11,7 @@ import datasets
 import tinker
 
 from tinker_cookbook import checkpoint_utils, model_info, renderers
-from tinker_cookbook.supervised.common import compute_mean_nll
+from tinker_cookbook.supervised.common import compute_bpb, compute_mean_nll
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
@@ -142,7 +142,10 @@ def main(config: Config):
         # Compute train metrics
         train_logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
         train_weights = [d.loss_fn_inputs["weights"] for d in batch]
+        train_target_tokens = [d.loss_fn_inputs["target_tokens"] for d in batch]
         train_nll = compute_mean_nll(train_logprobs, train_weights)
+        # Bits per byte: a tokenizer-independent counterpart to train_mean_nll.
+        train_bpb = compute_bpb(train_logprobs, train_weights, train_target_tokens, tokenizer)
 
         # Log metrics
         metrics.update(
@@ -150,6 +153,7 @@ def main(config: Config):
             num_tokens=sum(d.model_input.length for d in batch),
             learning_rate=current_lr,
             train_mean_nll=train_nll,
+            train_mean_bpb=train_bpb,
             progress=step / n_train_batches,
             time_total=time.time() - start_time,
         )

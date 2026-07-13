@@ -1,10 +1,13 @@
 import logging
+import math
+from collections.abc import Sequence
 from typing import Literal
 
 import tinker
 import torch
 
 from tinker_cookbook.exceptions import DataValidationError
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 _logged_reduction_modes: set[str] = set()
 
@@ -43,6 +46,113 @@ def compute_mean_nll(
         return float("nan")
 
     return float(-total_weighted_logprobs / total_weights)
+
+
+def _weighted_target_byte_count(
+    target_tokens: Sequence[float], weights: Sequence[float], tokenizer: Tokenizer
+) -> int:
+    """UTF-8 byte count of the text formed by the loss-weighted target tokens.
+
+    Each contiguous run of nonzero-weight tokens is decoded separately so that
+    weight-0 spans between trained regions (e.g. user turns in a multi-turn
+    conversation) do not get merged across the gap. Special tokens are skipped
+    so the count reflects natural-language bytes, which keeps the denominator
+    comparable across tokenizers with different control-token strings.
+
+    Args:
+        target_tokens (Sequence[float]): Target token IDs
+            (``loss_fn_inputs["target_tokens"].data``, stored as floats and cast
+            back to ``int`` here).
+        weights (Sequence[float]): Per-token loss weights aligned with
+            ``target_tokens``.
+        tokenizer (Tokenizer): Tokenizer used to decode tokens back to text.
+
+    Returns:
+        int: Total number of UTF-8 bytes across all weighted spans.
+    """
+    total_bytes = 0
+    run: list[int] = []
+    for token, weight in zip(target_tokens, weights, strict=True):
+        if weight > 0:
+            run.append(int(token))
+        elif run:
+            total_bytes += _decoded_byte_length(run, tokenizer)
+            run = []
+    if run:
+        total_bytes += _decoded_byte_length(run, tokenizer)
+    return total_bytes
+
+
+def _decoded_byte_length(token_ids: list[int], tokenizer: Tokenizer) -> int:
+    """UTF-8 byte length of ``token_ids`` decoded to natural-language text."""
+    text = tokenizer.decode(token_ids, skip_special_tokens=True)
+    if isinstance(text, list):
+        # Some tokenizers can return a list of piece strings; join them.
+        text = "".join(text)
+    return len(text.encode("utf-8"))
+
+
+def compute_bpb(
+    logprobs_list: list[tinker.TensorData],
+    weights_list: list[tinker.TensorData],
+    target_tokens_list: list[tinker.TensorData],
+    tokenizer: Tokenizer,
+) -> float:
+    """Compute bits-per-byte (BPB) across a batch: a tokenizer-independent NLL.
+
+    Per-token mean NLL (:func:`compute_mean_nll`) is not comparable across
+    models that use different tokenizers: a coarser tokenizer packs more text
+    into each token (higher nats/token) while a finer one spreads it over more
+    tokens (lower nats/token), even at equal modeling quality. Bits-per-byte
+    removes this dependence by dividing the *total* log-loss (converted to bits)
+    by the number of UTF-8 bytes of the target text::
+
+        bpb = -sum(logprob_i for i where weight_i > 0) / (ln(2) * total_target_bytes)
+
+    The numerator sums the raw per-token NLL over the loss-weighted tokens,
+    using the weights only as a ``> 0`` mask rather than as multipliers. This
+    keeps the total nats correct even when the weights are normalized per
+    example (``reduction="mean"``, the SFT default, where a datum's weights sum
+    to 1.0 instead of being 0/1). The denominator counts the UTF-8 bytes of
+    those same decoded tokens, which is fixed by the raw text rather than by the
+    tokenization. Because numerator and denominator cover the same span, the
+    ratio is a proper compression rate that can be compared across tokenizers.
+
+    Args:
+        logprobs_list (list[tinker.TensorData]): Per-token log-probabilities,
+            one entry per datum in the batch.
+        weights_list (list[tinker.TensorData]): Per-token loss weights aligned
+            with ``logprobs_list``.
+        target_tokens_list (list[tinker.TensorData]): Per-token target IDs
+            (``loss_fn_inputs["target_tokens"]``) aligned with ``weights_list``,
+            used to recover the target text for the byte count.
+        tokenizer (Tokenizer): Tokenizer used to decode target tokens to bytes.
+
+    Returns:
+        float: Bits per byte, or ``nan`` if the weighted target has zero bytes.
+    """
+    total_nll_nats = 0.0
+    total_bytes = 0
+
+    for logprobs, weights, target_tokens in zip(
+        logprobs_list, weights_list, target_tokens_list, strict=True
+    ):
+        logprobs_torch = logprobs.to_torch()
+        weights_torch = weights.to_torch()
+        # Sum the raw NLL over trained tokens, using the weights only as a mask.
+        # This matches the tokens counted in the byte denominator and stays
+        # correct under per-example weight normalization (reduction="mean").
+        mask = weights_torch > 0
+        total_nll_nats += float(-logprobs_torch[mask].sum())
+        total_bytes += _weighted_target_byte_count(
+            list(target_tokens.data), list(weights.data), tokenizer
+        )
+
+    if total_bytes == 0:
+        logger.warning("No target bytes found for BPB computation")
+        return float("nan")
+
+    return float(total_nll_nats / (math.log(2) * total_bytes))
 
 
 def create_rightshifted_model_input_and_leftshifted_targets(
