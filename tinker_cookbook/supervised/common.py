@@ -91,6 +91,22 @@ def _decoded_byte_length(token_ids: list[int], tokenizer: Tokenizer) -> int:
     return len(text.encode("utf-8"))
 
 
+def _special_token_ids(tokenizer: Tokenizer) -> frozenset[int]:
+    special_ids = getattr(tokenizer, "all_special_ids", None) or []
+    return frozenset(int(token_id) for token_id in special_ids if token_id is not None)
+
+
+def _is_special_token(
+    token_id: int,
+    tokenizer: Tokenizer,
+    special_ids: frozenset[int],
+) -> bool:
+    if token_id in special_ids:
+        return True
+    is_special_token = getattr(tokenizer, "is_special_token", None)
+    return callable(is_special_token) and bool(is_special_token(token_id))
+
+
 def compute_bpb(
     logprobs_list: list[tinker.TensorData],
     weights_list: list[tinker.TensorData],
@@ -109,8 +125,9 @@ def compute_bpb(
         bpb = -sum(logprob_i for i in counted) / (ln(2) * bytes(counted tokens))
 
     A token is *counted* iff it is trained (``weight > 0``) and is not a special
-    token (per ``tokenizer.all_special_ids``). The same mask drives both the
-    numerator and the byte denominator, so they always cover the identical span.
+    token (per ``tokenizer.all_special_ids`` or ``tokenizer.is_special_token``,
+    when available). The same mask drives both the numerator and the byte
+    denominator, so they always cover the identical span.
 
     Two properties matter:
 
@@ -127,8 +144,8 @@ def compute_bpb(
     The denominator counts the UTF-8 bytes of the decoded counted tokens, fixed
     by the raw text rather than by the tokenization; combined with the matched
     numerator this yields a proper compression rate comparable across
-    tokenizers. (If a tokenizer does not expose ``all_special_ids``, no tokens
-    are treated as special, but both sides still share the same mask and stay
+    tokenizers. (If a tokenizer exposes no special-token surface, no tokens are
+    treated as special, but both sides still share the same mask and stay
     consistent.)
 
     Args:
@@ -144,7 +161,7 @@ def compute_bpb(
     Returns:
         float: Bits per byte, or ``nan`` if the counted target has zero bytes.
     """
-    special_ids = frozenset(getattr(tokenizer, "all_special_ids", None) or [])
+    special_ids = _special_token_ids(tokenizer)
     total_nll_nats = 0.0
     total_bytes = 0
 
@@ -156,7 +173,7 @@ def compute_bpb(
         # This single mask is used for both the numerator and the byte
         # denominator, guaranteeing they cover the identical span.
         counted = [
-            weight > 0 and token_id not in special_ids
+            weight > 0 and not _is_special_token(token_id, tokenizer, special_ids)
             for weight, token_id in zip(weights.data, token_ids, strict=True)
         ]
         mask = torch.tensor(counted, dtype=torch.bool)
