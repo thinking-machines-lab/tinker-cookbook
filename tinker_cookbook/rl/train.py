@@ -393,28 +393,32 @@ class AsyncConfig:
     """Configuration for async RL training.
 
     In async mode, sampling and training run concurrently, and the staleness
-    of the training data (how many optimizer steps behind the current policy
-    the data was sampled) is bounded by ``max_steps_off_policy``.
+    of the training data — how many training iterations (sampler versions)
+    behind the current policy the data was sampled — is bounded by
+    ``max_steps_off_policy``. (Each training iteration trains on one batch;
+    with ``num_substeps > 1`` an iteration applies several optimizer updates,
+    all published as a single new sampler version.)
 
-    The bound is enforced without discarding any data: rollout starts are
-    paced so that at most ``groups_per_batch * (max_steps_off_policy + 1)``
-    group rollouts are outstanding (started but not yet trained on), and the
+    The bound is enforced without discarding rollouts: starts are paced so
+    that at most ``groups_per_batch * (max_steps_off_policy + 1)`` group
+    rollouts are outstanding (started but not yet trained on), and the
     trainer waits for any rollout that is about to exceed the bound instead
     of dropping it. Batches are formed stalest-first, so every trajectory
-    group is trained on exactly once, within the staleness bound. In
-    particular, slow rollouts (often the hardest problems) contribute to
-    training just like fast ones, at the cost of the trainer sometimes
-    waiting for them.
+    group is trained on exactly once, within the staleness bound — slow
+    rollouts (often the hardest problems) contribute to training just like
+    fast ones, at the cost of the trainer sometimes waiting for them. (The
+    only exception: when training ends, leftover completed groups that no
+    longer fill a batch are dropped, matching the previous behavior.)
 
     Attributes:
-        max_steps_off_policy (int): Maximum number of training steps a sample
-            may lag behind the step it is trained on. 0 is equivalent to
-            synchronous training.
+        max_steps_off_policy (int): Maximum number of training iterations a
+            sample may lag behind the iteration it is trained on. 0 is
+            equivalent to synchronous training.
         groups_per_batch (int): Number of trajectory groups per training batch.
     """
 
-    # A sample generated with weights from step s may be trained at step t
-    # only if t - s <= max_steps_off_policy.
+    # A sample generated with the sampler version from iteration s may be
+    # trained at iteration t only if t - s <= max_steps_off_policy.
     max_steps_off_policy: int
     # Number of trajectory groups per training batch.
     groups_per_batch: int
@@ -882,8 +886,9 @@ class _InFlightGroupTracker:
     Tracks group rollouts that have *started* but have not yet been *trained on*
     ("outstanding"), and, for the subset still running, the sampler version each
     one started from. Together with the training loop, this enforces
-    ``t - s <= max_steps_off_policy`` for every trained group (``t`` = step the
-    group is trained on, ``s`` = sampler version it was generated with):
+    ``t - s <= max_steps_off_policy`` for every trained group (``t`` = training
+    iteration the group is trained on, ``s`` = sampler version it was generated
+    with; one sampler version is published per iteration):
 
     1. **Admission control** (:meth:`acquire_slot`): at most ``capacity =
        groups_per_batch * (max_steps_off_policy + 1)`` groups may be outstanding.
@@ -1010,6 +1015,11 @@ async def do_async_training(
             Defaults to None.
     """
     assert config.async_config is not None
+    if config.stream_minibatch_config is not None:
+        raise ConfigurationError(
+            "async_config and stream_minibatch_config cannot be combined: streaming "
+            "minibatches do not support the async staleness enforcement."
+        )
 
     # We will have groups_per_batch workers generating rollouts, so cap the
     # queue size to be groups_per_batch.
@@ -1034,10 +1044,14 @@ async def do_async_training(
     #    env_group_builders_queue.
     # 2. Each trajectory worker receives its _Shutdown sentinel → exits and decrements
     #    worker_alive_counter. The last worker enqueues a _Shutdown into trajectory_groups_queue.
-    # 3. Training loop receives _Shutdown from trajectory_groups_queue → finishes current
-    #    batch, sets evaluation_loop_should_shutdown_event, and exits.
+    # 3. Training loop receives _Shutdown from trajectory_groups_queue → trains any
+    #    remaining full batches from its buffer, sets training_loop_done_event and
+    #    evaluation_loop_should_shutdown_event, and exits.
     # 4. Eval loop sees evaluation_loop_should_shutdown_event → exits.
+    #    Workers see training_loop_done_event → skip any leftover problems instead of
+    #    rolling them out (their results could never be trained on).
     evaluation_loop_should_shutdown_event = asyncio.Event()
+    training_loop_done_event = asyncio.Event()
     worker_alive_counter = _AsyncCounter(config.async_config.groups_per_batch)
 
     # Enforces the staleness bound by pacing rollout starts and letting the
@@ -1080,6 +1094,11 @@ async def do_async_training(
             if isinstance(env_group_builder, _Shutdown):
                 logger.info("[trajectory_group_worker_loop] Received shutdown signal")
                 break
+            if training_loop_done_event.is_set():
+                # Nothing will train on this rollout; skip it rather than waste
+                # sampler compute. (Can only happen when the dataset holds more
+                # groups than the training loop consumes.)
+                continue
 
             # Pace sampling: wait until the trainer has consumed enough of the
             # already-started rollouts that this one cannot exceed the
@@ -1273,9 +1292,12 @@ async def do_async_training(
             sampling_client_updated_event.set()
             # Release the trained groups' admission slots now that the new
             # sampling client is in place (no awaits since the train step
-            # returned), so newly admitted rollouts sample from the new weights.
-            # Releasing earlier would let rollouts start on the about-to-be-stale
-            # weights and exceed the staleness bound by one step.
+            # returned), so rollouts admitted on these slots sample from the new
+            # weights. Releasing before the swap would let up to a full extra
+            # batch start on the about-to-be-stale weights and exceed the
+            # staleness bound by one step. (Workers may still start rollouts on
+            # the previous weights using slots that were already free — that is
+            # within the bound, which the capacity accounts for.)
             in_flight_tracker.release_slots(len(wrapped_trajectory_groups))
             metrics["async/outstanding_groups"] = in_flight_tracker.num_outstanding
 
@@ -1300,10 +1322,18 @@ async def do_async_training(
                 trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
             ml_logger.log_metrics(metrics, step=i_batch)
 
-        # Release any workers blocked on admission control: no more training will
-        # happen, so pacing has no purpose and would deadlock the shutdown cascade
-        # if the dataset holds more groups than the training loop consumed.
+        # No more training will happen: tell workers to skip any leftover problems,
+        # and release any workers blocked on admission control (pacing has no
+        # purpose now and would deadlock the shutdown cascade if the dataset holds
+        # more groups than the training loop consumed).
+        training_loop_done_event.set()
         in_flight_tracker.stop_pacing()
+        if completed_groups_buffer:
+            logger.info(
+                f"[training_loop] Dropping {len(completed_groups_buffer)} leftover completed "
+                f"groups (fewer than groups_per_batch={groups_per_batch} remain, or the "
+                "step budget was reached)"
+            )
         # Signal evaluation loop to shut down
         evaluation_loop_should_shutdown_event.set()
         sampling_client_updated_event.set()
@@ -1923,7 +1953,8 @@ async def main(
 
     Raises:
         ConfigurationError: If ``kl_penalty_coef > 0`` but
-            ``kl_reference_config`` is not set.
+            ``kl_reference_config`` is not set, or if ``async_config`` and
+            ``stream_minibatch_config`` are both set.
 
     Example::
 

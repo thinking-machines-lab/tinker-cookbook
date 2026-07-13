@@ -13,9 +13,9 @@ latencies designed to stress the staleness enforcement:
   the step at which each datum is trained, so ``staleness = trained_step -
   sampled_version`` is measured from the data itself rather than from the
   training loop's own bookkeeping.
-- **No deadlocks**: every test runs under a hard ``asyncio.wait_for`` timeout,
-  including shutdown edge cases (constant-reward groups filtered to None, and
-  datasets holding more groups than the training loop consumes).
+- **No deadlocks**: every end-to-end test runs under a hard ``asyncio.wait_for``
+  timeout, including shutdown edge cases (constant-reward groups filtered to
+  None, and datasets holding more groups than the training loop consumes).
 
 The sleeps are tuned so the whole file runs in a few seconds.
 """
@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence, cast
+from typing import Any, cast
 
 import chz
 import pytest
@@ -130,8 +131,9 @@ class FakeSamplingClient:
 class FakeTrainingClient:
     """Training client stub that records which (problem, version) pairs are trained.
 
-    The weight version is the number of optimizer steps taken so far, matching
-    the training loop's ``sampling_client_step`` accounting.
+    The weight version is the number of sampling-client publications so far
+    (one per training iteration, regardless of num_substeps), matching the
+    training loop's ``sampling_client_step`` accounting.
     """
 
     def __init__(self, harness: _Harness, train_time_s: float = 0.005):
@@ -148,6 +150,7 @@ class FakeTrainingClient:
         return _FakeFuture(_FakePath(path=f"mock://sampler/{name}"))
 
     async def save_weights_and_get_sampling_client_async(self) -> FakeSamplingClient:
+        self.version += 1
         return FakeSamplingClient(self.version, self.harness)
 
     def create_sampling_client(self, path: str) -> FakeSamplingClient:
@@ -176,7 +179,6 @@ class FakeTrainingClient:
         return _FakeFuture(_FakeFwdBwdResult(loss_fn_outputs=outputs), delay_s=self.train_time_s)
 
     async def optim_step_async(self, adam_params: Any) -> _FakeFuture:
-        self.version += 1
         return _FakeFuture(_FakeOptimResult())
 
 
@@ -269,17 +271,23 @@ async def _run_async_training(
     train_time_s: float = 0.005,
     extra_groups_per_batch: int = 0,
     constant_reward_problem_ids: set[int] | None = None,
+    num_substeps: int = 1,
+    start_batch: int = 0,
     timeout_s: float = 60.0,
 ) -> RunResult:
     """Run do_async_training over fake clients with the given per-problem latencies.
 
     ``latencies[i]`` is the rollout duration of problem ``i``. Problems are
     grouped into batches of ``groups_per_batch + extra_groups_per_batch``
-    builders; the training loop consumes exactly ``groups_per_batch`` per step.
+    builders; the training loop consumes exactly ``groups_per_batch`` per step,
+    starting from batch ``start_batch`` (batches before it are never consumed,
+    as when resuming from a checkpoint).
     """
     constant_reward_problem_ids = constant_reward_problem_ids or set()
     harness = _Harness()
     training_client = FakeTrainingClient(harness, train_time_s=train_time_s)
+    # When resuming, the initial sampler weights correspond to iteration start_batch.
+    training_client.version = start_batch
 
     dataset_batch_size = groups_per_batch + extra_groups_per_batch
     assert len(latencies) % dataset_batch_size == 0
@@ -310,6 +318,7 @@ async def _run_async_training(
         num_groups_to_log=0,
         rollout_json_export=False,
         remove_constant_reward_groups=bool(constant_reward_problem_ids),
+        num_substeps=num_substeps,
         async_config=AsyncConfig(
             max_steps_off_policy=max_steps_off_policy,
             groups_per_batch=groups_per_batch,
@@ -329,7 +338,7 @@ async def _run_async_training(
         t_start = time.monotonic()
         await asyncio.wait_for(
             do_async_training(
-                start_batch=0,
+                start_batch=start_batch,
                 end_batch=len(batches),
                 num_batches=len(batches),
                 config=config,
@@ -456,9 +465,9 @@ class TestAsyncStalenessTorture:
                 f"problem {problem_id} trained {len(values)} times, "
                 f"expected {result.group_size} datums (one group rollout)"
             )
-        assert result.harness.sample_counts == {
-            i: result.group_size for i in range(result.num_problems)
-        }, "each problem should be sampled exactly once per group member (no regeneration)"
+        assert result.harness.sample_counts == dict.fromkeys(
+            range(result.num_problems), result.group_size
+        ), "each problem should be sampled exactly once per group member (no regeneration)"
 
         # The staleness bound holds for every trained datum.
         max_staleness = max(v for values in staleness.values() for v in values)
@@ -566,6 +575,81 @@ class TestAsyncStalenessTorture:
         # Exactly n_batches * groups_per_batch groups are trained on.
         assert len(staleness) == groups_per_batch * n_batches
         assert all(0 <= v <= 1 for values in staleness.values() for v in values)
+
+    def test_multiple_substeps_respect_staleness_bound(self, tmp_path):
+        """num_substeps > 1 applies several optimizer updates per iteration, but
+        staleness is defined in iterations (published sampler versions)."""
+        latencies = [0.01, 0.2, 0.01, 0.01] * 8
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                latencies,
+                groups_per_batch=4,
+                max_steps_off_policy=1,
+                num_substeps=2,
+            )
+        )
+        staleness = _staleness_by_problem(result)
+        assert sorted(staleness.keys()) == list(range(len(latencies)))
+        assert all(0 <= v <= 1 for values in staleness.values() for v in values)
+
+    def test_resume_from_nonzero_start_batch(self, tmp_path):
+        """Resuming (start_batch > 0) keeps the staleness arithmetic aligned."""
+        groups_per_batch = 3
+        start_batch = 4
+        n_batches = 8
+        latencies = [0.01] * (groups_per_batch * n_batches)
+        latencies[start_batch * groups_per_batch] = 0.25
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                latencies,
+                groups_per_batch=groups_per_batch,
+                max_steps_off_policy=1,
+                start_batch=start_batch,
+            )
+        )
+        staleness = _staleness_by_problem(result)
+        # Only problems from batches start_batch..n_batches-1 are consumed.
+        assert sorted(staleness.keys()) == list(
+            range(start_batch * groups_per_batch, n_batches * groups_per_batch)
+        )
+        assert all(0 <= v <= 1 for values in staleness.values() for v in values)
+
+    def test_async_config_incompatible_with_stream_minibatch(self, tmp_path):
+        """async_config + stream_minibatch_config must raise, not silently ignore."""
+        from tinker_cookbook.exceptions import ConfigurationError
+        from tinker_cookbook.rl.train import StreamMinibatchConfig
+        from tinker_cookbook.rl.train import main as train_main
+
+        config = Config(
+            learning_rate=1e-5,
+            dataset_builder=_UnusedDatasetBuilder(),
+            model_name="fake-model",
+            recipe_name="async_training_test",
+            max_tokens=4,
+            log_path=str(tmp_path),
+            async_config=AsyncConfig(max_steps_off_policy=1, groups_per_batch=4),
+            stream_minibatch_config=StreamMinibatchConfig(groups_per_batch=4, num_minibatches=2),
+        )
+        with pytest.raises(ConfigurationError):
+            asyncio.run(train_main(config))
+        with pytest.raises(ConfigurationError):
+            asyncio.run(
+                do_async_training(
+                    start_batch=0,
+                    end_batch=1,
+                    num_batches=1,
+                    config=config,
+                    training_client=cast(Any, None),
+                    kl_reference_client=None,
+                    evaluators=[],
+                    dataset=cast(Any, None),
+                    ml_logger=cast(Any, None),
+                    tokenizer=cast(Any, None),
+                    checkpoint_mgr=None,
+                )
+            )
 
     @pytest.mark.parametrize("max_steps_off_policy", [1, 3])
     def test_staleness_bound_respected_under_adversarial_latencies(
