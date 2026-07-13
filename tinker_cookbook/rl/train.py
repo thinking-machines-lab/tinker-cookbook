@@ -1195,14 +1195,14 @@ async def do_async_training(
                 # Only possible during shutdown; drop the final partial batch.
                 return None
             # Train on the stalest groups first, so that no group waits past its
-            # staleness deadline.
+            # staleness deadline. (The batch's slots are released only after the
+            # training step, once the new sampling client is in place, so that
+            # newly admitted rollouts sample from the new weights.)
             completed_groups_buffer.sort(key=lambda g: g.sampling_client_step)
             batch = completed_groups_buffer[:groups_per_batch]
             del completed_groups_buffer[:groups_per_batch]
-            in_flight_tracker.release_slots(len(batch))
             metrics["time/waiting_for_stragglers"] = t_straggler_wait
             metrics["async/completed_buffer_size"] = len(completed_groups_buffer)
-            metrics["async/outstanding_groups"] = in_flight_tracker.num_outstanding
             metrics["async/in_flight_groups"] = in_flight_tracker.num_in_flight
             return batch
 
@@ -1271,6 +1271,13 @@ async def do_async_training(
             )
             sampling_client_step = i_batch + 1
             sampling_client_updated_event.set()
+            # Release the trained groups' admission slots now that the new
+            # sampling client is in place (no awaits since the train step
+            # returned), so newly admitted rollouts sample from the new weights.
+            # Releasing earlier would let rollouts start on the about-to-be-stale
+            # weights and exceed the staleness bound by one step.
+            in_flight_tracker.release_slots(len(wrapped_trajectory_groups))
+            metrics["async/outstanding_groups"] = in_flight_tracker.num_outstanding
 
             # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
             if checkpoint_mgr is not None:
