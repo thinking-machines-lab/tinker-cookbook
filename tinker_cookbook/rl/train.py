@@ -40,7 +40,6 @@ from tinker_cookbook.rl.metrics import (
     compute_kl_sample_train,
     compute_post_kl,
     compute_sampling_client_metrics,
-    compute_staleness_metrics,
     incorporate_kl_penalty,
 )
 from tinker_cookbook.rl.rollout_logging import (
@@ -77,6 +76,26 @@ T = TypeVar("T")
 # While the async training loop is blocked waiting for rollouts, log a warning
 # at this interval so a hung rollout is diagnosable rather than a silent stall.
 _STRAGGLER_WARNING_INTERVAL_S = 120.0
+
+
+def _validate_async_config(config: Config) -> None:
+    """Raise ConfigurationError if the async training configuration is invalid.
+
+    Called from both :func:`main` and :func:`do_async_training` (which may be
+    driven directly, e.g. by tests).
+    """
+    assert config.async_config is not None
+    if config.stream_minibatch_config is not None:
+        raise ConfigurationError(
+            "async_config and stream_minibatch_config cannot be combined: streaming "
+            "minibatches do not support the async staleness enforcement (which waits "
+            "for rollouts at the staleness deadline and trains stalest-first)."
+        )
+    if config.async_config.max_steps_off_policy < 0 or config.async_config.groups_per_batch <= 0:
+        raise ConfigurationError(
+            f"async_config requires max_steps_off_policy >= 0 and groups_per_batch > 0, got "
+            f"{config.async_config.max_steps_off_policy=}, {config.async_config.groups_per_batch=}"
+        )
 
 
 @chz.chz
@@ -927,19 +946,27 @@ class _InFlightGroupTracker:
         self._in_flight_by_version: dict[int, int] = {}
         self._stopped = False
 
-    async def acquire_slot(self) -> None:
-        """Block until fewer than ``capacity`` groups are outstanding, then claim a slot."""
+    async def acquire_slot(self) -> bool:
+        """Block until fewer than ``capacity`` groups are outstanding, then claim a slot.
+
+        Returns False (claiming nothing) once :meth:`stop` has been called:
+        training is over, so the caller should skip its rollout.
+        """
         while self._outstanding >= self._capacity and not self._stopped:
             self._slot_freed.clear()
             await self._slot_freed.wait()
+        if self._stopped:
+            return False
         self._outstanding += 1
+        return True
 
-    def stop_pacing(self) -> None:
-        """Stop admission control, releasing any blocked rollout starts.
+    def stop(self) -> None:
+        """Refuse new rollout starts and release any blocked acquirers.
 
-        Called when the training loop exits, so that workers holding unconsumed
-        problems can finish (and then shut down) instead of waiting forever for
-        training slots that will never be released.
+        Called when the training loop exits: nothing can train anymore, so
+        workers holding unconsumed problems should skip them (rather than roll
+        them out, or wait forever for training slots that will never be
+        released).
         """
         self._stopped = True
         self._slot_freed.set()
@@ -1044,16 +1071,7 @@ async def do_async_training(
             Defaults to None.
     """
     assert config.async_config is not None
-    if config.stream_minibatch_config is not None:
-        raise ConfigurationError(
-            "async_config and stream_minibatch_config cannot be combined: streaming "
-            "minibatches do not support the async staleness enforcement."
-        )
-    if config.async_config.max_steps_off_policy < 0 or config.async_config.groups_per_batch <= 0:
-        raise ConfigurationError(
-            f"async_config requires max_steps_off_policy >= 0 and groups_per_batch > 0, got "
-            f"{config.async_config.max_steps_off_policy=}, {config.async_config.groups_per_batch=}"
-        )
+    _validate_async_config(config)
 
     # We will have groups_per_batch workers generating rollouts, so cap the
     # queue size to be groups_per_batch.
@@ -1079,13 +1097,12 @@ async def do_async_training(
     # 2. Each trajectory worker receives its _Shutdown sentinel → exits and decrements
     #    worker_alive_counter. The last worker enqueues a _Shutdown into trajectory_groups_queue.
     # 3. Training loop receives _Shutdown from trajectory_groups_queue → trains any
-    #    remaining full batches from its buffer, sets training_loop_done_event and
+    #    remaining full batches from its buffer, stops the in-flight tracker, sets
     #    evaluation_loop_should_shutdown_event, and exits.
-    # 4. Eval loop sees evaluation_loop_should_shutdown_event → exits.
-    #    Workers see training_loop_done_event → skip any leftover problems instead of
+    # 4. Eval loop sees evaluation_loop_should_shutdown_event → exits. Workers see
+    #    acquire_slot() return False → skip any leftover problems instead of
     #    rolling them out (their results could never be trained on).
     evaluation_loop_should_shutdown_event = asyncio.Event()
-    training_loop_done_event = asyncio.Event()
     worker_alive_counter = _AsyncCounter(config.async_config.groups_per_batch)
 
     # Enforces the staleness bound by pacing rollout starts and letting the
@@ -1128,16 +1145,13 @@ async def do_async_training(
             if isinstance(env_group_builder, _Shutdown):
                 logger.info("[trajectory_group_worker_loop] Received shutdown signal")
                 break
-            if training_loop_done_event.is_set():
-                # Nothing will train on this rollout; skip it rather than waste
-                # sampler compute. (Can only happen when the dataset holds more
-                # groups than the training loop consumes.)
-                continue
-
             # Pace sampling: wait until the trainer has consumed enough of the
-            # already-started rollouts that this one cannot exceed the
-            # staleness bound.
-            await in_flight_tracker.acquire_slot()
+            # already-started rollouts that this one cannot exceed the staleness
+            # bound. A False return means training is over: skip the leftover
+            # problem rather than waste sampler compute on it. (Can only happen
+            # when the dataset holds more groups than the training loop consumes.)
+            if not await in_flight_tracker.acquire_slot():
+                continue
             # Copy the sampling client together with its step, so the recorded
             # step matches the weights actually used for this rollout.
             rollout_sampling_client = sampling_client
@@ -1213,15 +1227,25 @@ async def do_async_training(
             assert config.async_config is not None
             stale_deadline = i_batch - config.async_config.max_steps_off_policy
             t_straggler_wait = 0.0
-            while not shutdown_received and (
-                len(completed_groups_buffer) < groups_per_batch
-                or in_flight_tracker.num_in_flight_at_or_before(stale_deadline) > 0
-            ):
+
+            def ingest(item: WrappedTrajectoryGroup | _Shutdown | None) -> None:
+                nonlocal shutdown_received
+                if isinstance(item, _Shutdown):
+                    shutdown_received = True
+                elif item is not None:
+                    completed_groups_buffer.append(item)
+
+            while not shutdown_received:
                 # Attribute wait time to stragglers whenever a rollout at the
                 # staleness deadline is still in flight.
                 num_deadline_stragglers = in_flight_tracker.num_in_flight_at_or_before(
                     stale_deadline
                 )
+                if (
+                    len(completed_groups_buffer) >= groups_per_batch
+                    and num_deadline_stragglers == 0
+                ):
+                    break
                 t_start = time.time()
                 try:
                     item = await asyncio.wait_for(
@@ -1241,22 +1265,15 @@ async def do_async_training(
                 finally:
                     if num_deadline_stragglers > 0:
                         t_straggler_wait += time.time() - t_start
-                if isinstance(item, _Shutdown):
-                    shutdown_received = True
-                elif item is not None:
-                    completed_groups_buffer.append(item)
+                ingest(item)
             # Drain anything else that has already completed so batch selection
             # sees the freshest picture — in particular, the deadline stragglers
             # we just waited for may still be sitting in the queue.
             while not shutdown_received:
                 try:
-                    item = trajectory_groups_queue.get_nowait()
+                    ingest(trajectory_groups_queue.get_nowait())
                 except asyncio.QueueEmpty:
                     break
-                if isinstance(item, _Shutdown):
-                    shutdown_received = True
-                elif item is not None:
-                    completed_groups_buffer.append(item)
             if len(completed_groups_buffer) < groups_per_batch:
                 # Only possible during shutdown; drop the final partial batch.
                 return None
@@ -1284,7 +1301,12 @@ async def do_async_training(
                 logger.info("[training_loop] Received shutdown signal")
                 break
             wrapped_trajectory_groups = maybe_batch
-            max_staleness = max(i_batch - g.sampling_client_step for g in wrapped_trajectory_groups)
+            # Compute sampling client metrics (including staleness), as samples
+            # may have been generated with different sampler versions
+            metrics.update(
+                compute_sampling_client_metrics(wrapped_trajectory_groups, current_step=i_batch)
+            )
+            max_staleness = metrics["async/staleness_max"]
             if max_staleness > config.async_config.max_steps_off_policy:
                 logger.warning(
                     f"[training_loop] Step {i_batch}: batch contains a group with "
@@ -1297,11 +1319,6 @@ async def do_async_training(
                 f"[training_loop] Step {i_batch}: Will train on batch, num groups: "
                 f"{len(wrapped_trajectory_groups)}, max staleness: {max_staleness}"
             )
-
-            # Compute sampling client metrics, as samples may have been generated with
-            # different sampler versions
-            metrics.update(compute_sampling_client_metrics(wrapped_trajectory_groups))
-            metrics.update(compute_staleness_metrics(i_batch, wrapped_trajectory_groups))
 
             with trace.trace_iteration(step=i_batch) as window:
                 # TODO: For proper checkpointing, we also need to save dataloader state and
@@ -1369,12 +1386,11 @@ async def do_async_training(
                 trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
             ml_logger.log_metrics(metrics, step=i_batch)
 
-        # No more training will happen: tell workers to skip any leftover problems,
-        # and release any workers blocked on admission control (pacing has no
-        # purpose now and would deadlock the shutdown cascade if the dataset holds
-        # more groups than the training loop consumed).
-        training_loop_done_event.set()
-        in_flight_tracker.stop_pacing()
+        # No more training will happen: workers now skip any leftover problems,
+        # and any workers blocked on admission control are released (they would
+        # otherwise deadlock the shutdown cascade if the dataset holds more
+        # groups than the training loop consumed).
+        in_flight_tracker.stop()
         if completed_groups_buffer:
             logger.info(
                 f"[training_loop] Dropping {len(completed_groups_buffer)} leftover completed "
@@ -2019,12 +2035,8 @@ async def main(
         asyncio.run(main(config=config))
     """
 
-    if config.async_config is not None and config.stream_minibatch_config is not None:
-        raise ConfigurationError(
-            "async_config and stream_minibatch_config cannot be combined: streaming "
-            "minibatches do not support the async staleness enforcement (which waits "
-            "for rollouts at the staleness deadline and trains stalest-first)."
-        )
+    if config.async_config is not None:
+        _validate_async_config(config)
     if rollout_executor is not None:
         set_rollout_executor(rollout_executor)
     ml_logger = ml_log.setup_logging(

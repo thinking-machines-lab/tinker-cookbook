@@ -403,15 +403,17 @@ class TestInFlightGroupTracker:
 
         asyncio.run(_test())
 
-    def test_stop_pacing_releases_blocked_acquirers(self):
+    def test_stop_releases_blocked_acquirers_without_granting_slots(self):
         async def _test():
             tracker = _InFlightGroupTracker(capacity=1)
-            await tracker.acquire_slot()
+            assert await tracker.acquire_slot() is True
             blocked = asyncio.create_task(tracker.acquire_slot())
             await asyncio.sleep(0.01)
             assert not blocked.done()
-            tracker.stop_pacing()
-            await asyncio.wait_for(blocked, timeout=1.0)
+            tracker.stop()
+            assert await asyncio.wait_for(blocked, timeout=1.0) is False
+            assert await tracker.acquire_slot() is False
+            assert tracker.num_outstanding == 1
 
         asyncio.run(_test())
 
