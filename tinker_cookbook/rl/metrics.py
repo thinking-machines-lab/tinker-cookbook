@@ -211,6 +211,39 @@ def discounted_future_sum_vectorized(x: torch.Tensor, gamma: float) -> torch.Ten
     return result
 
 
+def compute_staleness_metrics(
+    current_step: int,
+    wrapped_trajectory_groups: list[Any],  # WrappedTrajectoryGroup
+) -> dict[str, Any]:
+    """Compute staleness statistics for a batch of trajectory groups.
+
+    Staleness is the number of training steps between the sampler version a
+    group was generated with and the step it is trained on
+    (``current_step - sampling_client_step``). In async training this should
+    never exceed ``max_steps_off_policy``.
+
+    Args:
+        current_step (int): The training step the batch is trained on.
+        wrapped_trajectory_groups (list[Any]): List of WrappedTrajectoryGroup
+            objects, each having a ``sampling_client_step`` attribute.
+
+    Returns:
+        dict[str, Any]: Dictionary with keys ``async/staleness_max``,
+            ``async/staleness_min``, and ``async/staleness_mean``.
+    """
+    if not wrapped_trajectory_groups:
+        return {}
+    staleness = [
+        current_step - wrapped_trajectory_group.sampling_client_step
+        for wrapped_trajectory_group in wrapped_trajectory_groups
+    ]
+    return {
+        "async/staleness_max": max(staleness),
+        "async/staleness_min": min(staleness),
+        "async/staleness_mean": sum(staleness) / len(staleness),
+    }
+
+
 def compute_sampling_client_metrics(
     wrapped_trajectory_groups: list[Any],  # WrappedTrajectoryGroup
 ) -> dict[str, Any]:
