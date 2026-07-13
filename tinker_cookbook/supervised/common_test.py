@@ -1,12 +1,18 @@
 """Tests for supervised/common.py weight reduction in datum_from_model_input_weights."""
 
 import math
+from typing import Literal, cast
 
 import pytest
 import tinker
 import torch
 
-from tinker_cookbook.supervised.common import datum_from_model_input_weights
+from tinker_cookbook.supervised.common import (
+    _weighted_target_byte_count,
+    compute_bpb,
+    datum_from_model_input_weights,
+)
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 def _make_model_input(tokens: list[int]) -> tinker.ModelInput:
@@ -125,3 +131,104 @@ def test_invalid_reduction_raises():
     weights = torch.tensor([0.0, 1.0, 1.0])
     with pytest.raises(ValueError, match="Unknown reduction mode"):
         datum_from_model_input_weights(model_input, weights, reduction="invalid")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Bits-per-byte (compute_bpb)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTokenizer:
+    """Minimal tokenizer stand-in mapping each token id to a fixed string.
+
+    ``decode`` concatenates the per-token strings and, when
+    ``skip_special_tokens=True``, drops ids in ``special_ids``.
+    """
+
+    def __init__(self, vocab: dict[int, str], special_ids: set[int] | None = None):
+        self.vocab = vocab
+        self.special_ids = special_ids or set()
+
+    def decode(self, ids: list[int], skip_special_tokens: bool = False) -> str:
+        return "".join(
+            self.vocab[i] for i in ids if not (skip_special_tokens and i in self.special_ids)
+        )
+
+
+def _fake_tokenizer(vocab: dict[int, str], special_ids: set[int] | None = None) -> Tokenizer:
+    """Build a `_FakeTokenizer` typed as `Tokenizer` for the BPB helpers."""
+    return cast(Tokenizer, _FakeTokenizer(vocab, special_ids))
+
+
+def _td(data: list[float] | list[int], dtype: Literal["float32", "int64"]) -> tinker.TensorData:
+    return tinker.TensorData(data=list(data), dtype=dtype, shape=[len(data)])
+
+
+def test_compute_bpb_matches_hand_computation():
+    """bpb = -sum(logprobs * weights) / (ln(2) * target_bytes)."""
+    tok = _fake_tokenizer({1: "he", 2: "llo"})  # decodes to "hello" -> 5 bytes
+    logprobs = _td([-0.5, -1.5], "float32")
+    weights = _td([1.0, 1.0], "float32")
+    targets = _td([1, 2], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
+    expected = 2.0 / (math.log(2) * 5)  # total nats = 0.5 + 1.5; bytes = 5
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_ignores_zero_weight_tokens():
+    """Weight-0 (prompt) tokens affect neither the numerator nor the byte count."""
+    tok = _fake_tokenizer({1: "AB", 2: "x", 3: "yz"})
+    logprobs = _td([-9.0, -1.0, -1.0], "float32")  # big loss on the prompt token
+    weights = _td([0.0, 1.0, 1.0], "float32")
+    targets = _td([1, 2, 3], "int64")  # weighted run [2, 3] -> "xyz" -> 3 bytes
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
+    expected = 2.0 / (math.log(2) * 3)
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_counts_utf8_bytes_not_chars():
+    """Multi-byte characters count as their UTF-8 byte length, not 1 char each."""
+    tok = _fake_tokenizer({1: "café", 2: "中"})  # "café" = 5 bytes, "中" = 3 bytes
+    logprobs = _td([-1.0, -1.0], "float32")
+    weights = _td([1.0, 1.0], "float32")
+    targets = _td([1, 2], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
+    expected = 2.0 / (math.log(2) * 8)
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_skips_special_tokens_in_byte_count():
+    """A scored end-of-turn token contributes to nats but not to the byte count."""
+    tok = _fake_tokenizer({1: "hi", 99: "<|end|>"}, special_ids={99})
+    logprobs = _td([-1.0, -1.0], "float32")
+    weights = _td([1.0, 1.0], "float32")
+    targets = _td([1, 99], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
+    expected = 2.0 / (math.log(2) * len("hi"))  # only "hi" counts toward bytes
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_aggregates_across_batch():
+    """Numerator and denominator sum over all datums in the batch."""
+    tok = _fake_tokenizer({1: "ab", 2: "cde"})
+    d1 = ([_td([-1.0], "float32")], [_td([1.0], "float32")], [_td([1], "int64")])  # "ab" = 2
+    d2 = ([_td([-3.0], "float32")], [_td([1.0], "float32")], [_td([2], "int64")])  # "cde" = 3
+    bpb = compute_bpb(d1[0] + d2[0], d1[1] + d2[1], d1[2] + d2[2], tok)
+    expected = 4.0 / (math.log(2) * 5)  # nats = 1 + 3; bytes = 2 + 3
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_zero_bytes_returns_nan():
+    """No weighted tokens -> zero bytes -> nan (no division by zero)."""
+    tok = _fake_tokenizer({1: "a"})
+    logprobs = _td([-1.0], "float32")
+    weights = _td([0.0], "float32")
+    targets = _td([1], "int64")
+    assert math.isnan(compute_bpb([logprobs], [weights], [targets], tok))
+
+
+def test_weighted_target_byte_count_splits_runs():
+    """Runs separated by a zero-weight gap are decoded independently."""
+    tok = _fake_tokenizer({1: "ab", 2: "GAP", 3: "cde"})
+    n = _weighted_target_byte_count([1, 2, 3], [1.0, 0.0, 1.0], tok)
+    assert n == len("ab") + len("cde")  # 2 + 3; the "GAP" token is excluded
