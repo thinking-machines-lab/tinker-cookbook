@@ -49,6 +49,8 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     # Async rollout configuration
+    # When set, enables async training (see rl.train.AsyncConfig); prefer a
+    # trust-region loss (loss_fn="ppo") with async training.
     max_steps_off_policy: int | None = None
 
     # Code execution sandbox configuration

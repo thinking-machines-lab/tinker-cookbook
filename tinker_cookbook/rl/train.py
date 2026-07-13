@@ -424,9 +424,15 @@ class StreamMinibatchConfig:
 class AsyncConfig:
     """Configuration for async RL training.
 
-    In async mode, sampling and training run concurrently. Two knobs control
-    the staleness of the training data — how many training iterations
-    (sampler versions) behind the current policy the data was sampled:
+    In async mode, sampling and training run concurrently. **Use a
+    trust-region loss with async training** (e.g. ``Config.loss_fn="ppo"``):
+    async data is genuinely off-policy, and in our experiments the default
+    unclipped ``importance_sampling`` loss eventually destabilized at every
+    pipeline depth, while ``ppo`` was stable even at maximum staleness.
+
+    Two knobs control the staleness of the training data — how many training
+    iterations (sampler versions) behind the current policy the data was
+    sampled:
 
     - ``max_steps_off_policy`` is the **hard staleness bound**: before each
       training iteration, the trainer waits for any rollout that is about to
@@ -544,6 +550,9 @@ class Config:
     # -------------------------------------------------------------------------
     # Loss function and configuration.
     # See https://tinker-docs.thinkingmachines.ai/losses
+    # NOTE: with async_config set, prefer a trust-region loss such as "ppo":
+    # async training is genuinely off-policy, and the default unclipped
+    # "importance_sampling" loss can destabilize on consistently stale data.
     loss_fn: LossFnType = "importance_sampling"
     loss_fn_config: dict[str, Any] | None = None
 
@@ -577,7 +586,8 @@ class Config:
     # -------------------------------------------------------------------------
     # Execution mode knobs (advanced)
     # -------------------------------------------------------------------------
-    # Enable async/off-policy training mode when set.
+    # Enable async/off-policy training mode when set. Prefer pairing with a
+    # trust-region loss (loss_fn="ppo"); see AsyncConfig.
     async_config: AsyncConfig | None = None
     # Enable sync training with streaming minibatches when set.
     stream_minibatch_config: StreamMinibatchConfig | None = None
