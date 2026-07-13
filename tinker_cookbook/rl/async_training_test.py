@@ -155,6 +155,11 @@ class FakeTrainingClient:
         return FakeSamplingClient(self.version, self.harness)
 
     def create_sampling_client(self, path: str) -> FakeSamplingClient:
+        # NOTE: does not bump `version` — only save_weights_and_get_sampling_client_async
+        # publishes a new version. If a test enables periodic checkpoints
+        # (save_every > 0), the training loop mints clients through
+        # CheckpointManager.save_periodic_async instead, and this fake's version
+        # accounting would need to model that path too.
         return FakeSamplingClient(self.version, self.harness)
 
     async def forward_backward_async(
@@ -606,6 +611,13 @@ class TestAsyncStalenessTorture:
         # Exactly n_batches * groups_per_batch groups are trained on.
         assert len(staleness) == groups_per_batch * n_batches
         assert all(0 <= v <= 1 for values in staleness.values() for v in values)
+        # Leftover problems are skipped once training is done, not rolled out:
+        # at most one straggler per worker may already be mid-rollout.
+        num_sampled_problems = len(result.harness.sample_counts)
+        assert num_sampled_problems <= len(staleness) + groups_per_batch, (
+            f"{num_sampled_problems - len(staleness)} leftover problems were sampled; "
+            f"expected at most {groups_per_batch} (one per worker)"
+        )
 
     def test_multiple_substeps_respect_staleness_bound(self, tmp_path):
         """num_substeps > 1 applies several optimizer updates per iteration, but
