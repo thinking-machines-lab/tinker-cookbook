@@ -107,13 +107,16 @@ def compute_bpb(
     removes this dependence by dividing the *total* log-loss (converted to bits)
     by the number of UTF-8 bytes of the target text::
 
-        bpb = -sum(logprobs * weights) / (ln(2) * total_target_bytes)
+        bpb = -sum(logprob_i for i where weight_i > 0) / (ln(2) * total_target_bytes)
 
-    The numerator is the same weighted sum used by :func:`compute_mean_nll`
-    (only without the per-token averaging); the denominator counts the bytes of
-    the decoded loss-weighted tokens, which is fixed by the raw text rather than
-    by the tokenization. Both cover the same weighted span, so the ratio is a
-    proper compression rate that can be compared across tokenizers.
+    The numerator sums the raw per-token NLL over the loss-weighted tokens,
+    using the weights only as a ``> 0`` mask rather than as multipliers. This
+    keeps the total nats correct even when the weights are normalized per
+    example (``reduction="mean"``, the SFT default, where a datum's weights sum
+    to 1.0 instead of being 0/1). The denominator counts the UTF-8 bytes of
+    those same decoded tokens, which is fixed by the raw text rather than by the
+    tokenization. Because numerator and denominator cover the same span, the
+    ratio is a proper compression rate that can be compared across tokenizers.
 
     Args:
         logprobs_list (list[tinker.TensorData]): Per-token log-probabilities,
@@ -128,7 +131,7 @@ def compute_bpb(
     Returns:
         float: Bits per byte, or ``nan`` if the weighted target has zero bytes.
     """
-    total_weighted_logprobs = 0.0
+    total_nll_nats = 0.0
     total_bytes = 0
 
     for logprobs, weights, target_tokens in zip(
@@ -136,7 +139,11 @@ def compute_bpb(
     ):
         logprobs_torch = logprobs.to_torch()
         weights_torch = weights.to_torch()
-        total_weighted_logprobs += float(logprobs_torch.dot(weights_torch))
+        # Sum the raw NLL over trained tokens, using the weights only as a mask.
+        # This matches the tokens counted in the byte denominator and stays
+        # correct under per-example weight normalization (reduction="mean").
+        mask = weights_torch > 0
+        total_nll_nats += float(-logprobs_torch[mask].sum())
         total_bytes += _weighted_target_byte_count(
             list(target_tokens.data), list(weights.data), tokenizer
         )
@@ -145,7 +152,7 @@ def compute_bpb(
         logger.warning("No target bytes found for BPB computation")
         return float("nan")
 
-    return float(-total_weighted_logprobs / (math.log(2) * total_bytes))
+    return float(total_nll_nats / (math.log(2) * total_bytes))
 
 
 def create_rightshifted_model_input_and_leftshifted_targets(

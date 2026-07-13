@@ -186,6 +186,19 @@ def test_compute_bpb_ignores_zero_weight_tokens():
     assert math.isclose(bpb, expected, rel_tol=1e-6)
 
 
+def test_compute_bpb_invariant_to_weight_magnitude():
+    """Weights are a mask, not a multiplier: per-example normalized weights
+    (reduction="mean") give the same BPB as 0/1 weights."""
+    tok = _fake_tokenizer({1: "ab", 2: "cd"})  # "abcd" -> 4 bytes
+    logprobs = _td([-1.0, -3.0], "float32")  # total nats = 1 + 3 = 4 in both cases
+    targets = _td([1, 2], "int64")
+    expected = 4.0 / (math.log(2) * 4)
+    bpb_binary = compute_bpb([logprobs], [_td([1.0, 1.0], "float32")], [targets], tok)
+    bpb_mean = compute_bpb([logprobs], [_td([0.5, 0.5], "float32")], [targets], tok)
+    assert math.isclose(bpb_binary, expected, rel_tol=1e-6)
+    assert math.isclose(bpb_mean, expected, rel_tol=1e-6)
+
+
 def test_compute_bpb_counts_utf8_bytes_not_chars():
     """Multi-byte characters count as their UTF-8 byte length, not 1 char each."""
     tok = _fake_tokenizer({1: "café", 2: "中"})  # "café" = 5 bytes, "中" = 3 bytes
