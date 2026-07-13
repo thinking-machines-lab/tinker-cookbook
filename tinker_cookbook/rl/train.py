@@ -96,6 +96,15 @@ def _validate_async_config(config: Config) -> None:
             f"async_config requires max_steps_off_policy >= 0 and groups_per_batch > 0, got "
             f"{config.async_config.max_steps_off_policy=}, {config.async_config.groups_per_batch=}"
         )
+    pipeline_depth = config.async_config.pipeline_depth
+    if pipeline_depth is not None and not (
+        0 <= pipeline_depth <= config.async_config.max_steps_off_policy
+    ):
+        raise ConfigurationError(
+            f"async_config requires 0 <= pipeline_depth <= max_steps_off_policy (a pipeline "
+            f"deeper than the staleness bound would violate it), got {pipeline_depth=}, "
+            f"{config.async_config.max_steps_off_policy=}"
+        )
 
 
 @chz.chz
@@ -415,40 +424,48 @@ class StreamMinibatchConfig:
 class AsyncConfig:
     """Configuration for async RL training.
 
-    In async mode, sampling and training run concurrently, and the staleness
-    of the training data — how many training iterations (sampler versions)
-    behind the current policy the data was sampled — is bounded by
-    ``max_steps_off_policy``. (Each training iteration trains on one batch;
-    with ``num_substeps > 1`` an iteration applies several optimizer updates,
-    all published as a single new sampler version.)
+    In async mode, sampling and training run concurrently. Two knobs control
+    the staleness of the training data — how many training iterations
+    (sampler versions) behind the current policy the data was sampled:
 
-    The bound is enforced without discarding rollouts: starts are paced so
-    that at most ``groups_per_batch * (max_steps_off_policy + 1)`` group
-    rollouts are outstanding (started but not yet trained on), and the
-    trainer waits for any rollout that is about to exceed the bound instead
-    of dropping it. Batches are formed stalest-first, so every collected
-    trajectory group is trained on exactly once, within the staleness bound —
+    - ``max_steps_off_policy`` is the **hard staleness bound**: before each
+      training iteration, the trainer waits for any rollout that is about to
+      exceed it (its last chance to be trained within the bound) instead of
+      dropping it. Set it to cover your slowest rollouts, in units of
+      training iterations.
+    - ``pipeline_depth`` controls how far sampling may run ahead of training:
+      at most ``groups_per_batch * (pipeline_depth + 1)`` group rollouts may
+      be outstanding (started but not yet trained on). Whenever sampling
+      outpaces training, the pipeline fills up, so **typical** staleness
+      approaches ``pipeline_depth`` — while only slow-rollout stragglers
+      approach ``max_steps_off_policy``. Keep it short (the default is 1)
+      unless your loss is robust to consistently off-policy data: with a
+      deep pipeline the default unclipped ``importance_sampling`` loss can
+      destabilize, so pair deeper pipelining with a trust-region loss
+      (e.g. ``loss_fn="ppo"``). Depth 0 is synchronous training.
+
+    No rollout is ever discarded: batches are formed stalest-first, so every
+    collected trajectory group is trained on exactly once, within the bound —
     slow rollouts (often the hardest problems) contribute to training just
     like fast ones, at the cost of the trainer sometimes waiting for them.
     (Groups filtered to None — e.g. constant-reward removal — are never
     trained, and when training ends, leftover groups that no longer fill a
     batch are dropped, matching the previous behavior. The dataset's batch
     size should equal ``groups_per_batch``; excess groups per dataset batch
-    are sampled but not guaranteed to be trained.)
-
-    Note that whenever sampling outpaces training, the pipeline fills up and
-    typical staleness approaches ``max_steps_off_policy`` — async training
-    *uses* its staleness budget rather than merely tolerating it. The default
-    unclipped ``importance_sampling`` loss can become unstable when training
-    consistently several steps off-policy; pair async training with a
-    trust-region loss (e.g. ``loss_fn="ppo"``) or keep
-    ``max_steps_off_policy`` small.
+    are sampled but not guaranteed to be trained. Each training iteration
+    trains on one batch; with ``num_substeps > 1`` an iteration applies
+    several optimizer updates, all published as a single new sampler
+    version.)
 
     Attributes:
         max_steps_off_policy (int): Maximum number of training iterations a
             sample may lag behind the iteration it is trained on. 0 is
             equivalent to synchronous training.
         groups_per_batch (int): Number of trajectory groups per training batch.
+        pipeline_depth (int | None): How many iterations ahead sampling may
+            run; sets the typical staleness when sampling is fast. None
+            (default) means ``min(1, max_steps_off_policy)``. Must be
+            ``<= max_steps_off_policy``.
     """
 
     # A sample generated with the sampler version from iteration s may be
@@ -456,6 +473,15 @@ class AsyncConfig:
     max_steps_off_policy: int
     # Number of trajectory groups per training batch.
     groups_per_batch: int
+    # How far sampling may run ahead of training (in iterations); typical
+    # staleness under a fast sampler. None means min(1, max_steps_off_policy).
+    pipeline_depth: int | None = None
+
+    @property
+    def resolved_pipeline_depth(self) -> int:
+        if self.pipeline_depth is None:
+            return min(1, self.max_steps_off_policy)
+        return self.pipeline_depth
 
 
 @chz.chz
@@ -925,10 +951,13 @@ class _InFlightGroupTracker:
     with; one sampler version is published per iteration):
 
     1. **Admission control** (:meth:`acquire_slot`): at most ``capacity =
-       groups_per_batch * (max_steps_off_policy + 1)`` groups may be outstanding.
-       When the trainer stalls (e.g. waiting on a slow rollout), completed groups
-       accumulate as outstanding, so rollout starts pause instead of racing ahead
-       of the trainer.
+       groups_per_batch * (pipeline_depth + 1)`` groups may be outstanding
+       (``pipeline_depth <= max_steps_off_policy``). When the trainer stalls
+       (e.g. waiting on a slow rollout), completed groups accumulate as
+       outstanding, so rollout starts pause instead of racing ahead of the
+       trainer. This also sets the *typical* staleness when sampling outpaces
+       training: the pipeline fills, and data is trained ~``pipeline_depth``
+       iterations after it was sampled.
     2. **Straggler accounting** (:meth:`num_in_flight_at_or_before`): before
        training step ``t``, the training loop waits until every rollout with
        version ``<= t - max_steps_off_policy`` has completed, so slow rollouts
@@ -942,8 +971,11 @@ class _InFlightGroupTracker:
     all outstanding when the batch's slots were released). At most one rollout
     per worker can be in flight — and therefore hidden from stalest-first
     selection — at any moment, so the visible stale groups drain at
-    ``groups_per_batch`` per iteration, and the deadline wait forces the last
-    ``<= groups_per_batch`` stragglers into the batch at their deadline.
+    ``groups_per_batch`` per iteration within ``pipeline_depth`` iterations,
+    and the deadline wait forces the last ``<= groups_per_batch`` stragglers
+    into the batch at their deadline. The bound therefore requires
+    ``capacity <= groups_per_batch * (max_steps_off_policy + 1)``, i.e.
+    ``pipeline_depth <= max_steps_off_policy``.
     """
 
     def __init__(self, capacity: int):
@@ -1119,7 +1151,7 @@ async def do_async_training(
     # per batch slot, as launched below).
     in_flight_tracker = _InFlightGroupTracker(
         capacity=config.async_config.groups_per_batch
-        * (config.async_config.max_steps_off_policy + 1)
+        * (config.async_config.resolved_pipeline_depth + 1)
     )
 
     # This will be updated by the training loop
@@ -1162,6 +1194,12 @@ async def do_async_training(
                 continue
             # Copy the sampling client together with its step, so the recorded
             # step matches the weights actually used for this rollout.
+            # TODO: for multi-turn envs, refresh to the newest sampling client
+            # between turns (each turn is an independent sample call), so later
+            # turns of a long rollout come from newer weights. Per-token
+            # sampling logprobs already make mixed-version trajectories valid
+            # for the loss, and the staleness bookkeeping below stays correct:
+            # the version at rollout start is the minimum over turns.
             rollout_sampling_client = sampling_client
             rollout_sampling_client_step = sampling_client_step
             in_flight_tracker.record_started(rollout_sampling_client_step)

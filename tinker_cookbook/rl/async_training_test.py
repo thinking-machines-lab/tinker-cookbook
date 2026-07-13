@@ -280,6 +280,7 @@ async def _run_async_training(
     constant_reward_problem_ids: set[int] | None = None,
     num_substeps: int = 1,
     start_batch: int = 0,
+    pipeline_depth: int | None = None,
     timeout_s: float = 60.0,
 ) -> RunResult:
     """Run do_async_training over fake clients with the given per-problem latencies.
@@ -329,6 +330,7 @@ async def _run_async_training(
         async_config=AsyncConfig(
             max_steps_off_policy=max_steps_off_policy,
             groups_per_batch=groups_per_batch,
+            pipeline_depth=pipeline_depth,
         ),
     )
     ml_logger = ml_log.setup_logging(log_dir=str(tmp_path), do_configure_logging_module=False)
@@ -696,6 +698,58 @@ class TestAsyncStalenessTorture:
                 )
             )
 
+    def test_typical_staleness_tracks_pipeline_depth_not_bound(self, tmp_path):
+        """With a fast sampler, typical staleness sits at pipeline_depth; only the
+        hard bound is max_steps_off_policy. The default (depth 1) keeps bulk data
+        near-on-policy even with a generous bound; an explicitly deep pipeline
+        fills its whole staleness budget."""
+        groups_per_batch = 4
+        max_steps_off_policy = 3
+        latencies = [0.01] * (groups_per_batch * 16)
+
+        def run(depth):
+            return asyncio.run(
+                _run_async_training(
+                    str(tmp_path / f"d{depth}"),
+                    latencies,
+                    groups_per_batch=groups_per_batch,
+                    max_steps_off_policy=max_steps_off_policy,
+                    train_time_s=0.05,  # trainer-bound: sampling outpaces training
+                    pipeline_depth=depth,
+                )
+            )
+
+        for depth in (1, 3):
+            result = run(depth)
+            staleness = [v for vs in _staleness_by_problem(result).values() for v in vs]
+            assert max(staleness) <= max_steps_off_policy
+            # Skip the warmup steps; in steady state the pipeline is full, so
+            # staleness concentrates at the pipeline depth.
+            steady = [
+                trained_step - version
+                for _, version, trained_step in result.harness.trained_records
+                if trained_step >= 4
+            ]
+            mean_staleness = sum(steady) / len(steady)
+            assert depth - 1 <= mean_staleness <= depth + 0.5, (
+                f"depth={depth}: steady-state mean staleness {mean_staleness:.2f} "
+                f"should track the pipeline depth"
+            )
+
+    def test_pipeline_depth_deeper_than_bound_raises(self, tmp_path):
+        from tinker_cookbook.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError):
+            asyncio.run(
+                _run_async_training(
+                    tmp_path,
+                    [0.01] * 4,
+                    groups_per_batch=4,
+                    max_steps_off_policy=1,
+                    pipeline_depth=2,
+                )
+            )
+
     @pytest.mark.parametrize("max_steps_off_policy", [1, 3])
     def test_staleness_bound_respected_under_adversarial_latencies(
         self, tmp_path, max_steps_off_policy
@@ -716,6 +770,7 @@ class TestAsyncStalenessTorture:
                 latencies,
                 groups_per_batch=groups_per_batch,
                 max_steps_off_policy=max_steps_off_policy,
+                pipeline_depth=max_steps_off_policy,
             )
         )
         staleness = _staleness_by_problem(result)
