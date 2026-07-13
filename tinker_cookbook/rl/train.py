@@ -439,10 +439,11 @@ class AsyncConfig:
       outpaces training, the pipeline fills up, so **typical** staleness
       approaches ``pipeline_depth`` — while only slow-rollout stragglers
       approach ``max_steps_off_policy``. Keep it short (the default is 1)
-      unless your loss is robust to consistently off-policy data: with a
-      deep pipeline the default unclipped ``importance_sampling`` loss can
-      destabilize, so pair deeper pipelining with a trust-region loss
-      (e.g. ``loss_fn="ppo"``). Depth 0 is synchronous training.
+      to minimize off-policyness, and prefer a trust-region loss (e.g.
+      ``loss_fn="ppo"``) for async training generally: the default unclipped
+      ``importance_sampling`` loss is sensitive to off-policy data — deeper
+      pipelines destabilize it sooner, but even shallow ones stress it at
+      aggressive learning rates. Depth 0 is synchronous training.
 
     No rollout is ever discarded: batches are formed stalest-first, so every
     collected trajectory group is trained on exactly once, within the bound —
