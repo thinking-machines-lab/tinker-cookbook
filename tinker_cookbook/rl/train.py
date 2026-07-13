@@ -74,6 +74,10 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# While the async training loop is blocked waiting for rollouts, log a warning
+# at this interval so a hung rollout is diagnosable rather than a silent stall.
+_STRAGGLER_WARNING_INTERVAL_S = 120.0
+
 
 @chz.chz
 class KLReferenceConfig:
@@ -403,12 +407,15 @@ class AsyncConfig:
     that at most ``groups_per_batch * (max_steps_off_policy + 1)`` group
     rollouts are outstanding (started but not yet trained on), and the
     trainer waits for any rollout that is about to exceed the bound instead
-    of dropping it. Batches are formed stalest-first, so every trajectory
-    group is trained on exactly once, within the staleness bound — slow
-    rollouts (often the hardest problems) contribute to training just like
-    fast ones, at the cost of the trainer sometimes waiting for them. (The
-    only exception: when training ends, leftover completed groups that no
-    longer fill a batch are dropped, matching the previous behavior.)
+    of dropping it. Batches are formed stalest-first, so every collected
+    trajectory group is trained on exactly once, within the staleness bound —
+    slow rollouts (often the hardest problems) contribute to training just
+    like fast ones, at the cost of the trainer sometimes waiting for them.
+    (Groups filtered to None — e.g. constant-reward removal — are never
+    trained, and when training ends, leftover groups that no longer fill a
+    batch are dropped, matching the previous behavior. The dataset's batch
+    size should equal ``groups_per_batch``; excess groups per dataset batch
+    are sampled but not guaranteed to be trained.)
 
     Attributes:
         max_steps_off_policy (int): Maximum number of training iterations a
@@ -901,9 +908,15 @@ class _InFlightGroupTracker:
        are trained on at their staleness deadline rather than discarded.
 
     These two mechanisms, plus stalest-first batch selection and one rollout
-    worker per batch slot, guarantee the staleness bound (each policy version
-    contributes at most ``capacity`` groups, drained at ``groups_per_batch`` per
-    step within ``max_steps_off_policy + 1`` steps).
+    worker per batch slot, guarantee the staleness bound. Why: slots for a
+    trained batch are released only after the new sampler version is published,
+    so right after training iteration ``v``, at most ``capacity -
+    groups_per_batch`` untrained groups with version <= ``v`` remain (they were
+    all outstanding when the batch's slots were released). At most one rollout
+    per worker can be in flight — and therefore hidden from stalest-first
+    selection — at any moment, so the visible stale groups drain at
+    ``groups_per_batch`` per iteration, and the deadline wait forces the last
+    ``<= groups_per_batch`` stragglers into the batch at their deadline.
     """
 
     def __init__(self, capacity: int):
@@ -940,12 +953,28 @@ class _InFlightGroupTracker:
     def record_started(self, version: int) -> None:
         self._in_flight_by_version[version] = self._in_flight_by_version.get(version, 0) + 1
 
-    def record_completed(self, version: int) -> None:
+    def record_completed_and_enqueue(
+        self,
+        version: int,
+        wrapped_trajectory_group: WrappedTrajectoryGroup | None,
+        queue: asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None],
+    ) -> None:
+        """Mark a rollout as completed and enqueue its result, atomically.
+
+        The two updates must happen with no ``await`` in between: if the
+        training loop observed a rollout as no longer in flight but not yet
+        queued, it could stop waiting for a deadline straggler and train
+        without it, exceeding the staleness bound.
+        """
         count = self._in_flight_by_version[version] - 1
         if count == 0:
             del self._in_flight_by_version[version]
         else:
             self._in_flight_by_version[version] = count
+        if wrapped_trajectory_group is None:
+            # This group will never be trained on; free its slot now.
+            self.release_slots(1)
+        queue.put_nowait(wrapped_trajectory_group)
 
     def num_in_flight_at_or_before(self, version: int) -> int:
         return sum(n for v, n in self._in_flight_by_version.items() if v <= version)
@@ -1019,6 +1048,11 @@ async def do_async_training(
         raise ConfigurationError(
             "async_config and stream_minibatch_config cannot be combined: streaming "
             "minibatches do not support the async staleness enforcement."
+        )
+    if config.async_config.max_steps_off_policy < 0 or config.async_config.groups_per_batch <= 0:
+        raise ConfigurationError(
+            f"async_config requires max_steps_off_policy >= 0 and groups_per_batch > 0, got "
+            f"{config.async_config.max_steps_off_policy=}, {config.async_config.groups_per_batch=}"
         )
 
     # We will have groups_per_batch workers generating rollouts, so cap the
@@ -1124,22 +1158,18 @@ async def do_async_training(
             # Ingest error info (safe: same event loop thread)
             if error_counter is not None:
                 error_counter.ingest(trajectory_group)
-            # No awaits between record_completed and the queue put: the training
-            # loop must never observe a rollout as neither in flight nor queued.
-            in_flight_tracker.record_completed(rollout_sampling_client_step)
-            if trajectory_group is None:
-                # This group will never be trained on; free its slot now.
-                in_flight_tracker.release_slots(1)
-                trajectory_groups_queue.put_nowait(None)
-            else:
-                trajectory_groups_queue.put_nowait(
-                    WrappedTrajectoryGroup(
-                        trajectory_group=trajectory_group,
-                        env_group_builder=env_group_builder,
-                        sampling_client_step=rollout_sampling_client_step,
-                        metrics=worker_metrics,
-                    )
+            in_flight_tracker.record_completed_and_enqueue(
+                rollout_sampling_client_step,
+                WrappedTrajectoryGroup(
+                    trajectory_group=trajectory_group,
+                    env_group_builder=env_group_builder,
+                    sampling_client_step=rollout_sampling_client_step,
+                    metrics=worker_metrics,
                 )
+                if trajectory_group is not None
+                else None,
+                trajectory_groups_queue,
+            )
 
         # When this is the last worker to exit, signal the training loop to shut down
         num_alive = await worker_alive_counter.decrement_and_get()
@@ -1187,13 +1217,30 @@ async def do_async_training(
                 len(completed_groups_buffer) < groups_per_batch
                 or in_flight_tracker.num_in_flight_at_or_before(stale_deadline) > 0
             ):
-                # If the batch is already full, we're only waiting for rollouts
-                # at the staleness deadline.
-                waiting_for_stragglers = len(completed_groups_buffer) >= groups_per_batch
+                # Attribute wait time to stragglers whenever a rollout at the
+                # staleness deadline is still in flight.
+                num_deadline_stragglers = in_flight_tracker.num_in_flight_at_or_before(
+                    stale_deadline
+                )
                 t_start = time.time()
-                item = await trajectory_groups_queue.get()
-                if waiting_for_stragglers:
-                    t_straggler_wait += time.time() - t_start
+                try:
+                    item = await asyncio.wait_for(
+                        trajectory_groups_queue.get(), timeout=_STRAGGLER_WARNING_INTERVAL_S
+                    )
+                except TimeoutError:
+                    # Nothing completed for a while; make the stall diagnosable
+                    # (a hung env/rollout would otherwise block training silently).
+                    logger.warning(
+                        f"[training_loop] Step {i_batch}: waiting for rollouts "
+                        f"({len(completed_groups_buffer)}/{groups_per_batch} groups collected, "
+                        f"{num_deadline_stragglers} in-flight rollouts at the staleness "
+                        f"deadline, {in_flight_tracker.num_in_flight} in flight total). "
+                        "If this persists, a rollout may be hung."
+                    )
+                    continue
+                finally:
+                    if num_deadline_stragglers > 0:
+                        t_straggler_wait += time.time() - t_start
                 if isinstance(item, _Shutdown):
                     shutdown_received = True
                 elif item is not None:

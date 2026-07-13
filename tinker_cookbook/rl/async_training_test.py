@@ -23,6 +23,7 @@ The sleeps are tuned so the whole file runs in a few seconds.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -260,6 +261,7 @@ class RunResult:
     elapsed_s: float
     num_problems: int
     group_size: int
+    log_dir: str
 
 
 async def _run_async_training(
@@ -362,6 +364,7 @@ async def _run_async_training(
         elapsed_s=elapsed_s,
         num_problems=len(latencies),
         group_size=group_size,
+        log_dir=str(tmp_path),
     )
 
 
@@ -408,19 +411,29 @@ class TestInFlightGroupTracker:
         asyncio.run(_test())
 
     def test_in_flight_version_accounting(self):
-        tracker = _InFlightGroupTracker(capacity=10)
-        tracker.record_started(3)
-        tracker.record_started(3)
-        tracker.record_started(5)
-        assert tracker.num_in_flight == 3
-        assert tracker.num_in_flight_at_or_before(2) == 0
-        assert tracker.num_in_flight_at_or_before(3) == 2
-        assert tracker.num_in_flight_at_or_before(5) == 3
-        tracker.record_completed(3)
-        assert tracker.num_in_flight_at_or_before(3) == 1
-        tracker.record_completed(3)
-        tracker.record_completed(5)
-        assert tracker.num_in_flight == 0
+        async def _test():
+            queue: asyncio.Queue = asyncio.Queue()
+            tracker = _InFlightGroupTracker(capacity=10)
+            for _ in range(3):
+                await tracker.acquire_slot()
+            tracker.record_started(3)
+            tracker.record_started(3)
+            tracker.record_started(5)
+            assert tracker.num_in_flight == 3
+            assert tracker.num_in_flight_at_or_before(2) == 0
+            assert tracker.num_in_flight_at_or_before(3) == 2
+            assert tracker.num_in_flight_at_or_before(5) == 3
+            # A None (filtered) completion frees its slot; real ones don't.
+            tracker.record_completed_and_enqueue(3, None, queue)
+            assert tracker.num_in_flight_at_or_before(3) == 1
+            assert tracker.num_outstanding == 2
+            tracker.record_completed_and_enqueue(3, cast(Any, "group"), queue)
+            tracker.record_completed_and_enqueue(5, cast(Any, "group"), queue)
+            assert tracker.num_in_flight == 0
+            assert tracker.num_outstanding == 2
+            assert [queue.get_nowait() for _ in range(3)] == [None, "group", "group"]
+
+        asyncio.run(_test())
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +489,21 @@ class TestAsyncStalenessTorture:
         )
         # And asynchrony actually happened (some data was trained off-policy).
         assert max_staleness > 0, "expected some off-policy data in async mode"
+
+        # The logged async/staleness_* metrics must agree with the staleness
+        # measured from the training data itself.
+        expected_max_by_step: dict[int, int] = {}
+        for _, sampled_version, trained_step in result.harness.trained_records:
+            expected_max_by_step[trained_step] = max(
+                expected_max_by_step.get(trained_step, 0), trained_step - sampled_version
+            )
+        logged_max_by_step = {}
+        with open(f"{result.log_dir}/metrics.jsonl") as f:
+            for line in f:
+                rec = json.loads(line)
+                if "async/staleness_max" in rec:
+                    logged_max_by_step[rec["step"]] = rec["async/staleness_max"]
+        assert logged_max_by_step == expected_max_by_step
 
     def test_zero_steps_off_policy_is_synchronous(self, tmp_path):
         """max_steps_off_policy=0 must reduce to fully on-policy training."""
@@ -534,7 +562,10 @@ class TestAsyncStalenessTorture:
         n_batches = 6
         latencies = [0.01] * (groups_per_batch * n_batches)
         latencies[2] = 0.3
-        constant_ids = {1, 6, 9, 13}
+        # More filtered groups than groups_per_batch * max_steps_off_policy, so
+        # leaked admission slots (a regression in the None-completion path)
+        # would exhaust capacity and deadlock this test.
+        constant_ids = {1, 3, 6, 9, 13, 17}
         result = asyncio.run(
             _run_async_training(
                 tmp_path,
