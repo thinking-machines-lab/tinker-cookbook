@@ -238,6 +238,20 @@ def test_compute_bpb_excludes_special_tokens_under_mean_reduction():
     assert math.isclose(bpb, expected, rel_tol=1e-6)
 
 
+def test_compute_bpb_multi_turn_excludes_specials_and_splits_runs():
+    """Special tokens between trained content runs (multi-turn) are excluded from
+    both sides, and each content run is byte-counted independently."""
+    tok = _fake_tokenizer({1: "ab", 2: "cd", 3: "ef", 99: "<|end|>"}, special_ids={99})
+    # layout: run1=[1,2]  <|end|>  run2=[3]  <|end|>   (all trained)
+    logprobs = _td([-1.0, -2.0, -8.0, -3.0, -8.0], "float32")  # big loss on both specials
+    weights = _td([1.0, 1.0, 1.0, 1.0, 1.0], "float32")
+    targets = _td([1, 2, 99, 3, 99], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
+    # counted = tokens 1,2,3: nats = 1 + 2 + 3 = 6; bytes = "ab" + "cd" + "ef" = 6.
+    expected = 6.0 / (math.log(2) * 6)
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
 def test_compute_bpb_aggregates_across_batch():
     """Numerator and denominator sum over all datums in the batch."""
     tok = _fake_tokenizer({1: "ab", 2: "cde"})
