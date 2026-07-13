@@ -436,6 +436,14 @@ class AsyncConfig:
     size should equal ``groups_per_batch``; excess groups per dataset batch
     are sampled but not guaranteed to be trained.)
 
+    Note that whenever sampling outpaces training, the pipeline fills up and
+    typical staleness approaches ``max_steps_off_policy`` — async training
+    *uses* its staleness budget rather than merely tolerating it. The default
+    unclipped ``importance_sampling`` loss can become unstable when training
+    consistently several steps off-policy; pair async training with a
+    trust-region loss (e.g. ``loss_fn="ppo"``) or keep
+    ``max_steps_off_policy`` small.
+
     Attributes:
         max_steps_off_policy (int): Maximum number of training iterations a
             sample may lag behind the iteration it is trained on. 0 is
