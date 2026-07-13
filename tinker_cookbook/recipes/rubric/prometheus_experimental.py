@@ -54,8 +54,6 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
-    # When set, enables async training (see rl.train.AsyncConfig); prefer a
-    # trust-region loss (loss_fn="ppo") with async training.
     max_steps_off_policy: int | None = None
     loss_fn: LossFnType = "importance_sampling"
 

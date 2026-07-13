@@ -586,8 +586,7 @@ class Config:
     # -------------------------------------------------------------------------
     # Execution mode knobs (advanced)
     # -------------------------------------------------------------------------
-    # Enable async/off-policy training mode when set. Prefer pairing with a
-    # trust-region loss (loss_fn="ppo"); see AsyncConfig.
+    # Enable async/off-policy training mode when set; see AsyncConfig.
     async_config: AsyncConfig | None = None
     # Enable sync training with streaming minibatches when set.
     stream_minibatch_config: StreamMinibatchConfig | None = None
