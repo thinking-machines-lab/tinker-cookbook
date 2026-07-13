@@ -444,12 +444,9 @@ class AsyncConfig:
       be outstanding (started but not yet trained on). Whenever sampling
       outpaces training, the pipeline fills up, so **typical** staleness
       approaches ``pipeline_depth`` — while only slow-rollout stragglers
-      approach ``max_steps_off_policy``. Keep it short (the default is 1)
-      to minimize off-policyness, and prefer a trust-region loss (e.g.
-      ``loss_fn="ppo"``) for async training generally: the default unclipped
-      ``importance_sampling`` loss is sensitive to off-policy data — deeper
-      pipelines destabilize it sooner, but even shallow ones stress it at
-      aggressive learning rates. Depth 0 is synchronous training.
+      approach ``max_steps_off_policy``. Keep it short to minimize
+      off-policyness (the default resolves to
+      ``min(1, max_steps_off_policy)``); depth 0 is synchronous training.
 
     No rollout is ever discarded: batches are formed stalest-first, so every
     collected trajectory group is trained on exactly once, within the bound —
@@ -471,8 +468,8 @@ class AsyncConfig:
         groups_per_batch (int): Number of trajectory groups per training batch.
         pipeline_depth (int | None): How many iterations ahead sampling may
             run; sets the typical staleness when sampling is fast. None
-            (default) means ``min(1, max_steps_off_policy)``. Must be
-            ``<= max_steps_off_policy``.
+            (default) means ``min(1, max_steps_off_policy)``. Must satisfy
+            ``0 <= pipeline_depth <= max_steps_off_policy``.
     """
 
     # A sample generated with the sampler version from iteration s may be
@@ -1420,6 +1417,11 @@ async def do_async_training(
             # within the bound, which the capacity accounts for.)
             in_flight_tracker.release_slots(len(wrapped_trajectory_groups))
             metrics["async/outstanding_groups"] = in_flight_tracker.num_outstanding
+            if i_batch == end_batch - 1:
+                # That was the last training iteration: refuse new rollout starts
+                # before the awaits below, so the slots just released cannot admit
+                # rollouts that nothing will ever train on.
+                in_flight_tracker.stop()
 
             # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
             if checkpoint_mgr is not None:

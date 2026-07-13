@@ -69,6 +69,8 @@ class _Harness:
     trained_records: list[tuple[int, int, int]] = field(default_factory=list)
     # number of sample_async calls per problem_id
     sample_counts: dict[int, int] = field(default_factory=dict)
+    # every sampler version that served at least one sample call
+    sampled_versions: set[int] = field(default_factory=set)
 
 
 @dataclass
@@ -121,6 +123,7 @@ class FakeSamplingClient:
     ) -> _FakeSampleResult:
         problem_id = prompt.to_ints()[0]
         self.harness.sample_counts[problem_id] = self.harness.sample_counts.get(problem_id, 0) + 1
+        self.harness.sampled_versions.add(self.version)
         return _FakeSampleResult(
             sequences=[
                 _FakeSequence(tokens=[VERSION_BASE + self.version], logprobs=[-0.5])
@@ -137,13 +140,14 @@ class FakeTrainingClient:
     training loop's ``sampling_client_step`` accounting.
     """
 
-    def __init__(self, harness: _Harness, train_time_s: float = 0.005):
+    def __init__(self, harness: _Harness, train_time_s: float = 0.005, save_delay_s: float = 0.0):
         self.harness = harness
         self.train_time_s = train_time_s
+        self.save_delay_s = save_delay_s
         self.version = 0
 
     async def save_state_async(self, name: str, ttl_seconds: int | None = None) -> _FakeFuture:
-        return _FakeFuture(_FakePath(path=f"mock://state/{name}"))
+        return _FakeFuture(_FakePath(path=f"mock://state/{name}"), delay_s=self.save_delay_s)
 
     async def save_weights_for_sampler_async(
         self, name: str, ttl_seconds: int | None = None
@@ -281,6 +285,8 @@ async def _run_async_training(
     num_substeps: int = 1,
     start_batch: int = 0,
     pipeline_depth: int | None = None,
+    rolling_save_every: int = 0,
+    save_delay_s: float = 0.0,
     timeout_s: float = 60.0,
 ) -> RunResult:
     """Run do_async_training over fake clients with the given per-problem latencies.
@@ -293,7 +299,9 @@ async def _run_async_training(
     """
     constant_reward_problem_ids = constant_reward_problem_ids or set()
     harness = _Harness()
-    training_client = FakeTrainingClient(harness, train_time_s=train_time_s)
+    training_client = FakeTrainingClient(
+        harness, train_time_s=train_time_s, save_delay_s=save_delay_s
+    )
     # When resuming, the initial sampler weights correspond to iteration start_batch.
     training_client.version = start_batch
 
@@ -342,6 +350,7 @@ async def _run_async_training(
             service_client=cast(tinker.ServiceClient, None),
             log_path=str(tmp_path),
             save_every=0,
+            rolling_save_every=rolling_save_every,
             store=ml_logger.store,
         )
         t_start = time.monotonic()
@@ -719,7 +728,8 @@ class TestAsyncStalenessTorture:
                 )
             )
 
-        for depth in (1, 3):
+        # None exercises the documented default, min(1, max_steps_off_policy) = 1.
+        for depth, expected in ((None, 1), (1, 1), (3, 3)):
             result = run(depth)
             staleness = [v for vs in _staleness_by_problem(result).values() for v in vs]
             assert max(staleness) <= max_steps_off_policy
@@ -731,10 +741,76 @@ class TestAsyncStalenessTorture:
                 if trained_step >= 4
             ]
             mean_staleness = sum(steady) / len(steady)
-            assert depth - 1 <= mean_staleness <= depth + 0.5, (
+            assert expected - 1 <= mean_staleness <= expected + 0.5, (
                 f"depth={depth}: steady-state mean staleness {mean_staleness:.2f} "
-                f"should track the pipeline depth"
+                f"should track the pipeline depth ({expected})"
             )
+
+    def test_depth_zero_is_synchronous_even_with_generous_bound(self, tmp_path):
+        """pipeline_depth=0 must be exactly on-policy regardless of K."""
+        latencies = [0.01, 0.05, 0.01, 0.05] * 4
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                latencies,
+                groups_per_batch=4,
+                max_steps_off_policy=3,
+                pipeline_depth=0,
+            )
+        )
+        staleness = _staleness_by_problem(result)
+        assert sorted(staleness.keys()) == list(range(len(latencies)))
+        assert all(v == 0 for values in staleness.values() for v in values)
+
+    def test_no_rollouts_admitted_after_final_training_iteration(self, tmp_path):
+        """After the last iteration's slots are released, admission must already
+        be stopped: otherwise, during the awaits that follow (e.g. resolving a
+        pending rolling checkpoint), freed workers would start rollouts on the
+        final published weights that nothing will ever train on."""
+        groups_per_batch = 3
+        n_batches = 4
+        extra = 3  # keep workers hungry so they are blocked in acquire_slot at the end
+        latencies = [0.01] * ((groups_per_batch + extra) * n_batches)
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                latencies,
+                groups_per_batch=groups_per_batch,
+                max_steps_off_policy=1,
+                extra_groups_per_batch=extra,
+                # A pending, genuinely-slow rolling checkpoint creates an await
+                # window between the final slot release and the loop's exit.
+                rolling_save_every=1,
+                save_delay_s=0.1,
+                timeout_s=30.0,
+            )
+        )
+        assert n_batches not in result.harness.sampled_versions, (
+            "rollouts were started on the final published weights; admission must "
+            "stop before the post-training awaits on the last iteration"
+        )
+
+    def test_stall_warning_fires_while_waiting_for_stragglers(self, tmp_path, monkeypatch, caplog):
+        """While blocked on a deadline straggler, the loop logs periodic warnings
+        (a hung rollout must be a diagnosable stall, not a silent one)."""
+        import logging
+
+        from tinker_cookbook.rl import train as train_module
+
+        monkeypatch.setattr(train_module, "_STRAGGLER_WARNING_INTERVAL_S", 0.05)
+        latencies = [0.01, 0.01, 0.01, 0.5] * 4
+        with caplog.at_level(logging.WARNING, logger="tinker_cookbook.rl.train"):
+            result = asyncio.run(
+                _run_async_training(
+                    tmp_path,
+                    latencies,
+                    groups_per_batch=4,
+                    max_steps_off_policy=1,
+                    pipeline_depth=1,
+                )
+            )
+        assert sorted(_staleness_by_problem(result).keys()) == list(range(len(latencies)))
+        assert any("waiting for rollouts" in r.message for r in caplog.records)
 
     def test_pipeline_depth_deeper_than_bound_raises(self, tmp_path):
         from tinker_cookbook.exceptions import ConfigurationError
