@@ -172,7 +172,7 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         """
         return super().build_generation_prompt(self._normalize_messages(messages), *args, **kwargs)  # type: ignore[arg-type]
 
-    def build_supervised_example_with_metadata(
+    def _build_supervised_example_impl(
         self,
         messages: list[Message],
         *args: object,
@@ -189,7 +189,7 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             SupervisedExample: The tokenized model input, per-token weight tensor,
                 and content byte count of the loss-weighted messages.
         """
-        return super().build_supervised_example_with_metadata(
+        return super()._build_supervised_example_impl(
             self._normalize_messages(messages),
             *args,  # type: ignore[arg-type]
             **kwargs,  # type: ignore[arg-type]

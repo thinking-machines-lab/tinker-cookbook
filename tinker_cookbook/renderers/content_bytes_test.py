@@ -22,6 +22,7 @@ from tinker_cookbook.renderers import (
     get_renderer,
 )
 from tinker_cookbook.renderers.base import message_content_byte_count
+from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -179,7 +180,7 @@ def test_legacy_only_override_falls_back_to_none():
 
 def test_both_entry_points_agree_for_builtin_renderers():
     """The legacy tuple API and the metadata API must return identical
-    tokens/weights for renderers that override the metadata method."""
+    tokens/weights for renderers that override the impl hook."""
     for name, tokenizer in [("qwen3", _qwen3_tokenizer()), ("kimi_k2", _kimi_tokenizer())]:
         renderer: Renderer = get_renderer(name, tokenizer)
         convo = _simple_convo()
@@ -187,3 +188,50 @@ def test_both_entry_points_agree_for_builtin_renderers():
         example = renderer.build_supervised_example_with_metadata(convo)
         assert model_input.to_ints() == example.model_input.to_ints(), name
         assert torch.equal(weights, example.weights), name
+
+
+class _LegacyKimiSubclass(KimiK2Renderer):
+    """Legacy override layered on a renderer that itself overrides the impl
+    hook -- the metadata dispatcher must honor the MORE DERIVED legacy
+    override, not silently route around it to KimiK2's impl."""
+
+    def build_supervised_example(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+    ) -> tuple[tinker.ModelInput, torch.Tensor]:
+        messages = [Message(role="system", content="CUSTOM PREFIX")] + list(messages)
+        return super().build_supervised_example(messages, train_on_what=train_on_what)
+
+
+def test_legacy_override_of_impl_overriding_renderer_is_honored():
+    """Both entry points must return the customized tokens (with the injected
+    system message), and the metadata path reports no content bytes."""
+    tokenizer = _kimi_tokenizer()
+    renderer = _LegacyKimiSubclass(tokenizer)
+    convo = _simple_convo()
+
+    model_input, weights = renderer.build_supervised_example(convo)
+    example = renderer.build_supervised_example_with_metadata(convo)
+    assert "CUSTOM PREFIX" in tokenizer.decode(model_input.to_ints())
+    assert example.model_input.to_ints() == model_input.to_ints()
+    assert torch.equal(example.weights, weights)
+    assert example.trained_content_bytes is None
+
+
+class _ImplOverridingRenderer(Qwen3Renderer):
+    """The going-forward pattern: customize via the impl hook and keep
+    content-byte reporting on both entry points."""
+
+    def _build_supervised_example_impl(self, messages, train_on_what):  # type: ignore[override]
+        messages = [Message(role="system", content="sys")] + list(messages)
+        return super()._build_supervised_example_impl(messages, train_on_what)
+
+
+def test_impl_override_reports_content_bytes_on_both_entry_points():
+    renderer = _ImplOverridingRenderer(_qwen3_tokenizer())
+    convo = _simple_convo()
+    example = renderer.build_supervised_example_with_metadata(convo)
+    model_input, _ = renderer.build_supervised_example(convo)
+    assert example.model_input.to_ints() == model_input.to_ints()
+    assert example.trained_content_bytes == RESPONSE_BYTES

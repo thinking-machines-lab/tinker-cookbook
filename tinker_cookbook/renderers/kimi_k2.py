@@ -406,7 +406,7 @@ class KimiK2Renderer(Renderer):
 
         return supervised_examples
 
-    def build_supervised_example_with_metadata(
+    def _build_supervised_example_impl(
         self,
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,

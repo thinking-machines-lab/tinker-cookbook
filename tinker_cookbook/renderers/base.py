@@ -22,6 +22,7 @@ from typing import (
     Protocol,
     TypedDict,
     Union,
+    final,
 )
 
 import pydantic
@@ -1222,6 +1223,19 @@ class TrainOnWhat(StrEnum):
     CUSTOMIZED = "customized"
 
 
+def _mro_definer_index(cls: type, method_name: str) -> int:
+    """Index in ``cls.__mro__`` of the class that provides ``method_name``.
+
+    Used to decide, per class, whether a legacy ``build_supervised_example``
+    override or a ``_build_supervised_example_impl`` override is more derived
+    (a smaller index wins the dispatch).
+    """
+    for index, klass in enumerate(cls.__mro__):
+        if method_name in vars(klass):
+            return index
+    raise AttributeError(f"{cls.__name__} has no method {method_name!r}")
+
+
 def _unpickle_renderer(
     renderer_name: str, model_name: str, has_image_processor: bool
 ) -> "Renderer":
@@ -1650,9 +1664,9 @@ class Renderer(ABC):
         Build tokens and per-token weights for supervised fine-tuning.
 
         This default implementation concatenates rendered messages in order. Override
-        :meth:`build_supervised_example_with_metadata` if your build_generation_prompt
-        does anything that breaks the simple concatenation assumption—for example, if
-        it strips thinking blocks from history (like Qwen3Renderer), injects default
+        :meth:`_build_supervised_example_impl` if your build_generation_prompt does
+        anything that breaks the simple concatenation assumption—for example, if it
+        strips thinking blocks from history (like Qwen3Renderer), injects default
         system prompts (like KimiK2Renderer), or otherwise modifies the token sequence.
         (Overriding this method still works and is supported for backward
         compatibility, but such renderers won't report content bytes for the
@@ -1678,17 +1692,13 @@ class Renderer(ABC):
                 tuple where weights is a 1-D float tensor with the same length
                 as the total number of tokens.
         """
-        if (
-            type(self).build_supervised_example_with_metadata
-            is not Renderer.build_supervised_example_with_metadata
-        ):
-            example = self.build_supervised_example_with_metadata(
-                messages, train_on_what=train_on_what
-            )
-            return example.model_input, example.weights
+        # Calling the impl chain directly (rather than the metadata dispatcher)
+        # makes super().build_supervised_example() from a legacy override run
+        # the parent's implementation, exactly as before this method existed.
         example = self._build_supervised_example_impl(messages, train_on_what)
         return example.model_input, example.weights
 
+    @final
     def build_supervised_example_with_metadata(
         self,
         messages: list[Message],
@@ -1700,8 +1710,15 @@ class Renderer(ABC):
         Same tokens and weights as :meth:`build_supervised_example`, plus
         ``trained_content_bytes``: the UTF-8 byte count of the semantic content
         of the loss-weighted messages, used as the bits-per-byte denominator.
-        Renderers that customize supervised-example construction should
-        override this method rather than :meth:`build_supervised_example`.
+
+        This method is a final dispatcher; renderers customize supervised
+        example construction by overriding :meth:`_build_supervised_example_impl`
+        (or, for pre-existing code, :meth:`build_supervised_example`). When a
+        subclass overrides ``build_supervised_example`` at a point in the MRO
+        more derived than any ``_build_supervised_example_impl`` override, that
+        legacy override is honored -- its tokens and weights are returned with
+        ``trained_content_bytes=None`` -- so this method always agrees with
+        :meth:`build_supervised_example` about the tokens.
 
         Args:
             messages (list[Message]): A list of messages to render.
@@ -1710,12 +1727,16 @@ class Renderer(ABC):
 
         Returns:
             SupervisedExample: The tokenized example with per-token weights and
-                ``trained_content_bytes`` (``None`` if this renderer does not
-                report content bytes).
+                ``trained_content_bytes`` (``None`` if the resolved
+                implementation does not report content bytes).
         """
-        if type(self).build_supervised_example is not Renderer.build_supervised_example:
-            # Subclass predates this method and overrides build_supervised_example
-            # only: use its tokens/weights and skip content-byte accounting.
+        cls = type(self)
+        legacy_index = _mro_definer_index(cls, "build_supervised_example")
+        impl_index = _mro_definer_index(cls, "_build_supervised_example_impl")
+        if cls.__mro__[legacy_index] is not Renderer and legacy_index < impl_index:
+            # A legacy build_supervised_example override is more derived than
+            # any impl override: honor it so both entry points return the same
+            # tokens. Content bytes are unavailable on that path.
             model_input, weights = self.build_supervised_example(
                 messages, train_on_what=train_on_what
             )
@@ -1727,7 +1748,15 @@ class Renderer(ABC):
         messages: list[Message],
         train_on_what: TrainOnWhat,
     ) -> SupervisedExample:
-        """Default supervised-example construction shared by the two public entry points."""
+        """Supervised-example construction shared by the two public entry points.
+
+        This is the single override point for renderers that customize
+        supervised example construction (like the protected rendering hooks,
+        e.g. ``_render_tool_calls``): both :meth:`build_supervised_example`
+        and :meth:`build_supervised_example_with_metadata` route here, so an
+        override automatically keeps the two public entry points consistent
+        and reports content bytes for the bits-per-byte metric.
+        """
         # Warn if training on multiple assistant messages with a renderer that doesn't
         # satisfy the extension property. In that case, each assistant message sees a
         # different context prefix, so they should be trained as separate examples.

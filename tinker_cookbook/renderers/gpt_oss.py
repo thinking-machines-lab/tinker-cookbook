@@ -437,7 +437,7 @@ class GptOssRenderer(Renderer):
             messages = [system_msg] + list(messages)
         return super().build_generation_prompt(messages, role, prefill)
 
-    def build_supervised_example_with_metadata(
+    def _build_supervised_example_impl(
         self,
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
@@ -456,7 +456,7 @@ class GptOssRenderer(Renderer):
         system_msg = self._get_system_message()
         if system_msg:
             messages = [system_msg] + list(messages)
-        return super().build_supervised_example_with_metadata(messages, train_on_what)
+        return super()._build_supervised_example_impl(messages, train_on_what)
 
     @property
     def _return_token(self) -> int:
