@@ -8,8 +8,8 @@ name: ghstack land
 #                          anyway; for a regular PR it does an admin squash
 #                          merge. A reason is mandatory.
 #
-# Landing pushes to `main` (a protected branch) and must be able to trigger the
-# normal push CI, so the default `GITHUB_TOKEN` is not enough. Configure a
+# Landing pushes to the repo's default branch (a protected branch) and must be
+# able to trigger the normal push CI, so the default `GITHUB_TOKEN` is not enough. Configure a
 # GitHub App with `contents: write` + `pull_requests: write` that is allowed to
 # bypass branch protection, and store its credentials as repo secrets:
 #   BOT_APP_ID           the App's id
