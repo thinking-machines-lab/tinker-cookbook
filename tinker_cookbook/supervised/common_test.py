@@ -156,6 +156,20 @@ class _FakeTokenizer:
         )
 
 
+class _MethodOnlySpecialTokenizer:
+    """Tokenizer that exposes special tokens by method, not ``all_special_ids``."""
+
+    def __init__(self, vocab: dict[int, str], special_ids: set[int]):
+        self.vocab = vocab
+        self._special_ids = special_ids
+
+    def decode(self, ids: list[int], skip_special_tokens: bool = False) -> str:
+        return "".join(self.vocab[i] for i in ids)
+
+    def is_special_token(self, token_id: int) -> bool:
+        return token_id in self._special_ids
+
+
 def _fake_tokenizer(vocab: dict[int, str], special_ids: set[int] | None = None) -> Tokenizer:
     """Build a `_FakeTokenizer` typed as `Tokenizer` for the BPB helpers."""
     return cast(Tokenizer, _FakeTokenizer(vocab, special_ids))
@@ -221,6 +235,17 @@ def test_compute_bpb_excludes_special_tokens_from_both_sides():
     bpb = compute_bpb([logprobs], [weights], [targets], tok)
     # Only token 1 ("hi") counts: 1 nat over 2 bytes. The special token's -5.0
     # nats are dropped along with its (zero) bytes.
+    expected = 1.0 / (math.log(2) * len("hi"))
+    assert math.isclose(bpb, expected, rel_tol=1e-6)
+
+
+def test_compute_bpb_excludes_method_only_special_tokens():
+    """Some tokenizers expose special/control IDs via an ``is_special_token`` method."""
+    tok = cast(Tokenizer, _MethodOnlySpecialTokenizer({1: "hi", 99: "<|end|>"}, {99}))
+    logprobs = _td([-1.0, -5.0], "float32")
+    weights = _td([1.0, 1.0], "float32")
+    targets = _td([1, 99], "int64")
+    bpb = compute_bpb([logprobs], [weights], [targets], tok)
     expected = 1.0 / (math.log(2) * len("hi"))
     assert math.isclose(bpb, expected, rel_tol=1e-6)
 
