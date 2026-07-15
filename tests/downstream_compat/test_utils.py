@@ -47,7 +47,15 @@ class TestLoggerHierarchy:
 
         assert_params(
             setup_logging,
-            ["log_dir", "wandb_project", "wandb_name", "config", "do_configure_logging_module"],
+            [
+                "log_dir",
+                "wandb_project",
+                "wandb_name",
+                "config",
+                "do_configure_logging_module",
+                "hf_dataset_repo",
+                "hf_dataset_private",
+            ],
         )
 
     def test_configure_logging_module_signature(self):
