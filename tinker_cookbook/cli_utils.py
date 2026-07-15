@@ -18,10 +18,12 @@ def model_name_from_argv(argv: list[str], default: str) -> str:
     otherwise a model_name override trains with the default model's renderer
     and tokenizer.
     """
+    model_name = default
+    # Last occurrence wins, matching chz's argv precedence.
     for arg in argv:
         if arg.startswith("model_name="):
-            return arg.removeprefix("model_name=")
-    return default
+            model_name = arg.removeprefix("model_name=")
+    return model_name
 
 
 def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
