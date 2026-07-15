@@ -33,18 +33,34 @@ _DEFAULT_EVAL_PREFIXES: tuple[str, ...] = ("eval", "eval_store", "")
 
 @dataclass(frozen=True)
 class RunInfo:
-    """Metadata about a discovered training run."""
+    """Metadata about a discovered training run.
+
+    Created by :meth:`RunRegistry.refresh` during directory scanning.
+    Serialized to JSON by the ``/api/runs`` endpoint.
+    """
 
     run_id: str
+    """Directory name used as the run identifier."""
     prefix: str
+    """Storage path prefix (e.g., local path or ``s3://bucket/path``)."""
     has_config: bool
+    """Whether ``config.json`` exists in the run directory."""
     has_metrics: bool
+    """Whether ``metrics.jsonl`` exists."""
     has_checkpoints: bool
+    """Whether ``checkpoints.jsonl`` exists."""
     has_timing: bool
+    """Whether ``timing_spans.jsonl`` exists."""
     iteration_count: int
+    """Number of ``iteration_NNNNNN/`` directories found."""
     status: Status
+    """``'running'`` if files modified within 2 minutes, ``'completed'`` if
+    a final checkpoint exists, ``'idle'`` otherwise."""
     last_updated: float | None
+    """Unix timestamp of the most recently modified file, or ``None``."""
     training_type: TrainingType | None
+    """``'rl'`` if config has ``loss_fn``, ``'dpo'`` if has ``dpo_beta``,
+    ``'sl'`` otherwise. ``None`` if no config."""
 
 
 class RunRegistry:

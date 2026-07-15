@@ -57,6 +57,12 @@ class IncrementalReader:
             return self._total_read
 
     @property
+    def latest(self) -> dict[str, Any] | None:
+        """The most recent record, or ``None`` if empty."""
+        with self._lock:
+            return self._records[-1] if self._records else None
+
+    @property
     def known_keys(self) -> set[str]:
         """All metric keys seen (excluding 'step')."""
         with self._lock:
