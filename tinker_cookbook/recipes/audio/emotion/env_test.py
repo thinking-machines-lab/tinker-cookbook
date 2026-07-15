@@ -97,7 +97,9 @@ def test_load_clips_resolves_paths_and_shuffles_deterministically(tmp_path: Path
 
 
 def test_prompt_messages_carries_instruction_and_audio_pointer() -> None:
-    chat = pytest.importorskip("tml_renderers.chat")
+    pytest.importorskip("tml_renderers.chat")
+    from tml_renderers import chat  # pyright: ignore[reportMissingImports]
+
     clip = _clip()
     messages = prompt_messages(clip)
     assert len(messages) == 2

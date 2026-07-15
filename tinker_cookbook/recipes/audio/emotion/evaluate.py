@@ -37,8 +37,9 @@ from typing import cast
 import chz
 import tinker
 
-from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
+from tinker_cookbook.recipes.audio.data import audio_renderer
 from tinker_cookbook.recipes.audio.emotion.env import (
     DEFAULT_DATA_DIR,
     STYLES,
@@ -48,8 +49,6 @@ from tinker_cookbook.recipes.audio.emotion.env import (
     score_response,
 )
 from tinker_cookbook.recipes.audio.grading import corpus_wer, parse_response_text
-from tinker_cookbook.renderers import get_renderer
-from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +99,7 @@ class ExpressoEvaluator(SamplingClientEvaluator):
 
     def __init__(self, config: ExpressoEvaluatorBuilder):
         self.config = config
-        if not model_info.get_model_attributes(config.model_name).is_audio_in:
-            raise ValueError(f"Audio input is not supported by {config.model_name!r}; use Inkling.")
-        self.renderer = get_renderer(
-            model_info.get_recommended_renderer_name(config.model_name),
-            get_tokenizer(config.model_name),
-        )
+        self.renderer = audio_renderer(config.model_name)
         self.eval_clips = list(
             load_clips(config.data_dir, config.split, config.n_eval, config.seed)
         )

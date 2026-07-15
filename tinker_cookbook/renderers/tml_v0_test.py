@@ -145,7 +145,7 @@ def test_cookbook_dicts_are_converted_with_tool_calls_for_openai_message(
         ),
     ]
 
-    rendered = tml_v0._messages_to_render_input(messages)
+    rendered = cast(Any, tml_v0._messages_to_render_input(messages))
 
     assert all(isinstance(message, mock_tml_renderers_chat.OpenAIMessage) for message in rendered)
     source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
@@ -249,8 +249,8 @@ def test_native_tml_renderers_inputs_pass_through(
     ]
     message_list = mock_tml_renderers_chat.MessageList()
 
-    assert tml_v0._messages_to_render_input(messages) is messages
-    assert tml_v0._messages_to_render_input(message_list) is message_list
+    assert tml_v0._messages_to_render_input(cast(Any, messages)) is messages
+    assert tml_v0._messages_to_render_input(cast(Any, message_list)) is message_list
 
 
 def test_selective_sft_masking_sets_zero_training_metadata(
@@ -263,7 +263,9 @@ def test_selective_sft_masking_sets_zero_training_metadata(
         Message(role="assistant", content="Two."),
     ]
 
-    rendered = tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
+    rendered = cast(
+        Any, tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
+    )
 
     assert rendered[1].message_metadata.training_metadata.weight == 0.0
     assert rendered[3].message_metadata is None
@@ -278,7 +280,7 @@ def test_customized_sft_masking_respects_trainable_flag(
         Message(role="assistant", content="Train.", trainable=True),
     ]
 
-    rendered = tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.CUSTOMIZED)
+    rendered = cast(Any, tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.CUSTOMIZED))
 
     assert rendered[1].message_metadata.training_metadata.weight == 0.0
     assert rendered[2].message_metadata is None
@@ -289,7 +291,7 @@ def test_selective_sft_rejects_native_tml_renderers_inputs(
 ) -> None:
     with pytest.raises(NotImplementedError, match="selective train_on_what"):
         tml_v0._cookbook_messages_to_sft_input(
-            [mock_tml_renderers_chat.OpenAIMessage("assistant")],
+            cast(Any, [mock_tml_renderers_chat.OpenAIMessage("assistant")]),
             TrainOnWhat.LAST_ASSISTANT_MESSAGE,
         )
 

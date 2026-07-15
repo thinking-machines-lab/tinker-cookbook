@@ -301,7 +301,9 @@ def _validate_effort(effort: float) -> None:
         raise ValueError(f"thinking effort must be a finite number in [0, 1), got {effort}")
 
 
-def _ensure_model_end_sampling(messages: list[tml_chat.Message]) -> list[tml_chat.Message]:
+def _ensure_model_end_sampling(
+    messages: list[tml_chat.Message],
+) -> list[tml_chat.Message]:
     """Terminate every model turn with ``ModelEndSampling``.
 
     ``ModelEndSampling`` is the stop-token supervision: without it the model
@@ -444,7 +446,7 @@ class TmlV0Renderer(Renderer):
 
     def build_generation_prompt(
         self,
-        messages: list[Message],
+        messages: list[Message] | TmlRenderInput,
         role: Role = "assistant",
         prefill: str | None = None,
         effort: float = DEFAULT_EFFORT,
@@ -476,7 +478,7 @@ class TmlV0Renderer(Renderer):
 
     def build_supervised_examples(
         self,
-        messages: list[Message],
+        messages: list[Message] | TmlRenderInput,
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
         effort: float = DEFAULT_EFFORT,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
@@ -495,7 +497,7 @@ class TmlV0Renderer(Renderer):
 
     def build_supervised_example(
         self,
-        messages: list[Message],
+        messages: list[Message] | TmlRenderInput,
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
         effort: float = DEFAULT_EFFORT,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:

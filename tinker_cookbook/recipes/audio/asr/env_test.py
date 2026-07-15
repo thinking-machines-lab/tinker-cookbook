@@ -81,7 +81,9 @@ def _model_response_tokens(tokenizer: Any, text: str) -> list[int]:
 
 
 def test_asr_messages_are_native_public_types(tmp_path: Path) -> None:
-    chat = _require_tml_renderers()
+    _require_tml_renderers()
+    from tml_renderers import chat  # pyright: ignore[reportMissingImports]
+
     from tinker_cookbook.recipes.audio.data import asr_messages
 
     messages = asr_messages(_test_clip(tmp_path))
@@ -212,7 +214,10 @@ def test_parse_response_text_handles_mid_character_truncation() -> None:
     assert len(crab) > 1, "multi-byte char should span several byte-level tokens"
 
     hyp, termination = parse_response_text(renderer, crab[:-1])
-    assert hyp == ""
+    # Depending on the tml-renderers build, decoding a mid-character cut either
+    # raises (graded as "") or decodes lossily to U+FFFD; neither may crash and
+    # neither yields transcript text.
+    assert hyp.strip("�") == ""
     assert termination == ParseTermination.MALFORMED
 
 

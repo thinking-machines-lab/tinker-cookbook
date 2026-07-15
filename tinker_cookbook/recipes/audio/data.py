@@ -20,12 +20,32 @@ from typing import TYPE_CHECKING, TypedDict
 import numpy as np
 import tinker
 
-from tinker_cookbook.renderers import Renderer
+from tinker_cookbook import model_info
+from tinker_cookbook.renderers import get_renderer
+from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import SupervisedDataset
 
 if TYPE_CHECKING:
     from tml_renderers import chat  # pyright: ignore[reportMissingImports]
+
+
+def audio_renderer(model_name: str) -> TmlV0Renderer:
+    """Gate on audio support and build the Inkling renderer.
+
+    Returned as ``TmlV0Renderer`` (not the base ``Renderer``) because the audio
+    recipes feed it native ``tml_renderers.chat.Message`` conversations.
+    """
+    if not model_info.get_model_attributes(model_name).is_audio_in:
+        raise ValueError(f"Audio input is not supported by {model_name!r}; use Inkling.")
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    renderer = get_renderer(
+        model_info.get_recommended_renderer_name(model_name), get_tokenizer(model_name)
+    )
+    assert isinstance(renderer, TmlV0Renderer)
+    return renderer
+
 
 ASR_INSTRUCT_PROMPT = (
     "Transcribe the speech in the audio. Respond with only the transcription "
@@ -77,7 +97,7 @@ def asr_messages(clip: Clip) -> list[chat.Message]:
     ]
 
 
-def clip_datum(renderer: Renderer, clip: Clip, max_length: int) -> tinker.Datum:
+def clip_datum(renderer: TmlV0Renderer, clip: Clip, max_length: int) -> tinker.Datum:
     """Render one clip's conversation into a supervised datum."""
     # Renderer returns unshifted (ModelInput, weights); the helper does the shift.
     model_input, weights = renderer.build_supervised_example(asr_messages(clip))

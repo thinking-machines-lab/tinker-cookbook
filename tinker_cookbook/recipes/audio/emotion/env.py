@@ -33,10 +33,11 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 import chz
 import tinker
 
-from tinker_cookbook import model_info
 from tinker_cookbook.completers import StopCondition
+from tinker_cookbook.recipes.audio.data import audio_renderer
 from tinker_cookbook.recipes.audio.grading import clip_wer, parse_response_text
-from tinker_cookbook.renderers import Renderer, get_renderer
+from tinker_cookbook.renderers import Renderer
+from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 from tinker_cookbook.rl.types import (
     Action,
     ActionExtra,
@@ -47,7 +48,6 @@ from tinker_cookbook.rl.types import (
     RLDatasetBuilder,
     StepResult,
 )
-from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
 
 if TYPE_CHECKING:
@@ -225,7 +225,7 @@ class ExpressoGroupBuilder(EnvGroupBuilder):
     """Builds ``num_envs`` rollouts of the same clip (the GRPO group)."""
 
     clip: Clip
-    renderer: Renderer
+    renderer: TmlV0Renderer
     num_envs: int
     emotion_coef: float
     wer_coef: float
@@ -258,7 +258,7 @@ class ExpressoRLDataset(RLDataset):
         clips: Sequence[Clip],
         batch_size: int,
         group_size: int,
-        renderer: Renderer,
+        renderer: TmlV0Renderer,
         emotion_coef: float,
         wer_coef: float,
     ):
@@ -301,12 +301,7 @@ class ExpressoRLDatasetBuilder(RLDatasetBuilder):
     split: Split = "rl_train"
 
     async def __call__(self) -> tuple[ExpressoRLDataset, None]:
-        if not model_info.get_model_attributes(self.model_name).is_audio_in:
-            raise ValueError(f"Audio input is not supported by {self.model_name!r}; use Inkling.")
-        renderer = get_renderer(
-            model_info.get_recommended_renderer_name(self.model_name),
-            get_tokenizer(self.model_name),
-        )
+        renderer = audio_renderer(self.model_name)
         clips = load_clips(self.data_dir, self.split, self.n_train, self.seed)
         # Test metrics come from the ExpressoEvaluator (corpus WER, saved
         # rollouts), not from a test RLDataset.

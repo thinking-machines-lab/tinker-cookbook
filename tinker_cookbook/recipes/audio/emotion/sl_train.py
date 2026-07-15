@@ -30,6 +30,7 @@ import chz
 import tinker
 
 from tinker_cookbook import cli_utils, model_info
+from tinker_cookbook.recipes.audio.data import audio_renderer
 from tinker_cookbook.recipes.audio.emotion.env import (
     DEFAULT_DATA_DIR,
     Clip,
@@ -37,11 +38,10 @@ from tinker_cookbook.recipes.audio.emotion.env import (
     prompt_messages,
 )
 from tinker_cookbook.recipes.audio.emotion.evaluate import ExpressoEvaluatorBuilder
-from tinker_cookbook.renderers import Renderer, get_renderer
+from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
-from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ def sft_messages(clip: Clip) -> list[chat.Message]:
     ]
 
 
-def _clip_datum(renderer: Renderer, clip: Clip, max_length: int) -> tinker.Datum:
+def _clip_datum(renderer: TmlV0Renderer, clip: Clip, max_length: int) -> tinker.Datum:
     model_input, weights = renderer.build_supervised_example(sft_messages(clip))
     return datum_from_model_input_weights(model_input, weights, max_length=max_length)
 
@@ -100,12 +100,7 @@ class ExpressoSFTDatasetBuilder(SupervisedDatasetBuilder):
     seed: int
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        if not model_info.get_model_attributes(self.model_name).is_audio_in:
-            raise ValueError(f"Audio input is not supported by {self.model_name!r}; use Inkling.")
-        renderer = get_renderer(
-            model_info.get_recommended_renderer_name(self.model_name),
-            get_tokenizer(self.model_name),
-        )
+        renderer = audio_renderer(self.model_name)
         train_clips = load_clips(self.data_dir, "sft_train", self.n_train, self.seed)
         train_ds = ExpressoSFTDataset(
             [_clip_datum(renderer, c, self.max_length) for c in train_clips], self.batch_size

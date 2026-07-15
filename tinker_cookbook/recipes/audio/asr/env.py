@@ -24,12 +24,12 @@ import datasets
 import numpy as np
 import tinker
 
-from tinker_cookbook import model_info
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.recipes.audio.data import (
     AudioASRDataset,
     Clip,
+    audio_renderer,
     cache_wav,
     clip_datum,
     prompt_messages,
@@ -40,7 +40,8 @@ from tinker_cookbook.recipes.audio.grading import (
     normalize_text,
     parse_response_text,
 )
-from tinker_cookbook.renderers import ParseTermination, Renderer, get_renderer
+from tinker_cookbook.renderers import ParseTermination
+from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 from tinker_cookbook.rl.types import (
     Action,
     ActionExtra,
@@ -52,18 +53,9 @@ from tinker_cookbook.rl.types import (
     StepResult,
 )
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
-from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import logtree
 
 logger = logging.getLogger(__name__)
-
-
-def _audio_renderer(model_name: str) -> Renderer:
-    if not model_info.get_model_attributes(model_name).is_audio_in:
-        raise ValueError(f"Audio input is not supported by {model_name!r}; use Inkling.")
-    return get_renderer(
-        model_info.get_recommended_renderer_name(model_name), get_tokenizer(model_name)
-    )
 
 
 @functools.cache
@@ -109,7 +101,7 @@ class AudioASRDatasetBuilder(SupervisedDatasetBuilder):
     audio_cache_dir: str
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        renderer = _audio_renderer(self.model_name)
+        renderer = audio_renderer(self.model_name)
         train_clips = load_clips(
             self.audio_cache_dir, "train.500", self.n_train, self.seed, self.shuffle_buffer_size
         )
@@ -134,7 +126,7 @@ class WEREvaluator(SamplingClientEvaluator):
 
     def __init__(self, config: WEREvaluatorBuilder):
         self.config = config
-        self.renderer = _audio_renderer(config.model_name)
+        self.renderer = audio_renderer(config.model_name)
         self.eval_clips = list(
             load_clips(
                 config.audio_cache_dir,
@@ -209,7 +201,7 @@ class WEREvaluatorBuilder:
 class AudioASREnv(Env):
     """Single-turn env: hear a clip, emit a transcript, get -WER as reward."""
 
-    def __init__(self, clip: Clip, renderer: Renderer):
+    def __init__(self, clip: Clip, renderer: TmlV0Renderer):
         self.clip = clip
         self.renderer = renderer
 
@@ -257,7 +249,7 @@ class AudioASRGroupBuilder(EnvGroupBuilder):
     """group_size rollouts of the same clip; GRPO centers rewards within it."""
 
     clip: Clip
-    renderer: Renderer
+    renderer: TmlV0Renderer
     group_size: int
 
     async def make_envs(self) -> Sequence[Env]:
@@ -273,7 +265,7 @@ class AudioASRRLDataset(RLDataset):
     def __init__(
         self,
         clips: Sequence[Clip],
-        renderer: Renderer,
+        renderer: TmlV0Renderer,
         group_size: int,
         groups_per_batch: int,
     ):
@@ -305,7 +297,7 @@ class AudioASRRLDatasetBuilder(RLDatasetBuilder):
     audio_cache_dir: str
 
     async def __call__(self) -> tuple[AudioASRRLDataset, None]:
-        renderer = _audio_renderer(self.model_name)
+        renderer = audio_renderer(self.model_name)
         clips = load_clips(
             self.audio_cache_dir, "train.500", self.n_train, self.seed, self.shuffle_buffer_size
         )

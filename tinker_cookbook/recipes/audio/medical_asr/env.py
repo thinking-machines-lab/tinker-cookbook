@@ -32,11 +32,11 @@ import datasets
 import numpy as np
 import tinker
 
-from tinker_cookbook import model_info
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.recipes.audio.data import (
     AudioASRDataset,
     Clip,
+    audio_renderer,
     cache_wav,
     clip_datum,
     prompt_messages,
@@ -47,9 +47,8 @@ from tinker_cookbook.recipes.audio.grading import (
     normalize_text,
     parse_response_text,
 )
-from tinker_cookbook.renderers import ParseTermination, Renderer, get_renderer
+from tinker_cookbook.renderers import ParseTermination
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
-from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -57,14 +56,6 @@ _HF_DATASET = "ekacare/eka-medical-asr-evaluation-dataset"
 _HF_CONFIG = "en"
 _HF_SPLIT = "test"
 _TRAIN_FRACTION = 0.8
-
-
-def _audio_renderer(model_name: str) -> Renderer:
-    if not model_info.get_model_attributes(model_name).is_audio_in:
-        raise ValueError(f"Audio input is not supported by {model_name!r}; use Inkling.")
-    return get_renderer(
-        model_info.get_recommended_renderer_name(model_name), get_tokenizer(model_name)
-    )
 
 
 class MedClip(Clip):
@@ -155,7 +146,7 @@ class EkacareASRDatasetBuilder(SupervisedDatasetBuilder):
     audio_cache_dir: str
 
     def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset | None]:
-        renderer = _audio_renderer(self.model_name)
+        renderer = audio_renderer(self.model_name)
         train_clips, eval_clips = load_ekacare_split(self.audio_cache_dir, self.seed)
         train_ds = AudioASRDataset(
             [clip_datum(renderer, c, self.max_length) for c in train_clips], self.batch_size
@@ -256,7 +247,7 @@ class EkacareWEREvaluator(SamplingClientEvaluator):
 
     def __init__(self, config: EkacareWEREvaluatorBuilder):
         self.config = config
-        self.renderer = _audio_renderer(config.model_name)
+        self.renderer = audio_renderer(config.model_name)
         _train, eval_clips = load_ekacare_split(config.audio_cache_dir, config.seed)
         self.eval_clips: list[MedClip] = list(eval_clips)
         # Pre-render eval prompts once; DMel encoding is CPU work.
