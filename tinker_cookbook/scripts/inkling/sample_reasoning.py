@@ -7,7 +7,9 @@ problem 26, for which it also prints the expected answer.
 
     uv run python -m tinker_cookbook.scripts.inkling.sample_reasoning
 
-Override the defaults with, for example, ``efforts=[0.3,0.9]``.
+Override the defaults with, for example, ``efforts=[0.3,0.9]``. The generation
+budget scales with effort; pass ``max_tokens=...`` to pin one budget for every
+effort instead.
 """
 
 from __future__ import annotations
@@ -39,11 +41,25 @@ _EFFORT_NAME_TO_FLOAT = {
 _EFFORT_NAMES_BY_VALUE = {value: name for name, value in _EFFORT_NAME_TO_FLOAT.items()}
 
 
+def _default_max_tokens(effort: float) -> int:
+    """Pick a generation budget that scales with reasoning effort.
+
+    Higher effort generally produces longer reasoning traces, so a budget that
+    is comfortable at medium effort can truncate xhigh responses mid-thought.
+    """
+    if effort < 0.3:
+        return 4096
+    if effort < 0.9:
+        return 8192
+    return 16384
+
+
 @dataclass(frozen=True)
 class SampleResult:
     effort: float
     answer: str
     num_generated_tokens: int
+    max_tokens: int
     termination: ParseTermination
 
 
@@ -78,7 +94,10 @@ class Config:
     )
     model_name: str = chz.field(default="thinkingmachines/Inkling")
     base_url: str | None = None
-    max_tokens: int = 8192
+    max_tokens: int | None = chz.field(
+        default=None,
+        doc="Generation budget for every effort. When None, scales with effort.",
+    )
     temperature: float = 1.0
 
 
@@ -90,11 +109,12 @@ async def _sample_at_effort(
     cfg: Config,
 ) -> SampleResult:
     prompt = renderer.build_generation_prompt(messages, effort=effort)
+    max_tokens = cfg.max_tokens if cfg.max_tokens is not None else _default_max_tokens(effort)
     response = await sampling_client.sample_async(
         prompt=prompt,
         num_samples=1,
         sampling_params=tinker.SamplingParams(
-            max_tokens=cfg.max_tokens,
+            max_tokens=max_tokens,
             temperature=cfg.temperature,
             stop=renderer.get_stop_sequences(),
         ),
@@ -105,6 +125,7 @@ async def _sample_at_effort(
         effort=effort,
         answer=get_text_content(message),
         num_generated_tokens=len(sequence.tokens),
+        max_tokens=max_tokens,
         termination=termination,
     )
 
@@ -136,9 +157,11 @@ async def async_main(cfg: Config) -> None:
     for result in results:
         effort_name = _EFFORT_NAMES_BY_VALUE.get(result.effort, "custom")
         print(f"\nEffort: {effort_name} ({result.effort:g})")
-        print(f"Generated tokens: {result.num_generated_tokens}")
+        print(f"Generated tokens: {result.num_generated_tokens} (max_tokens: {result.max_tokens})")
         print(f"Answer: {result.answer}")
         print(f"Termination: {result.termination.value}")
+        if result.num_generated_tokens >= result.max_tokens:
+            print("Response hit max_tokens; raise it to avoid truncation.")
 
 
 def cli_main(cfg: Config) -> None:
