@@ -7,9 +7,10 @@ from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.math_rl.math_env import Gsm8kDatasetBuilder
 from tinker_cookbook.rl import train
 
+DEFAULT_MODEL_NAME = "Qwen/Qwen3.5-9B-Base"
 
-def build_config_blueprint() -> chz.Blueprint[train.Config]:
-    model_name = "Qwen/Qwen3.5-9B-Base"
+
+def build_config_blueprint(model_name: str = DEFAULT_MODEL_NAME) -> chz.Blueprint[train.Config]:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     builder = Gsm8kDatasetBuilder(
         batch_size=128,
@@ -39,6 +40,8 @@ def main(config: train.Config):
 
 
 if __name__ == "__main__":
-    blueprint = build_config_blueprint()
+    # Resolve model_name first so the renderer and dataset tokenizer follow it.
+    model_name = cli_utils.model_name_from_argv(sys.argv[1:], default=DEFAULT_MODEL_NAME)
+    blueprint = build_config_blueprint(model_name)
     blueprint.make_from_argv(sys.argv[1:])
     main(blueprint.make())
