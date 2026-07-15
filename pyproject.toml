@@ -42,10 +42,19 @@ dev = [
     "ruff>=0.4.0",
     "pyright>=1.1.300",
 ]
+audio = [
+    "jiwer>=3.0.0",
+    "soundfile>=0.12.0",
+]
 math-rl = [
     "math-verify>=0.5.0",
     "pylatexenc>=2.0",
     "sympy>=1.12.0",
+]
+inkling = [
+    "tinker>=0.23.0",
+    "tml-renderers>=0.0.1",
+    "torch>=2.10", # tml_renderers uses libtorch's stable C ABI, added in 2.10
 ]
 modal = [
     "modal>=1.5.1",
@@ -127,6 +136,8 @@ eval = [
 ]
 all = [
     "tinker_cookbook[eval]",
+    "tinker_cookbook[audio]",
+    "tinker_cookbook[inkling]",
     "tinker_cookbook[math-rl]",
     "tinker_cookbook[modal]",
     "tinker_cookbook[multiplayer-rl]",

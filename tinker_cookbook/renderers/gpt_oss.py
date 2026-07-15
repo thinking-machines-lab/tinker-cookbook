@@ -10,6 +10,7 @@ import torch
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
+    UNTERMINATED_TOOL_BLOCK_ERROR,
     ContentPart,
     Message,
     ParseTermination,
@@ -517,6 +518,9 @@ class GptOssRenderer(Renderer):
         assert stop_idx is not None
         str_response = str(self.tokenizer.decode(response[:stop_idx]))
         parts, tool_calls, unparsed = self._parse_harmony_output(str_response)
+        dangling = self._detect_dangling_tool_block(str_response, tool_calls, unparsed)
+        if dangling is not None:
+            unparsed = [*unparsed, dangling]
         content: list[ContentPart] | str = parts if parts else str_response
 
         message: Message = {"role": "assistant", "content": content}
@@ -574,6 +578,32 @@ class GptOssRenderer(Renderer):
                 result["name"] = message["name"]
 
         return result
+
+    @staticmethod
+    def _detect_dangling_tool_block(
+        content: str, tool_calls: list[ToolCall], unparsed: list[UnparsedToolCall]
+    ) -> UnparsedToolCall | None:
+        """Detect a Harmony tool-call header that produced no tool call.
+
+        A ``to=functions.<name>`` recipient header can terminate cleanly (a
+        ``<|return|>`` fired, or the arguments body is empty / the
+        ``<|message|>`` marker never arrived) without ``_parse_harmony_output``
+        producing a ToolCall or UnparsedToolCall for it — the tool-call intent
+        silently degrades to plain text. Compare the number of tool-call
+        headers in the raw text against the parses actually produced.
+        """
+        intents = content.count("to=functions.")
+        if intents <= len(tool_calls) + len(unparsed):
+            return None
+        start = content.rfind("<|start|>")
+        raw_text = content[start:] if start != -1 else content
+        return UnparsedToolCall(
+            raw_text=raw_text,
+            error=(
+                f"{UNTERMINATED_TOOL_BLOCK_ERROR}: 'to=functions.' tool-call header "
+                "without a parsable arguments payload"
+            ),
+        )
 
     def _parse_harmony_output(
         self, content: str

@@ -21,6 +21,7 @@ import json
 import re
 
 from tinker_cookbook.renderers.base import (
+    UNTERMINATED_TOOL_BLOCK_ERROR,
     ImagePart,
     Message,
     ParseTermination,
@@ -181,7 +182,12 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         converted_xml_calls: list[ToolCall] = []
         remaining_unparsed: list[UnparsedToolCall] = []
         for unparsed in message.get("unparsed_tool_calls", []):
-            if "<function=" not in unparsed.raw_text:
+            if (
+                unparsed.error.startswith(UNTERMINATED_TOOL_BLOCK_ERROR)
+                or "<function=" not in unparsed.raw_text
+            ):
+                # Unterminated blocks stay unparsed as-is (the XML converter
+                # would replace the informative error with a generic one).
                 remaining_unparsed.append(unparsed)
                 continue
             parsed = self._parse_qwen3_5_tool_call_xml(unparsed.raw_text)

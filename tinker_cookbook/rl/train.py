@@ -42,9 +42,14 @@ from tinker_cookbook.rl.metrics import (
     compute_sampling_client_metrics,
     incorporate_kl_penalty,
 )
+from tinker_cookbook.rl.rollout_limits import TerminationRewardPolicy
 from tinker_cookbook.rl.rollout_logging import (
     RolloutSummaryExportConfig,
     RolloutSummaryGroup,
+)
+from tinker_cookbook.rl.rollout_presets import (
+    default_rollout_config_for_model,
+    default_rollout_strategy_for_model,
 )
 from tinker_cookbook.rl.rollout_strategy import (
     RolloutStrategy,
@@ -64,7 +69,7 @@ from tinker_cookbook.rl.types import (
     RLDatasetBuilder,
     TrajectoryGroup,
 )
-from tinker_cookbook.tokenizer_utils import Tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
@@ -490,10 +495,23 @@ class Config:
     # Remove groups where all trajectories have identical reward.
     remove_constant_reward_groups: bool = False
     # Tolerance for errors during rollouts (container crashes, sandbox flakes, etc.).
-    # False (default): crash on any error (FailFast).
+    # None (default): the model's default strategy (MinViableGroup for
+    # thinkingmachines/Inkling, FailFast for everything else; see
+    # rollout_presets.default_rollout_strategy_for_model).
+    # False: crash on any error (FailFast).
     # True: retry failed trajectories with default budget (RetryOnFailure(max_retries=3)).
     # RolloutStrategy instance: custom strategy (e.g. RetryOnFailure(max_retries=5)).
-    rollout_error_tolerance: bool | RolloutStrategy = False
+    rollout_error_tolerance: bool | RolloutStrategy | None = None
+    # Stop-reason-keyed reward semantics applied after group grading (e.g.
+    # agentic().termination for grade-then-clamp: limit-stopped trajectories get
+    # min(reward, 0)). None (default) resolves to the model's default
+    # (agentic().termination for thinkingmachines/Inkling, no policy for
+    # everything else; see rollout_presets.default_rollout_config_for_model).
+    # To force no reward adjustment on a model whose default has one, pass
+    # TerminationRewardPolicy(zero_reward_on_limit=False). This is the
+    # trainer-side half of a RolloutConfig; the env-side half is applied where
+    # envs are built (e.g. build_agent_tool_env(rollout_config=...)).
+    termination: TerminationRewardPolicy | None = None
     # Emit async trace events for debugging/profiling.
     enable_trace: bool = False
     # Save a Gantt chart HTML every N iterations (0 = disabled). Requires plotly.
@@ -525,6 +543,32 @@ class Config:
 
     # Maximum number of training iterations. If None, train on the full dataset.
     max_steps: int | None = None
+
+    def effective_termination(self) -> TerminationRewardPolicy | None:
+        """The termination policy this run trains with.
+
+        ``termination=None`` (the default) resolves via
+        :func:`~tinker_cookbook.rl.rollout_presets.default_rollout_config_for_model`,
+        so ``thinkingmachines/Inkling`` gets the agentic grade-then-clamp
+        policy and other models get no reward adjustment.  An explicit
+        policy wins.
+        """
+        if self.termination is not None:
+            return self.termination
+        return default_rollout_config_for_model(self.model_name).termination
+
+    def effective_rollout_strategy(self) -> RolloutStrategy:
+        """The group rollout strategy this run trains with.
+
+        ``rollout_error_tolerance=None`` (the default) resolves via
+        :func:`~tinker_cookbook.rl.rollout_presets.default_rollout_strategy_for_model`
+        (``MinViableGroup`` for ``thinkingmachines/Inkling``, ``FailFast``
+        otherwise).  Explicit values — ``False``, ``True``, or a strategy
+        instance — win over the model default.
+        """
+        if self.rollout_error_tolerance is None:
+            return default_rollout_strategy_for_model(self.model_name)
+        return rollout_strategy_from_config(self.rollout_error_tolerance)
 
 
 @trace.scope
@@ -732,6 +776,7 @@ async def do_sync_training_with_stream_minibatch(
                             do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                             enable_logging=enable_logging,
                             strategy=strategy,
+                            termination=config.effective_termination(),
                         )
                     worker_metrics["time/trajectory_group_worker_loop/total"] = (
                         time.time() - t_start
@@ -1001,6 +1046,7 @@ async def do_async_training(
                     temperature=config.temperature,
                     do_remove_constant_reward_groups=config.remove_constant_reward_groups,
                     strategy=strategy,
+                    termination=config.effective_termination(),
                 )
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             # Ingest error info (safe: same event loop thread)
@@ -1729,6 +1775,7 @@ async def do_sync_training(
                                 do_remove_constant_reward_groups=False,
                                 enable_logging=i < config.num_groups_to_log,
                                 strategy=strategy,
+                                termination=config.effective_termination(),
                             )
                             for i, builder in enumerate(env_group_builders_P)
                         ),
@@ -1915,13 +1962,13 @@ async def main(
             config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
 
-    # Get tokenizer from training client
-    tokenizer = training_client.get_tokenizer()
+    # Get tokenizer.
+    tokenizer = get_tokenizer(config.model_name)
 
     # Create dataset from thunk
     dataset, maybe_test_dataset = await config.dataset_builder()
     # Build rollout strategy and error counter from config
-    strategy = rollout_strategy_from_config(config.rollout_error_tolerance)
+    strategy = config.effective_rollout_strategy()
     error_counter = RolloutErrorCounter() if strategy.catches_group_errors else None
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]

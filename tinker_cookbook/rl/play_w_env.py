@@ -55,7 +55,9 @@ class ManualPolicy(TokenCompleter):
         self.multiline = multiline
         self.show_observation = show_observation
 
-    async def __call__(self, ob: tinker.ModelInput, stop: StopCondition) -> TokensWithLogprobs:
+    async def __call__(
+        self, ob: tinker.ModelInput, stop: StopCondition, *, max_tokens: int | None = None
+    ) -> TokensWithLogprobs:
         if self.show_observation:
             observation_str = self.tokenizer.decode(ob.to_ints())
             print(colored(f"\n--- Step {self.step_count} ---", "green"))

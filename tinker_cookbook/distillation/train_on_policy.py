@@ -42,7 +42,7 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     TrajectoryGroup,
 )
-from tinker_cookbook.tokenizer_utils import Tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import iteration_dir, safezip
@@ -437,8 +437,7 @@ async def main(
             config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
 
-    # Get tokenizer from training client
-    tokenizer = training_client.get_tokenizer()
+    tokenizer = get_tokenizer(config.model_name)
 
     # Create datasets and teacher sampling clients from configs
     datasets = []

@@ -14,11 +14,13 @@ from tinker_cookbook.image_processing_utils import ImageProcessor
 # Types and utilities used by external code
 from tinker_cookbook.renderers.base import (
     # Content part types
+    AudioPart,
     ContentPart,
     ImagePart,
     Message,
     # Streaming types
     MessageDelta,
+    ParseFailureKind,
     ParseTermination,
     # Renderer base
     RenderContext,
@@ -32,8 +34,10 @@ from tinker_cookbook.renderers.base import (
     ToolCall,
     ToolSpec,
     TrainOnWhat,
+    UnparsedToolCall,
     Utf8TokenDecoder,
     # Utility functions
+    classify_parse_failure,
     ensure_text,
     format_content_as_string,
     get_text_content,
@@ -215,6 +219,7 @@ def get_renderer(
     )
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
+    from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
     renderer: Renderer
     if name == "role_colon":
@@ -275,6 +280,8 @@ def get_renderer(
         renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
     elif name == "gpt_oss_high_reasoning":
         renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
+    elif name == "tml_v0":
+        renderer = TmlV0Renderer(tokenizer)
     else:
         raise RendererError(
             f"Unknown renderer: {name}. If this is a custom renderer, please register it via register_renderer()."
@@ -285,15 +292,18 @@ def get_renderer(
 
 __all__ = [
     # Types
+    "AudioPart",
     "ContentPart",
     "ImagePart",
     "Message",
+    "ParseFailureKind",
     "ParseTermination",
     "Role",
     "TextPart",
     "ThinkingPart",
     "ToolCall",
     "ToolSpec",
+    "UnparsedToolCall",
     # Streaming types
     "MessageDelta",
     "StreamingMessageHeader",
@@ -305,6 +315,7 @@ __all__ = [
     "Renderer",
     "TrainOnWhat",
     # Utility functions
+    "classify_parse_failure",
     "ensure_text",
     "format_content_as_string",
     "get_text_content",

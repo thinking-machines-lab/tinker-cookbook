@@ -11,14 +11,16 @@ import tinker
 
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError
+from tinker_cookbook.rl.rollout_limits import TerminationRewardPolicy
+from tinker_cookbook.rl.rollout_runner import run_rollout
 from tinker_cookbook.rl.rollout_strategy import FailFast, RolloutStrategy
 from tinker_cookbook.rl.types import (
-    ActionExtra,
     Env,
     EnvGroupBuilder,
+    Metrics,
+    StopReason,
     Trajectory,
     TrajectoryGroup,
-    Transition,
 )
 from tinker_cookbook.utils import logtree, trace
 from tinker_cookbook.utils.misc_utils import all_same
@@ -157,6 +159,12 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
     the episode terminates.  Env logging (if any) goes into whatever logtree
     scope the caller has set up.
 
+    This is a thin wrapper over the single rollout-loop implementation,
+    :func:`~tinker_cookbook.rl.rollout_runner.run_rollout`, called with no
+    limits and no hooks (the unconfigured loop).  Use
+    ``run_rollout`` directly to configure per-rollout budgets, timeouts, or
+    hooks.
+
     Args:
         policy (TokenCompleter): The token-level policy used to generate
             actions (token sequences) from observations.
@@ -165,7 +173,11 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
 
     Returns:
         Trajectory: The complete sequence of transitions plus the final
-            observation after the episode ends.
+            observation after the episode ends.  If the environment reports
+            :class:`~tinker_cookbook.rl.types.InitialObservationOverflow`
+            (initial prompt already over budget), the trajectory contains a
+            single synthetic transition with empty observation/action and
+            ``stop_reason="max_tokens"``, and no sampling call is made.
 
     Example::
 
@@ -173,31 +185,61 @@ async def do_single_rollout(policy: TokenCompleter, env: Env) -> Trajectory:
         policy = TinkerTokenCompleter(sampling_client, max_tokens=1024)
         trajectory = await do_single_rollout(policy, env)
     """
-    transitions = []
-    async with trace.scope_span("env_initial_observation"):
-        ob, stop_condition = await env.initial_observation()
-    while True:
-        async with trace.scope_span("policy_sample"):
-            ac_with_logprobs = await policy(ob, stop_condition)
-        async with trace.scope_span("env_step"):
-            step_result = await env.step(
-                ac_with_logprobs.tokens,
-                extra=ActionExtra(stop_reason=ac_with_logprobs.stop_reason),
-            )
-        transition = Transition(
-            ob=ob,
-            ac=ac_with_logprobs,
-            reward=step_result.reward,
-            episode_done=step_result.episode_done,
-            metrics=step_result.metrics,
-            logs=step_result.logs,
-        )
-        transitions.append(transition)
-        ob = step_result.next_observation
-        stop_condition = step_result.next_stop_condition
-        if step_result.episode_done:
-            break
-    return Trajectory(transitions=transitions, final_ob=ob)
+    return await run_rollout(policy, env)
+
+
+def _should_skip_group_grading(
+    termination: TerminationRewardPolicy | None, trajectories: list[Trajectory]
+) -> bool:
+    """Whether ``compute_group_rewards`` can be skipped entirely for this group.
+
+    The per-trajectory triple condition for skip-grading is: the trajectory
+    stopped with ``rollout_timeout``, AND ``zero_reward_on_limit`` is set, AND
+    ``rollout_timeout`` is in ``limit_stop_reasons`` (so the graded reward
+    would be clamped to at most 0.0 anyway).  ``compute_group_rewards`` is
+    group-simultaneous — it grades all trajectories in one call — so the call
+    is skipped only when *every* trajectory in the group satisfies the triple
+    condition; if any member needs real grading, the full group is passed
+    through unchanged (pairwise/group graders keep seeing the whole group)
+    and the timed-out members' rewards are handled by the zero clamp instead.
+    """
+    return (
+        termination is not None
+        and termination.skip_grading_on_timeout
+        and termination.zero_reward_on_limit
+        and StopReason.ROLLOUT_TIMEOUT in termination.limit_stop_reasons
+        and len(trajectories) > 0
+        and all(traj.stop_reason == StopReason.ROLLOUT_TIMEOUT for traj in trajectories)
+    )
+
+
+def _apply_zero_reward_on_limit(
+    termination: TerminationRewardPolicy,
+    trajectories: list[Trajectory],
+    rewards_G: list[float],
+    metrics_G: list[Metrics],
+) -> None:
+    """Clamp limit-stopped trajectories' total rewards to ``min(reward, 0.0)``.
+
+    Grade-then-clamp: called *after* ``compute_group_rewards``, keyed off
+    ``Trajectory.stop_reason``.  The total reward of a trajectory is the sum
+    of its per-step rewards plus the group-level reward, so the clamp is
+    implemented by lowering the group-level reward until the total is 0.0
+    (negative totals pass through unchanged).  Mutates ``rewards_G`` /
+    ``metrics_G`` in place; clamped members are marked with
+    ``metrics["zero_reward_on_limit"] = 1.0``.
+    """
+    if not termination.zero_reward_on_limit:
+        return
+    for i, traj in enumerate(trajectories):
+        if traj.stop_reason is None or traj.stop_reason not in termination.limit_stop_reasons:
+            continue
+        step_sum = sum(transition.reward for transition in traj.transitions)
+        if step_sum + rewards_G[i] > 0.0:
+            # Setting the group-level reward to -step_sum makes the total
+            # exactly 0.0 (avoids floating-point residue from subtraction).
+            rewards_G[i] = -step_sum
+            metrics_G[i] = {**metrics_G[i], "zero_reward_on_limit": 1.0}
 
 
 @logtree.scope_header_decorator("Group Rollout")
@@ -205,6 +247,7 @@ async def do_group_rollout(
     env_group_builder: EnvGroupBuilder,
     policy: TokenCompleter,
     strategy: RolloutStrategy | None = None,
+    termination: TerminationRewardPolicy | None = None,
 ) -> TrajectoryGroup:
     """Run rollouts for all environments in a group and compute group rewards.
 
@@ -222,6 +265,13 @@ async def do_group_rollout(
             collected (error handling, retries, etc.).  Defaults to
             :class:`FailFast` which preserves the original fail-on-any-error
             behaviour.
+        termination (TerminationRewardPolicy | None): Stop-reason-keyed reward
+            semantics, applied around and after ``compute_group_rewards``:
+            the group grading call is bounded by ``grader_timeout_seconds``,
+            skipped entirely when every trajectory satisfies the
+            skip-grading-on-timeout triple condition, and limit-stopped
+            trajectories are clamped to ``min(reward, 0.0)`` afterwards
+            (grade-then-clamp).  ``None`` (default) leaves rewards untouched.
 
     Returns:
         TrajectoryGroup: The collected trajectories, per-trajectory rewards,
@@ -231,6 +281,9 @@ async def do_group_rollout(
         AllTrajectoriesFailedError: If the strategy exhausts all retries
             without producing any successful trajectories (propagated from
             the strategy).
+        TimeoutError: If ``termination.grader_timeout_seconds`` is set and
+            ``compute_group_rewards`` exceeds it (a group-level error, caught
+            by strategies with ``catches_group_errors``).
 
     Example::
 
@@ -242,11 +295,25 @@ async def do_group_rollout(
     try:
         result = await strategy.execute(env_group_builder, policy)
 
-        async with trace.scope_span("compute_group_rewards"):
-            rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
-                result.trajectories, result.envs
-            )
-        rewards_G, metrics_G = zip(*rewards_and_metrics_G, strict=True)
+        if _should_skip_group_grading(termination, result.trajectories):
+            # Every trajectory timed out and would be clamped to <= 0.0
+            # anyway: skip the (possibly expensive) grading call and use 0.0.
+            rewards_and_metrics_G = [(0.0, {}) for _ in result.trajectories]
+        else:
+            async with trace.scope_span("compute_group_rewards"):
+                grader_timeout = (
+                    termination.grader_timeout_seconds if termination is not None else None
+                )
+                async with asyncio.timeout(grader_timeout):
+                    rewards_and_metrics_G = await env_group_builder.compute_group_rewards(
+                        result.trajectories, result.envs
+                    )
+        rewards_zip_G, metrics_zip_G = zip(*rewards_and_metrics_G, strict=True)
+        rewards_G: list[float] = list(rewards_zip_G)
+        metrics_G: list[Metrics] = list(metrics_zip_G)
+
+        if termination is not None:
+            _apply_zero_reward_on_limit(termination, result.trajectories, rewards_G, metrics_G)
 
         with logtree.scope_header("Trajectory Details"):
             for traj_idx, (traj, final_reward) in enumerate(
@@ -256,7 +323,7 @@ async def do_group_rollout(
                     _log_single_trajectory_details(traj, final_reward)
 
         return TrajectoryGroup(
-            result.trajectories, list(rewards_G), list(metrics_G), rollout_errors=result.errors
+            result.trajectories, rewards_G, metrics_G, rollout_errors=result.errors
         )
     finally:
         # cleanup() is not wrapped in try/except; implementations must handle failures
@@ -319,6 +386,7 @@ class _RolloutTask:
     remove_constant_reward_groups: bool
     enable_logging: bool
     strategy: RolloutStrategy = field(default_factory=FailFast)
+    termination: TerminationRewardPolicy | None = None
 
 
 def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
@@ -336,6 +404,7 @@ def _run_rollout_sync(task: _RolloutTask) -> TrajectoryGroup | None:
             task.remove_constant_reward_groups,
             task.enable_logging,
             strategy=task.strategy,
+            termination=task.termination,
         )
     )
 
@@ -349,6 +418,7 @@ async def do_group_rollout_and_filter_constant_reward(
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
     strategy: RolloutStrategy | None = None,
+    termination: TerminationRewardPolicy | None = None,
 ) -> TrajectoryGroup | None:
     """Run a group rollout, optionally dispatching to an external executor.
 
@@ -376,6 +446,9 @@ async def do_group_rollout_and_filter_constant_reward(
         strategy (RolloutStrategy | None): Controls how trajectories are
             collected within the group (error handling, retries, etc.).
             Defaults to :class:`FailFast`.
+        termination (TerminationRewardPolicy | None): Stop-reason-keyed
+            reward semantics (see :func:`do_group_rollout`).  ``None``
+            (default) leaves rewards untouched.
 
     Returns:
         TrajectoryGroup | None: The completed trajectory group, or ``None``
@@ -407,6 +480,7 @@ async def do_group_rollout_and_filter_constant_reward(
             remove_constant_reward_groups=do_remove_constant_reward_groups,
             enable_logging=enable_logging,
             strategy=strategy,
+            termination=termination,
         )
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(executor, _run_rollout_sync, task)
@@ -419,6 +493,7 @@ async def do_group_rollout_and_filter_constant_reward(
         do_remove_constant_reward_groups,
         enable_logging,
         strategy=strategy,
+        termination=termination,
     )
 
 
@@ -430,6 +505,7 @@ async def _do_group_rollout_and_filter_constant_reward_impl(
     do_remove_constant_reward_groups: bool,
     enable_logging: bool = True,
     strategy: RolloutStrategy | None = None,
+    termination: TerminationRewardPolicy | None = None,
 ) -> TrajectoryGroup | None:
     if strategy is None:
         strategy = FailFast()
@@ -442,6 +518,7 @@ async def _do_group_rollout_and_filter_constant_reward_impl(
                 env_group_builder,
                 policy,
                 strategy=strategy,
+                termination=termination,
             )
     except AllTrajectoriesFailedError as e:
         # All retries exhausted — already logged per-trajectory inside the strategy

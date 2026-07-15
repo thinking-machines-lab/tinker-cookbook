@@ -33,14 +33,17 @@ class Config:
     lora_rank: int = 32
     save_every: int = 20  # 0 = disabled
     ttl_seconds: int | None = 604800  # 7 days
+    max_steps: int | None = None
+    wandb_project: str | None = None
+    wandb_name: str | None = None
 
 
 def main(config: Config):
     # Setup logging
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
-        wandb_project=None,
-        wandb_name=None,
+        wandb_project=config.wandb_project,
+        wandb_name=config.wandb_name,
         config=config,
         do_configure_logging_module=True,
     )
@@ -88,12 +91,18 @@ def main(config: Config):
         start_batch = 0
 
     # Training loop (single epoch)
-    logger.info(f"Training for {n_train_batches} steps")
+    total_steps = (
+        n_train_batches if config.max_steps is None else min(n_train_batches, config.max_steps)
+    )
+    logger.info(f"Training for {total_steps} steps")
 
     # Shuffle dataset
     train_dataset = train_dataset.shuffle(seed=0)
 
     for batch_idx in range(start_batch, n_train_batches):
+        if config.max_steps is not None and batch_idx >= config.max_steps:
+            break
+
         start_time = time.time()
         step = batch_idx
         metrics = {}

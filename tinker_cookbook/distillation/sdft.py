@@ -69,6 +69,7 @@ from tinker_cookbook.rl.types import (
     RLDataset,
     TrajectoryGroup,
 )
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import split_list
@@ -875,7 +876,7 @@ async def main(
             cfg.model_name, rank=cfg.lora_rank, user_metadata=user_metadata
         )
 
-    tokenizer = training_client.get_tokenizer()
+    tokenizer = get_tokenizer(cfg.model_name)
     assert cfg.renderer_name is not None, "renderer_name must be set (resolve before calling main)"
     renderer = renderers.get_renderer(cfg.renderer_name, tokenizer=tokenizer)
 

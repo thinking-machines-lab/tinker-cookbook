@@ -35,7 +35,7 @@ jobs:
           fi
           # Drift age: how long ago the default branch first moved past this
           # PR's merge-base. A quiet default branch never trips the age limit.
-          DRIFT_SINCE=$(git log --format=%ct --reverse "$BASE..origin/$DEFAULT_BRANCH" | head -1)
+          DRIFT_SINCE=$(git log --format=%ct "$BASE..origin/$DEFAULT_BRANCH" | tail -1)
           DRIFT_DAYS=$(( ($(date +%s) - DRIFT_SINCE) / 86400 ))
           echo "merge-base $BASE is $BEHIND commits behind $DEFAULT_BRANCH; drifting for $DRIFT_DAYS days"
           if [ "$BEHIND" -gt "$MAX_COMMITS_BEHIND" ] || [ "$DRIFT_DAYS" -gt "$MAX_DRIFT_DAYS" ]; then
