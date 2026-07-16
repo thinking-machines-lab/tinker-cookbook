@@ -59,6 +59,9 @@ inkling = [
 modal = [
     "modal>=1.5.1",
 ]
+together-sandbox = [
+    "together-sandbox @ git+https://github.com/togethercomputer/together-sandbox.git#subdirectory=together-sandbox-python",
+]
 multiplayer-rl = [
     "textarena>=0.7.4",
 ]
@@ -153,6 +156,9 @@ all = [
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.version]
 source = "vcs"
