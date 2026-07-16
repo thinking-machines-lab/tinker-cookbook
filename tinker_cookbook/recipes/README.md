@@ -22,6 +22,7 @@ We provide the following examples:
 
 - **[Chat supervised learning](./chat_sl/)**: supervised fine-tuning on conversational datasets like Tulu3.
 - **[Math reasoning](./math_rl/)**: improve LLM reasoning capability by rewarding it for answering math questions correctly.
+- **[GSPO](./gspo/)**: train on GSM8K with sequence-level importance ratios via Group Sequence Policy Optimization.
 - **[Code reasoning](./code_rl/)**: train LLMs on competitive programming problems with sandboxed code execution (DeepCoder replication).
 - **[Preference learning](./preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
 - **[Tool use](./search_tool/)**: train LLMs to better use retrieval tools to answer questions more accurately.
