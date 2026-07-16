@@ -1,9 +1,10 @@
 """
 Code grading utilities for RL training.
 
-Supports two execution backends:
+Supports three execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
+- daytona: Cloud-based Daytona sandbox
 """
 
 from __future__ import annotations
@@ -116,6 +117,27 @@ async def _check_with_modal(
     }
 
 
+async def _check_with_daytona(
+    test_cases: dict[str, str],
+    generation: str,
+    timeout: int,
+    total_timeout: int,
+) -> tuple[bool, dict[str, Any]]:
+    """Execute tests using Daytona sandbox."""
+    # Lazy-import so users without the [daytona] extra are unaffected.
+    from tinker_cookbook.sandbox.daytona_sandbox import run_code_in_daytona
+
+    return await run_code_in_daytona(
+        code=TEST_CODE % {"timeout": timeout},
+        files={
+            "test_cases.txt": json.dumps(test_cases),
+            "code.py": generation,
+            "testing_util.py": TEST_UTIL,
+        },
+        timeout=total_timeout,
+    )
+
+
 async def sandbox_check_correctness(
     sample: list[dict[str, Any]],
     generation: str,
@@ -146,6 +168,8 @@ async def sandbox_check_correctness(
 
         if use_backend == SandboxBackend.MODAL:
             return await _check_with_modal(test_cases, generation, timeout, total_timeout)
+        elif use_backend == SandboxBackend.DAYTONA:
+            return await _check_with_daytona(test_cases, generation, timeout, total_timeout)
         elif use_backend == SandboxBackend.SANDBOXFUSION:
             return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
         else:
