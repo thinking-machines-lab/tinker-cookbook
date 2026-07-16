@@ -32,9 +32,9 @@ _DEFAULT_PROBLEM_NUMBER = 26
 # Default sweep presets and their TMLv0 renderer effort values.
 _EFFORT_NAME_TO_FLOAT = {
     "none": 0.0,
-    "minimal": 0.01,
-    "low": 0.3,
-    "medium": 0.6,
+    "minimal": 0.1,
+    "low": 0.2,
+    "medium": 0.7,
     "high": 0.9,
     "xhigh": 0.99,
 }
@@ -47,7 +47,7 @@ def _default_max_tokens(effort: float) -> int:
     Higher effort generally produces longer reasoning traces, so a budget that
     is comfortable at medium effort can truncate xhigh responses mid-thought.
     """
-    if effort < 0.3:
+    if effort < 0.2:
         return 4096
     if effort < 0.9:
         return 8192
