@@ -57,9 +57,6 @@ from tinker_cookbook.rl.rollout_strategy import (
 )
 from tinker_cookbook.rl.rollouts import (
     RolloutErrorCounter,
-    do_group_rollout,  # noqa: F401 — re-exported for backwards compatibility; to
-    # override rollout behavior, rebind tinker_cookbook.rl.rollouts.do_group_rollout
-    # (rebinding this re-exported name does not affect the rollout pipeline)
     do_group_rollout_and_filter_constant_reward,
     set_rollout_executor,
 )
@@ -1967,6 +1964,9 @@ async def main(
 
     # Create dataset from thunk
     dataset, maybe_test_dataset = await config.dataset_builder()
+    await dataset.start()
+    if maybe_test_dataset is not None:
+        await maybe_test_dataset.start()
     # Build rollout strategy and error counter from config
     strategy = config.effective_rollout_strategy()
     error_counter = RolloutErrorCounter() if strategy.catches_group_errors else None
@@ -2043,5 +2043,8 @@ async def main(
     if rollout_executor is not None:
         rollout_executor.shutdown(wait=True)
         set_rollout_executor(None)
+    await dataset.close()
+    if maybe_test_dataset is not None:
+        await maybe_test_dataset.close()
     ml_logger.close()
     logger.info("Training completed successfully")

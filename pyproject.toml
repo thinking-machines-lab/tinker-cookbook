@@ -89,8 +89,8 @@ trackio = [
     "trackio<1.0.0",
 ]
 verifiers = [
-    "verifiers>=0.1.9,<0.1.10",
-    "openai>=1.0.0",
+    "verifiers>=0.2.0",
+    "renderers>=0.1.8.dev40",
 ]
 inspect = [
     "inspect-ai>=0.3.100",
