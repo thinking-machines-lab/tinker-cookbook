@@ -27,7 +27,7 @@ import chz
 import tinker
 from typing_extensions import TypedDict
 
-from tinker_cookbook.completers import StopCondition, TokensWithLogprobs
+from tinker_cookbook.completers import StopCondition, TokenCompleter, TokensWithLogprobs
 from tinker_cookbook.utils.misc_utils import safezip
 
 Action: TypeAlias = list[int]
@@ -163,6 +163,7 @@ class Transition:
             logs.
         logs (Logs): Diagnostic info for display/debugging tools (not
             aggregated like metrics).
+        action_mask (float): Training weight applied to the action tokens.
     """
 
     ob: Observation
@@ -177,6 +178,8 @@ class Transition:
     """Numeric values aggregated and reported in training logs."""
     logs: Logs = field(default_factory=dict)
     """Diagnostic info for display/debugging tools (not aggregated like metrics)."""
+    action_mask: float = 1.0
+    """Training weight for the action tokens (``0.0`` excludes them from the loss)."""
 
 
 class ActionExtra(TypedDict, total=False):
@@ -442,6 +445,18 @@ class TrajectoryGroup:
         ]
 
 
+class DirectEnvGroupBuilder(EnvGroupBuilder):
+    """A group builder for an external environment that owns grouped rollout and scoring."""
+
+    async def make_envs(self) -> Sequence[Env]:
+        return ()
+
+    @abstractmethod
+    async def rollout_group(self, policy: TokenCompleter) -> TrajectoryGroup:
+        """Run and score the complete group with the external environment."""
+        pass
+
+
 class RLDataset(ABC):
     """A dataset that produces batches of :class:`EnvGroupBuilder` instances.
 
@@ -475,6 +490,12 @@ class RLDataset(ABC):
                 this batch.
         """
         pass
+
+    async def start(self) -> None:
+        """Start resources shared by the dataset's environment builders."""
+
+    async def close(self) -> None:
+        """Close resources started by :meth:`start`."""
 
     @abstractmethod
     def __len__(self) -> int:

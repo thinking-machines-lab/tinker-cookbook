@@ -1,37 +1,55 @@
-# RL Training with Tinker + Environments Hub (Verifiers)
+# RL training with Tinker and verifiers v1
 
-[Verifiers](https://github.com/primeintellect-ai/verifiers) is a library for creating RL environments for LLMs, including many community implementations featured on Prime Intellect's [Environments Hub](https://app.primeintellect.ai/dashboard/environments). This recipe allows all text-based environments from the Environments Hub to be used with Tinker for RL training.
+This recipe runs native [`verifiers.v1`](https://github.com/primeintellect-ai/verifiers)
+tasksets and harnesses against a Tinker sampling client, then trains on the tokenized v1
+traces. Multi-turn conversations, tool calls, group rewards, retries, runtime-backed
+harnesses, and branching traces use the verifiers lifecycle directly.
 
-To use this recipe, you need to have your chosen environment module (a self-contained Python package) installed in your project. You can install environments from the Environments Hub using the `prime` CLI:
-
-```bash
-uv tool install prime # or pipx install prime
-prime env install user/env-id # ex. prime env install primeintellect/reverse-text
-```
-
-Examples:
-
-- [primeintellect/reverse-text](https://app.primeintellect.ai/dashboard/environments/primeintellect/reverse-text)
-- [primeintellect/alphabet-sort](https://app.primeintellect.ai/dashboard/environments/primeintellect/alphabet-sort)
-- [primeintellect/math-python](https://app.primeintellect.ai/dashboard/environments/primeintellect/math-python)
-- [will/wordle](https://app.primeintellect.ai/dashboard/environments/will/wordle)
-
-You can then run the recipe with the following command, where `vf_env_id` is the ID (just `env-id`) of the environment, and `vf_env_args` is an optional JSON string of arguments to pass when loading the environment.
+Install the optional dependencies and the package that provides your taskset:
 
 ```bash
-python -m tinker_cookbook.recipes.verifiers_rl.train vf_env_id=env-id vf_env_args='{}' ...
+uv sync --extra verifiers
+uv pip install your-taskset-package
 ```
 
-The reverse-text example as configured should climb from ~0.4 to ~0.6 in 32 steps.
+The recipe accepts one TOML file in the native `vf.EnvConfig` shape. Taskset-specific
+dataset, split, and seed fields belong under `taskset`; harness and runtime fields belong
+under `harness`.
 
-You can also evaluate offline:
+```toml
+# env.toml
+[taskset]
+id = "your-taskset"
+
+[harness]
+id = "default"
+```
 
 ```bash
-python -m tinker_cookbook.recipes.verifiers_rl.evaluate vf_env_id=env-id vf_env_args='{}' ...
+python -m tinker_cookbook.recipes.verifiers_rl.train \
+  env_config_path=env.toml \
+  model_name=Qwen/Qwen3.5-4B \
+  num_tasks=256 \
+  group_size=8
 ```
 
-This recipe also includes a standalone `AsyncOpenAI`-compatible client implemented with Tinker, which can be adapted for other applications.
+Evaluate a base model or saved Tinker sampler checkpoint with the same environment config:
 
-**Potential footgun:**
+```bash
+python -m tinker_cookbook.recipes.verifiers_rl.evaluate \
+  env_config_path=env.toml \
+  model_path=tinker://your/checkpoint \
+  num_tasks=32 \
+  rollouts_per_task=4
+```
 
-- Some Environments Hub implementations involve users writing their own `<think>` parsers (e.g. for use with reasoning RL starting on Instruct models). Despite being Instruct models, the Qwen3 models/tokenizers all use the same tokenizer chat template, which will strip any observed `<think>` sections automatically (which may be inadvertently penalized by reward functions). Users should either modify the renderer, tokenizer chat template, or environment module if observing issues with thinking sections from Qwen3 models.
+## Inference and rendering
+
+`TinkerClient` implements the same chat-completions dialect as `vf.TrainClient`. It uses the
+external `renderers` package for model chat templates, tool schemas, response parsing, token
+attribution, and incremental multi-turn rendering; Tinker's `sample` API supplies generation.
+This keeps the trace tokens aligned with the policy inputs used for training.
+
+`renderer_model_name` defaults to `model_name`. Set it when the Tinker model identifier and
+the tokenizer/chat-template identifier differ. The current integration accepts text-only
+rendered prompts; multimodal tasksets fail explicitly.

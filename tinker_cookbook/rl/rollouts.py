@@ -15,6 +15,7 @@ from tinker_cookbook.rl.rollout_limits import TerminationRewardPolicy
 from tinker_cookbook.rl.rollout_runner import run_rollout
 from tinker_cookbook.rl.rollout_strategy import FailFast, RolloutStrategy
 from tinker_cookbook.rl.types import (
+    DirectEnvGroupBuilder,
     Env,
     EnvGroupBuilder,
     Metrics,
@@ -293,6 +294,9 @@ async def do_group_rollout(
     if strategy is None:
         strategy = FailFast()
     try:
+        if isinstance(env_group_builder, DirectEnvGroupBuilder):
+            return await env_group_builder.rollout_group(policy)
+
         result = await strategy.execute(env_group_builder, policy)
 
         if _should_skip_group_grading(termination, result.trajectories):
