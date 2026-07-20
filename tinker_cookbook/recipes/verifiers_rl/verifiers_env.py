@@ -111,9 +111,7 @@ def traces_to_trajectory_group(
     errors: list[RolloutError] = []
 
     if requires_group_scoring and any(trace.has_error for trace in traces):
-        raise AllTrajectoriesFailedError(
-            "verifiers group-scored episode contains a failed rollout"
-        )
+        raise AllTrajectoriesFailedError("verifiers group-scored episode contains a failed rollout")
 
     for trace in traces:
         if trace.error is not None:
@@ -151,9 +149,7 @@ class VerifiersRLDataset(RLDataset):
         self.model_name = model_name
         self.renderer_model_name = renderer_model_name
         self.renderer_pool_size = renderer_pool_size
-        self.requires_group_scoring = bool(
-            tasks and discover_decorated(tasks[0], "group_reward")
-        )
+        self.requires_group_scoring = bool(tasks and discover_decorated(tasks[0], "group_reward"))
 
     def __len__(self) -> int:
         return (len(self.tasks) + self.groups_per_batch - 1) // self.groups_per_batch

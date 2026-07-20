@@ -44,8 +44,7 @@ async def evaluate(
         run = await service.create_rest_client().get_training_run_by_tinker_path_async(model_path)
         if model_name is not None and model_name != run.base_model:
             raise ValueError(
-                f"model_name {model_name!r} does not match checkpoint base model "
-                f"{run.base_model!r}"
+                f"model_name {model_name!r} does not match checkpoint base model {run.base_model!r}"
             )
         model_name = run.base_model
     if model_name is None:

@@ -29,9 +29,7 @@ def _linear_trace() -> "vf.Trace":
     return vf.Trace(
         task=vf.TraceTask(type="Task", data=vf.TaskData(idx=0, prompt="test")),
         nodes=[
-            vf.MessageNode(
-                message=vf.UserMessage(content="test"), token_ids=[1], mask=[False]
-            ),
+            vf.MessageNode(message=vf.UserMessage(content="test"), token_ids=[1], mask=[False]),
             _assistant(0, 3),
         ],
     )
@@ -64,9 +62,7 @@ def test_trace_conversion_preserves_branches_and_masks_shared_actions() -> None:
     trace = vf.Trace(
         task=vf.TraceTask(type="Task", data=vf.TaskData(idx=0, prompt="test")),
         nodes=[
-            vf.MessageNode(
-                message=vf.UserMessage(content="test"), token_ids=[1], mask=[False]
-            ),
+            vf.MessageNode(message=vf.UserMessage(content="test"), token_ids=[1], mask=[False]),
             _assistant(0, 3),
             vf.MessageNode(
                 parent=1,
@@ -117,13 +113,9 @@ def test_group_scored_partial_failure_drops_the_group() -> None:
     )
 
     with pytest.raises(AllTrajectoriesFailedError, match="group-scored"):
-        traces_to_trajectory_group(
-            [_linear_trace(), failed], requires_group_scoring=True
-        )
+        traces_to_trajectory_group([_linear_trace(), failed], requires_group_scoring=True)
 
-    group = traces_to_trajectory_group(
-        [_linear_trace(), failed], requires_group_scoring=False
-    )
+    group = traces_to_trajectory_group([_linear_trace(), failed], requires_group_scoring=False)
     assert len(group.trajectories_G) == 1
     assert len(group.rollout_errors) == 1
 
@@ -163,9 +155,7 @@ async def test_client_returns_v1_response_with_training_tokens() -> None:
             assert sampling_params.stop == [99]
             return SimpleNamespace(
                 sequences=[
-                    SimpleNamespace(
-                        tokens=[3, 4], logprobs=[-0.1, -0.2], stop_reason="stop"
-                    )
+                    SimpleNamespace(tokens=[3, 4], logprobs=[-0.1, -0.2], stop_reason="stop")
                 ]
             )
 
