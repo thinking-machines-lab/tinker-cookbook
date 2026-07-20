@@ -37,6 +37,26 @@ def _linear_trace() -> "vf.Trace":
     )
 
 
+def test_load_tasks_bounds_infinite_tasksets() -> None:
+    from tinker_cookbook.recipes.verifiers_rl.verifiers_env import load_tasks
+
+    class InfiniteTaskset:
+        INFINITE = True
+
+        def load(self):
+            index = 0
+            while True:
+                yield index
+                index += 1
+
+    taskset = cast(vf.Taskset, InfiniteTaskset())
+    assert load_tasks(taskset, 3) == [0, 1, 2]
+    with pytest.raises(ValueError, match="num_tasks is required"):
+        load_tasks(taskset, None)
+    with pytest.raises(ValueError, match="non-negative"):
+        load_tasks(taskset, -1)
+
+
 def test_trace_conversion_preserves_branches_and_masks_shared_actions() -> None:
     from tinker_cookbook.recipes.verifiers_rl.verifiers_env import trace_to_trajectory
     from tinker_cookbook.rl.data_processing import trajectory_to_data

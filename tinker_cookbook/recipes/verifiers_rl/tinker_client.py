@@ -86,7 +86,7 @@ class TinkerClient(vf.Client):
         self,
         sampling_client: tinker.SamplingClient,
         renderer_model_name: str,
-        renderer_pool_size: int = 16,
+        renderer_pool_size: int = 1,
     ) -> None:
         self.sampling_client = sampling_client
         self.renderer = _renderer_pool(renderer_model_name, renderer_pool_size)

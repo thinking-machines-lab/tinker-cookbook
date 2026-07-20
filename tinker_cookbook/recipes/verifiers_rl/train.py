@@ -14,7 +14,7 @@ from tinker_cookbook.rl import train
 class CLIConfig:
     model_name: str = "Qwen/Qwen3.5-4B"
     renderer_model_name: str | None = None
-    renderer_pool_size: int = 16
+    renderer_pool_size: int = 1
     lora_rank: int = 32
 
     env_config_path: str

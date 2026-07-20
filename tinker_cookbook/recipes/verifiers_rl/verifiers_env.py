@@ -6,6 +6,7 @@ import asyncio
 import tomllib
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
+from itertools import islice
 from pathlib import Path
 
 import chz
@@ -46,6 +47,17 @@ class _VerifiersRuntime:
         serving = self._serving
         self._serving = None
         await serving.__aexit__(None, None, None)
+
+
+def load_tasks(taskset: vf.Taskset, num_tasks: int | None) -> list[vf.Task]:
+    """Load a bounded task list without exhausting an infinite taskset."""
+    if num_tasks is not None:
+        if num_tasks < 0:
+            raise ValueError("num_tasks must be non-negative")
+        return list(islice(taskset.load(), num_tasks))
+    if getattr(taskset, "INFINITE", False):
+        raise ValueError("num_tasks is required for an infinite taskset")
+    return list(taskset.load())
 
 
 def trace_to_trajectory(trace: vf.Trace) -> Trajectory:
@@ -176,16 +188,14 @@ class VerifiersRLDatasetBuilder(RLDatasetBuilder):
     groups_per_batch: int = 32
     group_size: int = 8
     num_tasks: int | None = None
-    renderer_pool_size: int = 16
+    renderer_pool_size: int = 1
     max_concurrent: int = 0
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
         raw_config = tomllib.loads(Path(self.env_config_path).read_text())
         config = vf.EnvConfig.model_validate(raw_config)
         env = vf.Environment(config)
-        tasks = list(env.taskset.load())
-        if self.num_tasks is not None:
-            tasks = tasks[: self.num_tasks]
+        tasks = load_tasks(env.taskset, self.num_tasks)
         dataset = VerifiersRLDataset(
             tasks=tasks,
             env=env,

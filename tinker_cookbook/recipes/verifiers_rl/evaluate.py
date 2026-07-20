@@ -11,6 +11,7 @@ import tinker
 import verifiers.v1 as vf
 
 from tinker_cookbook.recipes.verifiers_rl.tinker_client import TinkerClient
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import load_tasks
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 
@@ -67,9 +68,7 @@ async def evaluate(
     )
     raw_config = tomllib.loads(Path(env_config_path).read_text())
     env = vf.Environment(vf.EnvConfig.model_validate(raw_config))
-    tasks = list(env.taskset.load())
-    if num_tasks is not None:
-        tasks = tasks[:num_tasks]
+    tasks = load_tasks(env.taskset, num_tasks)
     semaphore = asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
 
     start = time.monotonic()
@@ -88,7 +87,7 @@ class CLIConfig:
     model_name: str | None = None
     model_path: str | None = None
     renderer_model_name: str | None = None
-    renderer_pool_size: int = 16
+    renderer_pool_size: int = 1
     num_tasks: int | None = 5
     rollouts_per_task: int = 3
     max_concurrent: int = 32
