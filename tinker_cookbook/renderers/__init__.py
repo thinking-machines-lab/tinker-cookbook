@@ -154,6 +154,8 @@ def get_renderer(
             - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
             - ``"gpt_oss_medium_reasoning"``: GPT-OSS with medium reasoning
             - ``"gpt_oss_high_reasoning"``: GPT-OSS with high reasoning
+            - ``"tml_v0"``: TML v0 (Inkling) with default thinking effort (0.9)
+            - ``"tml_v0_disable_thinking"``: TML v0 (Inkling) with thinking disabled (effort 0.0)
             - Custom renderers registered via ``register_renderer()``
         tokenizer (Tokenizer): The tokenizer to use.
         image_processor (ImageProcessor | None): Required for VL renderers.
@@ -282,6 +284,8 @@ def get_renderer(
         renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
     elif name == "tml_v0":
         renderer = TmlV0Renderer(tokenizer)
+    elif name == "tml_v0_disable_thinking":
+        renderer = TmlV0Renderer(tokenizer, effort=0.0)
     else:
         raise RendererError(
             f"Unknown renderer: {name}. If this is a custom renderer, please register it via register_renderer()."
