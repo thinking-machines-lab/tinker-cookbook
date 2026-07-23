@@ -263,7 +263,8 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     """Get a recommended learning rate for the given model.
 
     Applies model-family-specific scaling based on hidden size. Only Llama and
-    Qwen families have calibrated formulas; other models raise NotImplementedError.
+    Qwen families have calibrated formulas. Known-but-uncalibrated models raise
+    NotImplementedError; unrecognized models raise ConfigurationError.
 
     Args:
         model_name: HuggingFace model identifier.
