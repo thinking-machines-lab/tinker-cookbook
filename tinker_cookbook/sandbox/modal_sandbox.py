@@ -55,7 +55,8 @@ async def _read_stream_capped(stream: object, max_bytes: int) -> str:
     try:
         async for _ in stream:  # type: ignore[union-attr]
             pass
-    except (UnicodeDecodeError, Exception):
+    except Exception:
+        # Best-effort drain; ignore any error (including Modal's internal decoding errors).
         pass
 
     return b"".join(chunks).decode("utf-8", errors="replace")
