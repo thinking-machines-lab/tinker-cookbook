@@ -56,6 +56,7 @@ class TestNemotron3:
             "nemotron3_ultra",
             "nemotron3_ultra_disable_thinking",
             "nemotron3_ultra_medium_thinking",
+            "nemotron3_ultra_preserve_thinking",
         ]
 
 
