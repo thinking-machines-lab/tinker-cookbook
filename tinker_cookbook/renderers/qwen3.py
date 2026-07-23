@@ -28,6 +28,7 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     UnparsedToolCall,
     _tool_call_payload,
+    detect_unterminated_tool_block,
     image_to_chunk,
     parse_content_blocks,
     parse_response_for_stop_token,
@@ -259,7 +260,24 @@ class Qwen3Renderer(Renderer):
             # No special blocks found - keep as string for backward compatibility
             assistant_message["content"] = content
 
+        self._append_unterminated_tool_block(assistant_message, content)
         return assistant_message, termination
+
+    @staticmethod
+    def _append_unterminated_tool_block(message: Message, content: str) -> None:
+        """Surface a ``<tool_call>`` block that was opened but never closed.
+
+        Such a response can still terminate cleanly on ``<|im_end|>``;
+        without this check the dangling block degrades silently to plain
+        text. Detected blocks are appended to ``unparsed_tool_calls`` so the
+        failure is recoverable (a content-level parse failure).
+        """
+        dangling = detect_unterminated_tool_block(content, "<tool_call>", "</tool_call>")
+        if dangling is not None:
+            message["unparsed_tool_calls"] = [
+                *message.get("unparsed_tool_calls", []),
+                dangling,
+            ]
 
     def _parse_response_for_streaming(
         self, response: list[int]
@@ -297,6 +315,7 @@ class Qwen3Renderer(Renderer):
         else:
             assistant_message["content"] = content
 
+        self._append_unterminated_tool_block(assistant_message, content)
         return assistant_message, termination
 
     def to_openai_message(self, message: Message) -> dict:

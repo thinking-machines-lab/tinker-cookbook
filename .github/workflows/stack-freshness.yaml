@@ -1,0 +1,44 @@
+name: stack-freshness
+
+# A green check only proves the PR was green against the base it was tested
+# on. Stack landing reconstructs commits onto the current default branch
+# without re-running tests, so a PR whose merge-base has drifted far behind
+# can land semantically-conflicting changes that no CI ever saw. This check
+# bounds that staleness: once the default branch has moved too far past the
+# PR's merge-base, CI goes red until the PR is rebased forward (never
+# backward) onto the default branch and re-pushed.
+
+on:
+  pull_request:
+
+jobs:
+  stack-freshness:
+    runs-on: ubuntu-latest
+    env:
+      MAX_COMMITS_BEHIND: 25
+      MAX_DRIFT_DAYS: 14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check merge-base freshness
+        run: |
+          set -euo pipefail
+          DEFAULT_BRANCH="${{ github.event.pull_request.base.repo.default_branch }}"
+          git fetch --quiet origin "$DEFAULT_BRANCH" "refs/pull/${{ github.event.pull_request.number }}/head"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          BASE=$(git merge-base "$HEAD_SHA" "origin/$DEFAULT_BRANCH")
+          BEHIND=$(git rev-list --count "$BASE..origin/$DEFAULT_BRANCH")
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "merge-base is the tip of $DEFAULT_BRANCH; nothing to do"
+            exit 0
+          fi
+          # Drift age: how long ago the default branch first moved past this
+          # PR's merge-base. A quiet default branch never trips the age limit.
+          DRIFT_SINCE=$(git log --format=%ct "$BASE..origin/$DEFAULT_BRANCH" | tail -1)
+          DRIFT_DAYS=$(( ($(date +%s) - DRIFT_SINCE) / 86400 ))
+          echo "merge-base $BASE is $BEHIND commits behind $DEFAULT_BRANCH; drifting for $DRIFT_DAYS days"
+          if [ "$BEHIND" -gt "$MAX_COMMITS_BEHIND" ] || [ "$DRIFT_DAYS" -gt "$MAX_DRIFT_DAYS" ]; then
+            echo "::error::This PR's merge-base is $BEHIND commits behind $DEFAULT_BRANCH and has been drifting for $DRIFT_DAYS days (limits: $MAX_COMMITS_BEHIND commits, $MAX_DRIFT_DAYS days). Its green checks validated a stale base. Rebase forward onto $DEFAULT_BRANCH (never backward) and re-push."
+            exit 1
+          fi

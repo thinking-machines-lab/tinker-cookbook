@@ -96,7 +96,7 @@ class TestMiscUtils:
 
 
 # ---------------------------------------------------------------------------
-# trace (import-only check — used by tibo training code)
+# trace (import-only check — used by downstream training code)
 # ---------------------------------------------------------------------------
 
 

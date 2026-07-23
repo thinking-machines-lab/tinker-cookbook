@@ -1,3 +1,4 @@
+import re
 from collections.abc import Sequence
 from functools import partial
 
@@ -8,6 +9,15 @@ from tinker_cookbook import renderers
 from tinker_cookbook.rl.problem_env import ProblemEnv, ProblemGroupBuilder
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+_INTEGER_PATTERN = re.compile(r"-?\d+")
+
+
+def _extract_final_int(text: str) -> int | None:
+    matches = _INTEGER_PATTERN.findall(text.replace(",", ""))
+    if not matches:
+        return None
+    return int(matches[-1])
 
 
 class ArithmeticEnv(ProblemEnv):
@@ -37,10 +47,8 @@ class ArithmeticEnv(ProblemEnv):
         return f"What is {self.x} + {self.y}?"
 
     def check_answer(self, sample_str: str) -> bool:
-        chunks = sample_str.split()
-        try:
-            answer = int(chunks[0])
-        except (ValueError, IndexError):
+        answer = _extract_final_int(sample_str)
+        if answer is None:
             return False
         return answer == self.x + self.y
 

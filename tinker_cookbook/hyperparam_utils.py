@@ -128,6 +128,8 @@ def _get_hidden_size(model_name: str) -> int:
         "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": 8192,
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 4096,
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 2688,
+        # Thinking Machines Lab Inkling
+        "thinkingmachines/Inkling": 6144,
     }
 
     if model_name in _KNOWN_HIDDEN_SIZES:
@@ -210,6 +212,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     },
     "openai/gpt-oss-120b": {"mlp": 40_124_160, "attn": 746_496, "unembed": 203_968},
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
+    "thinkingmachines/Inkling": {"mlp": 154_705_920, "attn": 3_424_256, "unembed": 207_168},
 }
 
 
@@ -234,6 +237,9 @@ def get_lora_param_count(
 
     Returns:
         Total trainable parameter count.
+
+    Notes:
+        For MoE expert layers, Tinker uses a shared-outer LoRA scheme: the LoRA factor connected to the model hidden dimension is shared across experts, while the other factor remains expert-specific. This reduces LoRA parameter count and optimizer state while preserving per-expert adaptation. The parameter count returned by this function reflects this sharing.
     """
     if not (train_mlp or train_attn or train_unembed):
         raise ValueError("At least one of train_mlp, train_attn, or train_unembed must be True.")
@@ -282,6 +288,8 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+        # TODO: calibrate Inkling's recommended LR before returning it from get_lr.
+        "thinkingmachines/Inkling",
     ):
         raise NotImplementedError(
             f"Learning rate formula for {model_name} is not yet calibrated. "

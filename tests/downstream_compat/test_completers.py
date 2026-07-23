@@ -46,7 +46,7 @@ class TestTokenCompleter:
     def test_call_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params
 
-        assert_params(TokenCompleter.__call__, ["model_input", "stop"])
+        assert_params(TokenCompleter.__call__, ["model_input", "stop", "max_tokens"])
 
 
 class TestMessageCompleter:

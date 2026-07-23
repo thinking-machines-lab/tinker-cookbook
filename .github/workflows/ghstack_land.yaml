@@ -8,8 +8,8 @@ name: ghstack land
 #                          anyway; for a regular PR it does an admin squash
 #                          merge. A reason is mandatory.
 #
-# Landing pushes to `main` (a protected branch) and must be able to trigger the
-# normal push CI, so the default `GITHUB_TOKEN` is not enough. Configure a
+# Landing pushes to the repo's default branch (a protected branch) and must be
+# able to trigger the normal push CI, so the default `GITHUB_TOKEN` is not enough. Configure a
 # GitHub App with `contents: write` + `pull_requests: write` that is allowed to
 # bypass branch protection, and store its credentials as repo secrets:
 #   BOT_APP_ID           the App's id
@@ -172,8 +172,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config --global user.email "bot@users.noreply.github.com"
-          git config --global user.name "ghstack bot"
+          # Commit as the App's bot user so landed commits link to the App
+          # (a made-up identity renders as an unlinked grey "bot").
+          BOT_LOGIN="${{ steps.app-token.outputs.app-slug }}[bot]"
+          BOT_ID=$(gh api "users/${BOT_LOGIN}" --jq .id)
+          git config --global user.name "$BOT_LOGIN"
+          git config --global user.email "${BOT_ID}+${BOT_LOGIN}@users.noreply.github.com"
           cat <<EOF > ~/.ghstackrc
           [ghstack]
           github_url = github.com

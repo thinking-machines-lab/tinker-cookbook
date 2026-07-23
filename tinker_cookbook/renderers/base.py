@@ -169,6 +169,24 @@ class ImagePart(TypedDict):
     image: str | Image.Image
 
 
+class AudioPart(TypedDict):
+    """A chunk of input audio in a message.
+
+    ``audio`` accepts encoded bytes, a base64 ``data:`` URI, or a local path.
+    The renderer loads it into memory as base64-encoded audio; remote URLs are unsupported.
+
+    WAV metadata is read from the file header. MP3 and FLAC inputs must also
+    provide ``num_frames`` and ``sample_rate`` because the OpenAI-compatible
+    parser cannot derive that metadata without decoding them.
+    """
+
+    type: Literal["audio"]
+    audio: str | bytes
+    format: NotRequired[Literal["wav", "mp3", "flac"]]
+    num_frames: NotRequired[int]
+    sample_rate: NotRequired[int]
+
+
 class ThinkingPart(TypedDict):
     """Model's internal reasoning (chain-of-thought) as a content part."""
 
@@ -178,7 +196,7 @@ class ThinkingPart(TypedDict):
 
 # Container for a part of a multimodal message content.
 # Tool calls live exclusively in message["tool_calls"] / message["unparsed_tool_calls"].
-ContentPart = TextPart | ImagePart | ThinkingPart
+ContentPart = TextPart | ImagePart | AudioPart | ThinkingPart
 
 
 # Streaming types to enable incremental parsing of model output for real-time display.
@@ -1058,6 +1076,121 @@ def parse_think_blocks(content: str) -> list[ContentPart] | None:
         parts.append(TextPart(type="text", text=remaining))
 
     return parts
+
+
+class ParseFailureKind(StrEnum):
+    """What kind of parse failure a sampled response exhibits.
+
+    The renderer layer produces two orthogonal failure signals:
+
+    - :class:`ParseTermination` (``MALFORMED``) reports *structural* failures:
+      the response framing itself is broken (no stop signal, truncated stream,
+      duplicated stop tokens).  The conversation state can no longer be
+      re-rendered faithfully, so callers should treat the episode as
+      unrecoverable.
+    - ``message["unparsed_tool_calls"]`` reports *content* failures: the
+      framing terminated cleanly but a tool block inside it could not be
+      parsed (invalid JSON, missing fields, an unterminated tool block).
+      The conversation remains coherent, so callers may retry (e.g. inject a
+      corrective message and sample again).
+
+    :func:`classify_parse_failure` folds both signals into this enum.
+    """
+
+    STRUCTURAL = "structural"
+    """Broken framing: the response did not terminate cleanly.  Not
+    recoverable within the episode — the stream state is corrupted."""
+
+    CONTENT = "content"
+    """Clean framing with unparsable content (tool-call JSON errors,
+    unterminated tool blocks).  Recoverable: the conversation is still
+    coherent and the model can be asked to try again."""
+
+
+PARSE_FAILURE_DETAIL_MAX_CHARS = 16384
+"""Cap on the human-readable detail string returned by
+:func:`classify_parse_failure` (raw model output can be arbitrarily long)."""
+
+UNTERMINATED_TOOL_BLOCK_ERROR = "unterminated tool block"
+"""Error-string prefix used by :func:`detect_unterminated_tool_block` (and the
+per-renderer detection built on it), so callers can recognize this failure
+mode among ``unparsed_tool_calls`` entries."""
+
+
+def classify_parse_failure(
+    message: Message, termination: ParseTermination
+) -> tuple[ParseFailureKind, str] | None:
+    """Classify the parse failure (if any) in a ``parse_response`` result.
+
+    This is the typed accessor over the two failure channels that
+    ``Renderer.parse_response`` already produces: the
+    :class:`ParseTermination` (structural signal) and
+    ``message["unparsed_tool_calls"]`` (content signal).
+
+    Args:
+        message (Message): The message returned by ``parse_response``.
+        termination (ParseTermination): The termination returned alongside it.
+
+    Returns:
+        tuple[ParseFailureKind, str] | None: ``None`` when the response parsed
+            cleanly with no tool-call errors.  Otherwise a ``(kind, detail)``
+            pair where ``detail`` is a human-readable description (truncated
+            to :data:`PARSE_FAILURE_DETAIL_MAX_CHARS`).  A structural failure
+            wins over any content failures in the same response (broken
+            framing makes the content signal unreliable anyway).  Note that a
+            message mixing successfully parsed and unparsed tool calls still
+            classifies as a CONTENT failure — whether to act on it (versus
+            proceeding with the valid calls) is the caller's policy.
+    """
+    if not termination.is_clean:
+        return (
+            ParseFailureKind.STRUCTURAL,
+            "response did not terminate cleanly "
+            f"(termination={termination.value}): expected the renderer's stop signal "
+            "or EOS, so the message framing is broken",
+        )
+    unparsed = message.get("unparsed_tool_calls") or []
+    if unparsed:
+        detail = "\n".join(tc.error for tc in unparsed)
+        return (ParseFailureKind.CONTENT, detail[:PARSE_FAILURE_DETAIL_MAX_CHARS])
+    return None
+
+
+def detect_unterminated_tool_block(
+    content: str, open_marker: str, close_marker: str
+) -> UnparsedToolCall | None:
+    """Detect a tool block that was opened but never closed.
+
+    A response can terminate cleanly (stop token present) while a tool block
+    inside it is left unterminated — e.g. the open marker appears but the
+    close marker never follows.  Renderer regexes only match complete blocks,
+    so without explicit detection such a response silently degrades to plain
+    text and the tool-call intent is lost.  Renderers with a tool-block syntax
+    call this after their normal tool parsing and append the result to
+    ``message["unparsed_tool_calls"]``, turning the silent degradation into a
+    recoverable :attr:`ParseFailureKind.CONTENT` failure.
+
+    Args:
+        content (str): The decoded response content (before any stripping).
+        open_marker (str): The tool-block opening marker.
+        close_marker (str): The corresponding closing marker.  Must not
+            contain ``open_marker`` as a substring (and vice versa).
+
+    Returns:
+        UnparsedToolCall | None: An entry describing the dangling block (its
+            ``raw_text`` is the content from the last unmatched open marker),
+            or ``None`` when every open marker is balanced by a close marker.
+    """
+    opens = content.count(open_marker)
+    if opens == 0 or opens <= content.count(close_marker):
+        return None
+    return UnparsedToolCall(
+        raw_text=content[content.rfind(open_marker) :][:PARSE_FAILURE_DETAIL_MAX_CHARS],
+        error=(
+            f"{UNTERMINATED_TOOL_BLOCK_ERROR}: '{open_marker}' opened without a "
+            f"matching '{close_marker}'"
+        ),
+    )
 
 
 def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:

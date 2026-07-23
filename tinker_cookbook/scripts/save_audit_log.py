@@ -16,6 +16,7 @@ Days other than "today (UTC)" are treated as immutable once written. Today's
 file is rewritten on every poll because new events are still arriving.
 
 Requirements:
+
 - The caller's API key must have the `VIEW_AUDIT_LOG` capability
   (tinker-admin RBAC role).
 

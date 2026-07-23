@@ -23,6 +23,7 @@ from tinker_cookbook.renderers.base import (
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
+    detect_unterminated_tool_block,
     ensure_text,
     parse_response_for_stop_token,
     parse_think_blocks,
@@ -268,6 +269,24 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         return tool_calls, unparsed_tool_calls
 
+    @staticmethod
+    def _detect_unterminated_tool_block(content: str) -> UnparsedToolCall | None:
+        """Detect a DeepSeek tool block opened but never closed.
+
+        Covers both the section wrapper and an individual call inside a
+        closed section. Either way the block regexes above cannot match, so
+        without this check the dangling tool-call intent silently degrades
+        to plain text even when the response terminated cleanly.
+        """
+        for open_marker, close_marker in (
+            ("<｜tool▁calls▁begin｜>", "<｜tool▁calls▁end｜>"),
+            ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>"),
+        ):
+            dangling = detect_unterminated_tool_block(content, open_marker, close_marker)
+            if dangling is not None:
+                return dangling
+        return None
+
     def _parse_response_content(
         self, response: list[int], *, allow_missing_stop: bool = False
     ) -> tuple[Message, ParseTermination]:
@@ -287,6 +306,9 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         # Parse DeepSeek-specific tool calls
         tool_calls, unparsed_tool_calls = self._parse_deepseek_tool_calls(content)
+        dangling = self._detect_unterminated_tool_block(content)
+        if dangling is not None:
+            unparsed_tool_calls.append(dangling)
         if tool_calls:
             assistant_message["tool_calls"] = tool_calls
         if unparsed_tool_calls:

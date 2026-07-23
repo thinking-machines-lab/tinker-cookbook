@@ -46,6 +46,9 @@ class Config:
     save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
     ttl_seconds: int | None = 604800  # 7 days
+    max_steps: int | None = None
+    wandb_project: str | None = None
+    wandb_name: str | None = None
 
 
 def get_reward(response: str, answer: str) -> float:
@@ -61,8 +64,8 @@ def main(config: Config):
     # Setup logging
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
-        wandb_project=None,
-        wandb_name=None,
+        wandb_project=config.wandb_project,
+        wandb_name=config.wandb_name,
         config=config,
         do_configure_logging_module=True,
     )
@@ -122,10 +125,16 @@ def main(config: Config):
         learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
     )
 
-    logger.info(f"Training for {n_train_batches} batches")
+    total_steps = (
+        n_train_batches if config.max_steps is None else min(n_train_batches, config.max_steps)
+    )
+    logger.info(f"Training for {total_steps} batches")
 
     # Main training loop
     for batch_idx in range(start_batch, n_train_batches):
+        if config.max_steps is not None and batch_idx >= config.max_steps:
+            break
+
         t_start = time.time()
         metrics: dict[str, float] = {
             "progress/batch": batch_idx,

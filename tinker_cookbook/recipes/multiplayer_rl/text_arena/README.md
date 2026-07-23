@@ -47,13 +47,15 @@ The **collapse** at step 80 happens because a small asymmetry gets amplified —
 
 The model **recovers** around step 115, but then settles into a **degenerate equilibrium**: both sides draw in self-play (reward ≈ 0), but the strategy is actually worse than the base model (test reward goes negative). The collapse breaks the learned strategy, and the recovery converges to a different, weaker fixed point. This is a known challenge with self-play RL.
 
+> **Note:** the reward tables above were measured on the now-retired `Qwen3-4B-Instruct-2507`. A 25-step verification run with `Qwen/Qwen3.5-4B` reproduced the early-phase shape (invalid moves eliminated within ~10 steps, test reward positive by step 5), but the full 256-step dynamics have not been re-measured.
+
 The default of 80 steps avoids the collapse while capturing the performance plateau. Potential mitigations for longer training runs include mixing self-play with games against a fixed opponent (random or base model) in each batch, or periodically freezing a copy of the weights to play against.
 
 ### CLI options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `model_name` | `Qwen/Qwen3-4B-Instruct-2507` | Base model to train |
+| `model_name` | `Qwen/Qwen3.5-4B` | Starting checkpoint to fine-tune (uses `qwen3_5_disable_thinking` renderer) |
 | `batch_size` | `512` | Trajectories per training step |
 | `num_train_datapoints` | `40960` | Total training trajectories (~80 steps) |
 | `learning_rate` | `3e-5` | Adam learning rate |
@@ -140,11 +142,13 @@ Therefore, in the `Env.step` function, we need to receive the opponent's action,
 This motivates the design of the `Coordinator` class, which passes the LLM-generated text between two `Environment` objects and synchronizes the two `Environment` objects to alternate taking steps.
 
 In our implementation, the `TwoPlayerCoordinator` object is shared across two `Environment` objects, and it:
+
 - wraps the tic-tac-toe environment from the TextArena [1],
 - waits for a specific player's turn to begin, and
 - allows one player to `make_move` on the board, and notifies the other player that the move is complete.
 
 As a result, in the `Environment.step` function, we can:
+
 - determine when to start the next move, since `TwoPlayerCoordinator` informs us when the opponent has finished.
 - compute the next observation, since `TwoPlayerCoordinator` passes the move from the opponent.
 

@@ -14,7 +14,7 @@ from tinker_cookbook.completers import TokenCompleter, TokensWithLogprobs
 from tinker_cookbook.renderers.base import Message, ToolCall
 from tinker_cookbook.rl.data_processing import trajectory_to_data
 from tinker_cookbook.rl.rollouts import do_single_rollout
-from tinker_cookbook.rl.types import Trajectory, Transition
+from tinker_cookbook.rl.types import PARSE_ERROR_MASKED_METRIC_KEY, Trajectory, Transition
 from tinker_cookbook.tool_use import build_agent_tool_env, simple_tool_result, tool
 from tinker_cookbook.tool_use.types import ToolResult
 
@@ -238,7 +238,7 @@ def _make_stub_policy():
     )
 
     class StubPolicy(TokenCompleter):
-        async def __call__(self, model_input, stop):
+        async def __call__(self, model_input, stop, *, max_tokens=None):
             return next(responses)
 
     return StubPolicy()
@@ -283,3 +283,56 @@ class TestEndToEndToolUseRollout:
         expected = [0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1]
         assert mask == expected
         assert sum(mask) == 4  # 2 tokens per action × 2 actions
+
+
+# ---------------------------------------------------------------------------
+# Test: parse-error turn masking (ParseErrorPolicy.mask_error_turns)
+# ---------------------------------------------------------------------------
+
+
+def _get_advantages(datum: tinker.Datum) -> list[float]:
+    return datum.loss_fn_inputs["advantages"].to_torch().tolist()
+
+
+class TestParseErrorTurnMasking:
+    """A transition carrying metrics['parse_error_masked']=1.0 contributes no
+    training signal: its action tokens get mask=0 and advantage=0, while every
+    other turn's action tokens are unchanged."""
+
+    def _make_trajectory(self, masked_turn: int | None = 1) -> Trajectory:
+        transitions = [
+            _make_transition([1, 2, 3, 4, 5], [10, 11, 12]),
+            _make_transition([1, 2, 3, 4, 5, 10, 11, 12, 20, 21], [30, 31]),
+            _make_transition(
+                [1, 2, 3, 4, 5, 10, 11, 12, 20, 21, 30, 31, 40],
+                [50, 51, 52],
+                done=True,
+            ),
+        ]
+        if masked_turn is not None:
+            transitions[masked_turn].metrics[PARSE_ERROR_MASKED_METRIC_KEY] = 1.0
+        return Trajectory(transitions=transitions, final_ob=tinker.ModelInput.from_ints([]))
+
+    def test_masked_turn_zeroed_others_unchanged(self):
+        data = trajectory_to_data(self._make_trajectory(masked_turn=1), traj_advantage=2.0)
+        assert len(data) == 1
+        mask = _get_mask(data[0])
+        advantages = _get_advantages(data[0])
+        # After the [1:] shift (same layout as TestMultiTurnPrefixTrajectory):
+        # targets:    [2,3,4,5, 10,11,12, 20,21, 30,31, 40, 50,51,52]
+        # mask:       [0,0,0,0,  1, 1, 1,  0, 0,  0, 0,  0,  1, 1, 1]
+        # advantages: [0,0,0,0,  2, 2, 2,  0, 0,  0, 0,  0,  2, 2, 2]
+        assert mask == [0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1]
+        assert advantages == [0, 0, 0, 0, 2, 2, 2, 0, 0, 0, 0, 0, 2, 2, 2]
+
+    def test_no_marker_is_unchanged(self):
+        data = trajectory_to_data(self._make_trajectory(masked_turn=None), traj_advantage=2.0)
+        mask = _get_mask(data[0])
+        advantages = _get_advantages(data[0])
+        assert mask == [0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1]
+        assert advantages == [0, 0, 0, 0, 2, 2, 2, 0, 0, 2, 2, 0, 2, 2, 2]
+
+    def test_masked_final_turn(self):
+        data = trajectory_to_data(self._make_trajectory(masked_turn=2), traj_advantage=1.0)
+        mask = _get_mask(data[0])
+        assert mask == [0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0]

@@ -34,6 +34,7 @@ _NEMOTRON3_ULTRA = (
     "nemotron3_ultra_disable_thinking",
     "nemotron3_ultra_medium_thinking",
 )
+_TML_V0 = ("tml_v0",)
 
 
 @dataclass
@@ -48,6 +49,7 @@ class ModelAttributes:
         recommended_renderers (tuple[str, ...]): Renderer names compatible with
             this model, ordered by recommendation (first is most recommended).
         is_vl (bool): Whether this is a vision-language model.
+        is_audio_in (bool): Whether the model accepts audio input.
     """
 
     organization: str
@@ -56,6 +58,7 @@ class ModelAttributes:
     is_chat: bool
     recommended_renderers: tuple[str, ...]
     is_vl: bool = False
+    is_audio_in: bool = False
 
 
 @cache
@@ -211,11 +214,10 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         attrs = get_model_attributes("Qwen/Qwen3-8B")
         print(attrs.size_str, attrs.recommended_renderers)
     """
-    model_name = model_name.split(":")[0]
+    model_name = model_name.split(":", 1)[0]
     if "/" not in model_name:
         raise ValueError(f"Model name must be in 'org/model' format, got {model_name!r}")
     org, model_version_full = model_name.split("/", 1)
-    model_version_full = model_version_full.split(":")[0]
     if org == "meta-llama":
         return get_llama_info()[model_version_full]
     elif org == "Qwen":
@@ -228,6 +230,18 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_moonshot_info()[model_version_full]
     elif org == "nvidia":
         return get_nvidia_info()[model_version_full]
+    elif model_name == "thinkingmachines/Inkling":
+        # Inkling is rendered by the standalone tml-renderers package.
+        # Version/size parsing is TBD; use the full model version for now.
+        return ModelAttributes(
+            organization=org,
+            version_str=model_version_full,
+            size_str=model_version_full,
+            is_chat=True,
+            recommended_renderers=_TML_V0,
+            is_vl=True,
+            is_audio_in=True,
+        )
     else:
         raise ConfigurationError(f"Unknown model: {model_name}")
 

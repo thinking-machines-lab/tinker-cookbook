@@ -30,6 +30,27 @@ We provide two libraries for the broader community to customize their language m
    uv pip install 'tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
    ```
 
+## Using Inkling
+
+Inkling is Thinking Machines Lab's model tailored for Tinker. It is a
+general-purpose model that can code, reason, call tools, and process image and
+audio inputs. Tinker Cookbook supports sampling and post-training Inkling
+through the standalone `tml-renderers` library; install it with the `inkling`
+extra, which also pulls in the required `torch>=2.10`:
+
+```bash
+uv pip install 'tinker-cookbook[inkling]'
+```
+
+Pass `model_name="thinkingmachines/Inkling"` anywhere the cookbook accepts a
+model name. The appropriate renderer and tokenizer are selected automatically.
+
+Inkling supports [controllable reasoning effort](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/thinking-effort/)
+and multimodal [audio](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/audio/)
+and [image](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/images/)
+inputs. See the [Inkling documentation](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/)
+for setup and usage details.
+
 ## Tinker
 
 Here we introduce a few Tinker primitives — the basic components to fine-tune LLMs (see the [quickstart guide](https://tinker-docs.thinkingmachines.ai/tinker/quickstart/) for more details):
@@ -76,6 +97,8 @@ We also include more complete examples in the [`tinker_cookbook/recipes/`](tinke
 - **[Distillation](tinker_cookbook/recipes/distillation/)**: on-policy and off-policy knowledge distillation with single- and multi-teacher configurations.
 - **[Tool use](tinker_cookbook/recipes/search_tool/)**: RL for retrieval-augmented generation (Search-R1 replication).
 - **[Multi-agent](tinker_cookbook/recipes/multiplayer_rl/)**: multi-agent RL with self-play and cross-play.
+- **[Audio](tinker_cookbook/recipes/audio/)**: SFT and RL for Inkling audio inputs, including speech recognition and speaking-style classification.
+- **[VLM image classification](tinker_cookbook/recipes/vlm_classifier/)**: supervised training and evaluation for vision-language models.
 
 The [recipes README](tinker_cookbook/recipes/README.md) covers all available recipes, including Harbor RL, rubric-based grading, VLM classification, and SDFT. Each recipe includes a `README.md` with implementation details, launch commands, and expected results.
 

@@ -1,10 +1,12 @@
 import logging
+import math
 from typing import Literal
 
 import tinker
 import torch
 
 from tinker_cookbook.exceptions import DataValidationError
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 _logged_reduction_modes: set[str] = set()
 
@@ -43,6 +45,146 @@ def compute_mean_nll(
         return float("nan")
 
     return float(-total_weighted_logprobs / total_weights)
+
+
+def _counted_byte_count(token_ids: list[int], counted: list[bool], tokenizer: Tokenizer) -> int:
+    """UTF-8 byte count of the ``counted`` tokens, decoded per contiguous run.
+
+    ``counted[i]`` marks whether ``token_ids[i]`` contributes to BPB (i.e. it is
+    trained and not a special token). Contiguous runs of counted tokens are
+    decoded separately so that gaps (untrained or special tokens) don't merge
+    unrelated spans across the hole.
+
+    Args:
+        token_ids (list[int]): Target token IDs.
+        counted (list[bool]): Per-token inclusion mask, aligned with
+            ``token_ids``.
+        tokenizer (Tokenizer): Tokenizer used to decode tokens back to text.
+
+    Returns:
+        int: Total number of UTF-8 bytes across all counted spans.
+    """
+    total_bytes = 0
+    run: list[int] = []
+    for token_id, is_counted in zip(token_ids, counted, strict=True):
+        if is_counted:
+            run.append(token_id)
+        elif run:
+            total_bytes += _decoded_byte_length(run, tokenizer)
+            run = []
+    if run:
+        total_bytes += _decoded_byte_length(run, tokenizer)
+    return total_bytes
+
+
+def _decoded_byte_length(token_ids: list[int], tokenizer: Tokenizer) -> int:
+    """UTF-8 byte length of ``token_ids`` decoded to text.
+
+    Decodes with ``skip_special_tokens=False``; the caller is responsible for
+    excluding special tokens beforehand so the numerator and denominator cover
+    the same span.
+    """
+    text = tokenizer.decode(token_ids, skip_special_tokens=False)
+    if isinstance(text, list):
+        # Some tokenizers can return a list of piece strings; join them.
+        text = "".join(text)
+    return len(text.encode("utf-8"))
+
+
+def _special_token_ids(tokenizer: Tokenizer) -> frozenset[int]:
+    special_ids = getattr(tokenizer, "all_special_ids", None) or []
+    return frozenset(int(token_id) for token_id in special_ids if token_id is not None)
+
+
+def _is_special_token(
+    token_id: int,
+    tokenizer: Tokenizer,
+    special_ids: frozenset[int],
+) -> bool:
+    if token_id in special_ids:
+        return True
+    is_special_token = getattr(tokenizer, "is_special_token", None)
+    return callable(is_special_token) and bool(is_special_token(token_id))
+
+
+def compute_bpb(
+    logprobs_list: list[tinker.TensorData],
+    weights_list: list[tinker.TensorData],
+    target_tokens_list: list[tinker.TensorData],
+    tokenizer: Tokenizer,
+) -> float:
+    """Compute bits-per-byte (BPB) across a batch: a tokenizer-independent NLL.
+
+    Per-token mean NLL (:func:`compute_mean_nll`) is not comparable across
+    models that use different tokenizers: a coarser tokenizer packs more text
+    into each token (higher nats/token) while a finer one spreads it over more
+    tokens (lower nats/token), even at equal modeling quality. Bits-per-byte
+    removes this dependence by dividing the *total* log-loss (converted to bits)
+    by the number of UTF-8 bytes of the target text::
+
+        bpb = -sum(logprob_i for i in counted) / (ln(2) * bytes(counted tokens))
+
+    A token is *counted* iff it is trained (``weight > 0``) and is not a special
+    token (per ``tokenizer.all_special_ids`` or ``tokenizer.is_special_token``,
+    when available). The same mask drives both the numerator and the byte
+    denominator, so they always cover the identical span.
+
+    Two properties matter:
+
+    * Weights are used only as a ``> 0`` mask, not as multipliers, so the total
+      nats stay correct even when weights are normalized per example
+      (``reduction="mean"``, the SFT default, where a datum's weights sum to 1.0
+      instead of being 0/1).
+    * Special / structural tokens (e.g. end-of-turn markers like ``<|im_end|>``
+      or ``<|eot_id|>``) are excluded from *both* sides. They carry no
+      natural-language bytes and their number varies by chat template, so
+      counting their NLL while dropping their bytes would bias BPB — worst for
+      short completions — and break comparability across templates.
+
+    The denominator counts the UTF-8 bytes of the decoded counted tokens, fixed
+    by the raw text rather than by the tokenization; combined with the matched
+    numerator this yields a proper compression rate comparable across
+    tokenizers. (If a tokenizer exposes no special-token surface, no tokens are
+    treated as special, but both sides still share the same mask and stay
+    consistent.)
+
+    Args:
+        logprobs_list (list[tinker.TensorData]): Per-token log-probabilities,
+            one entry per datum in the batch.
+        weights_list (list[tinker.TensorData]): Per-token loss weights aligned
+            with ``logprobs_list``.
+        target_tokens_list (list[tinker.TensorData]): Per-token target IDs
+            (``loss_fn_inputs["target_tokens"]``) aligned with ``weights_list``,
+            used to recover the target text for the byte count.
+        tokenizer (Tokenizer): Tokenizer used to decode target tokens to bytes.
+
+    Returns:
+        float: Bits per byte, or ``nan`` if the counted target has zero bytes.
+    """
+    special_ids = _special_token_ids(tokenizer)
+    total_nll_nats = 0.0
+    total_bytes = 0
+
+    for logprobs, weights, target_tokens in zip(
+        logprobs_list, weights_list, target_tokens_list, strict=True
+    ):
+        token_ids = [int(t) for t in target_tokens.data]
+        # A token contributes iff it is trained (weight > 0) and not special.
+        # This single mask is used for both the numerator and the byte
+        # denominator, guaranteeing they cover the identical span.
+        counted = [
+            weight > 0 and not _is_special_token(token_id, tokenizer, special_ids)
+            for weight, token_id in zip(weights.data, token_ids, strict=True)
+        ]
+        mask = torch.tensor(counted, dtype=torch.bool)
+        total_nll_nats += float(-logprobs.to_torch()[mask].sum())
+        total_bytes += _counted_byte_count(token_ids, counted, tokenizer)
+
+    if total_bytes == 0:
+        logger.warning("No target bytes found for BPB computation")
+        return float("nan")
+
+    return float(total_nll_nats / (math.log(2) * total_bytes))
 
 
 def create_rightshifted_model_input_and_leftshifted_targets(
@@ -167,6 +309,15 @@ def datum_from_model_input_weights(
                 # Image chunk - must remove entirely
                 model_input_chunks.pop()
                 total_length -= last.length
+
+    # Empty text chunks can appear when a renderer emits a header for an empty
+    # assistant message. They have no targets/weights, but a trailing empty
+    # chunk would prevent the right-shift below from dropping the last real token.
+    model_input_chunks = [
+        chunk
+        for chunk in model_input_chunks
+        if not (isinstance(chunk, tinker.types.EncodedTextChunk) and chunk.length == 0)
+    ]
 
     # Remove trailing images (no text to predict after them)
     while model_input_chunks and isinstance(

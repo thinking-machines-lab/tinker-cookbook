@@ -56,7 +56,7 @@ class TestRLDataProcessing:
 
 
 # ---------------------------------------------------------------------------
-# rl.metrics (used by tibo training code)
+# rl.metrics (used by downstream training code)
 # ---------------------------------------------------------------------------
 
 

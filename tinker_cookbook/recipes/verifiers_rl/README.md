@@ -10,6 +10,7 @@ prime env install user/env-id # ex. prime env install primeintellect/reverse-tex
 ```
 
 Examples:
+
 - [primeintellect/reverse-text](https://app.primeintellect.ai/dashboard/environments/primeintellect/reverse-text)
 - [primeintellect/alphabet-sort](https://app.primeintellect.ai/dashboard/environments/primeintellect/alphabet-sort)
 - [primeintellect/math-python](https://app.primeintellect.ai/dashboard/environments/primeintellect/math-python)
@@ -21,7 +22,7 @@ You can then run the recipe with the following command, where `vf_env_id` is the
 python -m tinker_cookbook.recipes.verifiers_rl.train vf_env_id=env-id vf_env_args='{}' ...
 ```
 
-The reverse-text example as configured should climb from ~0.2 to ~0.35 in 32 steps.
+The reverse-text example as configured should climb from ~0.4 to ~0.6 in 32 steps.
 
 You can also evaluate offline:
 
@@ -32,4 +33,5 @@ python -m tinker_cookbook.recipes.verifiers_rl.evaluate vf_env_id=env-id vf_env_
 This recipe also includes a standalone `AsyncOpenAI`-compatible client implemented with Tinker, which can be adapted for other applications.
 
 **Potential footgun:**
+
 - Some Environments Hub implementations involve users writing their own `<think>` parsers (e.g. for use with reasoning RL starting on Instruct models). Despite being Instruct models, the Qwen3 models/tokenizers all use the same tokenizer chat template, which will strip any observed `<think>` sections automatically (which may be inadvertently penalized by reward functions). Users should either modify the renderer, tokenizer chat template, or environment module if observing issues with thinking sections from Qwen3 models.

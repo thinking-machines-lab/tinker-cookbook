@@ -37,7 +37,11 @@ class TokenCompleter:
     """Abstract interface for generating tokens from a prompt."""
 
     async def __call__(
-        self, model_input: tinker.ModelInput, stop: StopCondition
+        self,
+        model_input: tinker.ModelInput,
+        stop: StopCondition,
+        *,
+        max_tokens: int | None = None,
     ) -> TokensWithLogprobs:
         """Generate a token sequence from the given model input.
 
@@ -45,6 +49,12 @@ class TokenCompleter:
             model_input (tinker.ModelInput): The tokenized prompt to complete from.
             stop (StopCondition): Stop sequences (strings) or stop token IDs
                 that terminate generation.
+            max_tokens (int | None): Optional per-call cap on the number of
+                generated tokens.  When set, implementations should generate at
+                most this many tokens (combined with any implementation-level
+                limit by taking the minimum).  ``None`` (default) means no
+                per-call override.  Rollout runners use this to enforce
+                per-turn token budgets.
 
         Returns:
             TokensWithLogprobs: The generated tokens with their log-probabilities
@@ -101,10 +111,22 @@ class TinkerTokenCompleter(TokenCompleter):
     context_window: int | None = None
 
     async def __call__(
-        self, model_input: tinker.ModelInput, stop: StopCondition
+        self,
+        model_input: tinker.ModelInput,
+        stop: StopCondition,
+        *,
+        max_tokens: int | None = None,
     ) -> TokensWithLogprobs:
-        """Sample an action from the policy given an observation."""
-        max_tokens = self.max_tokens
+        """Sample an action from the policy given an observation.
+
+        A per-call ``max_tokens`` override is combined with the completer's own
+        ``max_tokens`` by taking the minimum, and the ``context_window`` cap
+        (when configured) still applies on top.
+        """
+        if max_tokens is not None:
+            max_tokens = min(self.max_tokens, max_tokens)
+        else:
+            max_tokens = self.max_tokens
         if self.context_window is not None:
             max_tokens = min(max_tokens, self.context_window - model_input.length)
             if max_tokens <= 0:

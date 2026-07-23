@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     # this import takes a few seconds, so avoid it on the module import when possible
     from transformers.image_processing_utils import BaseImageProcessor
 
-    ImageProcessor: TypeAlias = BaseImageProcessor
+    ImageProcessor: TypeAlias = BaseImageProcessor | None
 else:
     # make it importable from other files as a type in runtime
     ImageProcessor: TypeAlias = Any
@@ -25,7 +25,14 @@ else:
 
 @cache
 def get_image_processor(model_name: str) -> ImageProcessor:
-    model_name = model_name.split(":")[0]
+    model_name = model_name.split(":", 1)[0]
+
+    # tml-renderers models tokenize images inside tml_renderers.v0
+    # (BlackPaddedImageTokenizer); they have no Hugging Face image processor.
+    # The tml_v0 cookbook renderer ignores
+    # the image_processor argument, so return None instead of failing in AutoImageProcessor.
+    if model_name == "thinkingmachines/Inkling":
+        return None
 
     from transformers.models.auto.image_processing_auto import AutoImageProcessor
 
@@ -43,6 +50,47 @@ def get_image_processor(model_name: str) -> ImageProcessor:
     processor = AutoImageProcessor.from_pretrained(model_name, **kwargs)
 
     return processor
+
+
+def image_to_data_uri(image: Any) -> str:
+    """Materialize a local image into a base64 JPEG ``data:`` URI.
+
+    Accepts a ``PIL.Image.Image``, a ``data:`` URI (returned unchanged), or a local file
+    path / ``file://`` URI. Remote URLs (``http(s)``, ``gs``, ``s3``, ...) are refused:
+    callers should materialize remote assets into local inputs (files or in-memory base64 data) first.
+    """
+    import base64
+    import io
+    from pathlib import Path
+    from urllib.parse import unquote, urlparse
+
+    def open_local_image(path: Path) -> Image.Image:
+        with Image.open(path.expanduser()) as opened:
+            return opened.copy()
+
+    if isinstance(image, Image.Image):
+        pil_image = image
+    elif isinstance(image, str):
+        if image.startswith("data:"):
+            return image
+        parsed = urlparse(image)
+        if parsed.scheme == "":
+            pil_image = open_local_image(Path(image))
+        elif parsed.scheme == "file" and parsed.netloc in ("", "localhost"):
+            pil_image = open_local_image(Path(unquote(parsed.path)))
+        else:
+            raise ValueError(
+                f"does not fetch remote image URLs (scheme {parsed.scheme!r}); materialize "
+                f"{image!r} into a PIL image, a local path, or a base64 data: URI first"
+            )
+    else:
+        raise TypeError(f"image must be a PIL.Image.Image or str; got {type(image)!r}")
+
+    if pil_image.mode in ("RGBA", "LA", "P"):
+        pil_image = pil_image.convert("RGB")
+    buf = io.BytesIO()
+    pil_image.save(buf, format="JPEG")
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def resize_image(image: Image.Image, max_size: int) -> Image.Image:

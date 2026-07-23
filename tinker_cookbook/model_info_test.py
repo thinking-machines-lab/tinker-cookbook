@@ -27,6 +27,7 @@ class TestQwen3_6:
         assert attrs.size_str == size_str
         assert attrs.is_chat is True
         assert attrs.is_vl is True
+        assert attrs.is_audio_in is False
 
 
 class TestNemotron3:
@@ -56,6 +57,25 @@ class TestNemotron3:
             "nemotron3_ultra_disable_thinking",
             "nemotron3_ultra_medium_thinking",
         ]
+
+
+class TestTmlModels:
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "thinkingmachines/Inkling",
+            "thinkingmachines/Inkling:peft:131072",
+        ],
+    )
+    def test_tml_renderers_models_use_tml_v0_renderer(self, model_name: str):
+        assert get_recommended_renderer_name(model_name) == "tml_v0"
+
+    def test_inkling_attributes_route_to_tml_renderers(self):
+        attrs = get_model_attributes("thinkingmachines/Inkling")
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is True
+        assert attrs.recommended_renderers == ("tml_v0",)
 
 
 class TestWarnIfRendererNotRecommended:

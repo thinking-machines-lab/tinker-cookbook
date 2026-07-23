@@ -11,10 +11,10 @@ to the token-level Env interface, including:
 import asyncio
 from unittest.mock import MagicMock, patch
 
-import pytest
 import tinker
 
 from tinker_cookbook.renderers.base import Message, ParseTermination
+from tinker_cookbook.rl import types
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
 
 # ---------------------------------------------------------------------------
@@ -97,8 +97,10 @@ class TestInitialObservation:
         )
         env = EnvFromMessageEnv(renderer=renderer, message_env=msg_env)
 
-        model_input, stop_cond = asyncio.run(env.initial_observation())
+        result = asyncio.run(env.initial_observation())
 
+        assert isinstance(result, tuple)
+        model_input, stop_cond = result
         assert model_input.to_ints() == [10, 20, 30]
         assert stop_cond == ["<eos>"]
         renderer.build_generation_prompt.assert_called_once_with(initial_msgs)
@@ -140,7 +142,7 @@ class TestStepParseFailure:
 
         assert result.reward == -2.0
         assert result.episode_done is True
-        assert result.metrics == {"parse_error": 1.0}
+        assert result.metrics == {"parse_error": 1.0, "stop/parse_error": 1.0}
         assert result.next_observation.length == 0
         # MessageEnv.step should NOT have been called
         assert len(msg_env.step_calls) == 0
@@ -191,7 +193,7 @@ class TestStepParseFailure:
         result = asyncio.run(env.step([1, 2, 3]))
 
         assert result.reward == -2.0
-        assert result.metrics == {"parse_error": 1.0}
+        assert result.metrics == {"parse_error": 1.0, "stop/parse_error": 1.0}
         assert len(msg_env.step_calls) == 0
 
     def test_parse_failure_no_terminate(self):
@@ -446,8 +448,10 @@ class TestMaxGenerationTokens:
         assert result.reward == 0.5
         assert "context_overflow" not in result.metrics
 
-    def test_initial_observation_raises_on_overflow(self):
-        """initial_observation raises ValueError when prompt + generation budget exceeds limit."""
+    def test_initial_observation_overflow_returns_graceful_stop(self):
+        """initial_observation returns InitialObservationOverflow (instead of
+        raising) when prompt + generation budget exceeds the limit, so the
+        rollout ends gracefully with the flat context_overflow_reward."""
         renderer = _make_renderer(gen_prompt_tokens=list(range(80)), stop_sequences=["<s>"])
         msg_env = StubMessageEnv(
             initial_messages=[{"role": "user", "content": "hi"}],
@@ -460,8 +464,15 @@ class TestMaxGenerationTokens:
             max_generation_tokens=30,  # 80 + 30 = 110 > 100
         )
 
-        with pytest.raises(ValueError, match="too long for the model's context window"):
-            asyncio.run(env.initial_observation())
+        result = asyncio.run(env.initial_observation())
+
+        assert isinstance(result, types.InitialObservationOverflow)
+        assert result.reward == -0.1  # default context_overflow_reward
+        assert result.metrics["max_tokens_reached"] == 1.0
+        assert result.metrics["stop/max_tokens"] == 1.0
+        assert "too long for the model's context window" in str(
+            result.logs["initial_observation_overflow"]
+        )
 
     def test_initial_observation_ok_when_within_limit(self):
         """initial_observation succeeds when prompt + generation budget fits."""
@@ -477,8 +488,10 @@ class TestMaxGenerationTokens:
             max_generation_tokens=30,  # 50 + 30 = 80 <= 100
         )
 
-        model_input, stop_cond = asyncio.run(env.initial_observation())
+        result = asyncio.run(env.initial_observation())
 
+        assert isinstance(result, tuple)
+        model_input, stop_cond = result
         assert model_input.to_ints() == list(range(50))
         assert stop_cond == ["<s>"]
 

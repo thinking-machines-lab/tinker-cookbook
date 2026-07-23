@@ -21,6 +21,7 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     TrainOnWhat,
     UnparsedToolCall,
+    detect_unterminated_tool_block,
     ensure_list,
     ensure_text,
     parse_response_for_stop_token,
@@ -54,6 +55,26 @@ def _split_tool_calls_section(content: str) -> tuple[str, str | None]:
         return content, None
     tool_section = match.group(1) if match.group(1) is not None else match.group(2)
     return content[: match.start()], tool_section
+
+
+def _detect_dangling_tool_block(content: str) -> UnparsedToolCall | None:
+    """Detect a Kimi K2 tool block opened but never closed.
+
+    Covers both section-marker spellings and an individual call inside a
+    closed section. The section/call regexes above only match complete
+    blocks, so without this check a dangling tool-call intent silently
+    degrades to plain text even when the response terminated cleanly on
+    ``<|im_end|>``.
+    """
+    for open_marker, close_marker in (
+        ("<|tool_calls_section_begin|>", "<|tool_calls_section_end|>"),
+        ("<|tool_call_section_begin|>", "<|tool_call_section_end|>"),
+        ("<|tool_call_begin|>", "<|tool_call_end|>"),
+    ):
+        dangling = detect_unterminated_tool_block(content, open_marker, close_marker)
+        if dangling is not None:
+            return dangling
+    return None
 
 
 def _extract_tool_name(tool_id: str) -> str:
@@ -539,6 +560,13 @@ class KimiK2Renderer(Renderer):
             if unparsed_tool_calls:
                 assistant_message["unparsed_tool_calls"] = unparsed_tool_calls
 
+        dangling = _detect_dangling_tool_block(content)
+        if dangling is not None:
+            assistant_message["unparsed_tool_calls"] = [
+                *assistant_message.get("unparsed_tool_calls", []),
+                dangling,
+            ]
+
         content_parts = parse_think_blocks(text_content)
         assistant_message["content"] = content_parts if content_parts is not None else text_content
 
@@ -567,6 +595,13 @@ class KimiK2Renderer(Renderer):
                     message["tool_calls"] = tool_calls
                 if unparsed_tool_calls:
                     message["unparsed_tool_calls"] = unparsed_tool_calls
+
+            dangling = _detect_dangling_tool_block(content)
+            if dangling is not None:
+                message["unparsed_tool_calls"] = [
+                    *message.get("unparsed_tool_calls", []),
+                    dangling,
+                ]
 
             content_parts = parse_think_blocks(text_content)
             message["content"] = content_parts if content_parts is not None else text_content

@@ -126,6 +126,7 @@ class ClassifierEvaluator(SamplingClientEvaluator):
             Message(role="user", content=content_parts),
         ]
 
+        # TODO: refactor this in the future, we should not do build_generation_prompt, prefill etc.
         return self.renderer.build_generation_prompt(
             messages=messages, role="assistant", prefill="The subject in this photo is:"
         )
