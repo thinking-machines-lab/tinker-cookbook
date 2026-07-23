@@ -334,6 +334,45 @@ def test_build_generation_prompt_defaults_to_high_effort() -> None:
     assert "Thinking effort level: 0.9" in renderer.tokenizer.decode(default_prompt.to_ints())
 
 
+def _disable_thinking_renderer() -> tml_v0.TmlV0Renderer:
+    _require_tml_renderers()
+    tokenizer = get_tokenizer("thinkingmachines/Inkling")
+    return cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0_disable_thinking", tokenizer))
+
+
+def test_disable_thinking_renderer_generation_prompt_uses_zero_effort() -> None:
+    renderer = _disable_thinking_renderer()
+
+    decoded = renderer.tokenizer.decode(renderer.build_generation_prompt(_messages()).to_ints())
+
+    assert "Thinking effort level: 0<|end_message|>" in decoded
+    assert "Thinking effort level: 0.9" not in decoded
+
+
+def test_disable_thinking_renderer_sft_example_uses_zero_effort_and_plain_target() -> None:
+    renderer = _disable_thinking_renderer()
+
+    model_input, weights = renderer.build_supervised_example(_messages())
+    ints = model_input.to_ints()
+    decoded = renderer.tokenizer.decode(ints)
+    trained = renderer.tokenizer.decode([t for t, w in zip(ints, weights.tolist()) if w > 0])
+
+    assert "Thinking effort level: 0<|end_message|>" in decoded
+    # The no-thinking demos train on a plain assistant answer — no <think> scaffold.
+    assert "<think>" not in decoded
+    assert "Hello." in trained
+
+
+def test_explicit_effort_overrides_disable_thinking_default() -> None:
+    renderer = _disable_thinking_renderer()
+
+    decoded = renderer.tokenizer.decode(
+        renderer.build_generation_prompt(_messages(), effort=0.9).to_ints()
+    )
+
+    assert "Thinking effort level: 0.9" in decoded
+
+
 def test_build_generation_prompt_effort_validates_range() -> None:
     renderer = _renderer()
 
