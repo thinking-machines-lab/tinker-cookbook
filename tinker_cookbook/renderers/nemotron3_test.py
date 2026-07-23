@@ -19,9 +19,11 @@ from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
 from tinker_cookbook.renderers.nemotron3 import (
     Nemotron3DisableThinkingRenderer,
     Nemotron3LowThinkingRenderer,
+    Nemotron3PreserveThinkingRenderer,
     Nemotron3Renderer,
     Nemotron3UltraDisableThinkingRenderer,
     Nemotron3UltraMediumThinkingRenderer,
+    Nemotron3UltraPreserveThinkingRenderer,
     Nemotron3UltraRenderer,
     _format_nemotron3_tool_declaration,
 )
@@ -60,9 +62,15 @@ def _hf_generation_tokens(
     enable_thinking: bool = True,
     low_effort: bool = False,
     medium_effort: bool = False,
+    truncate_history_thinking: bool = True,
 ):
     """Run HF apply_chat_template with generation prompt and return token list."""
-    kwargs = {"add_generation_prompt": True, "tokenize": True, "enable_thinking": enable_thinking}
+    kwargs = {
+        "add_generation_prompt": True,
+        "tokenize": True,
+        "enable_thinking": enable_thinking,
+        "truncate_history_thinking": truncate_history_thinking,
+    }
     if tools is not None:
         kwargs["tools"] = tools
     if low_effort:
@@ -83,9 +91,15 @@ def _hf_supervised_tokens(
     enable_thinking: bool = True,
     low_effort: bool = False,
     medium_effort: bool = False,
+    truncate_history_thinking: bool = True,
 ):
     """Run HF apply_chat_template without generation prompt, strip trailing newline, re-encode."""
-    kwargs = {"add_generation_prompt": False, "tokenize": False, "enable_thinking": enable_thinking}
+    kwargs = {
+        "add_generation_prompt": False,
+        "tokenize": False,
+        "enable_thinking": enable_thinking,
+        "truncate_history_thinking": truncate_history_thinking,
+    }
     if tools is not None:
         kwargs["tools"] = tools
     if low_effort:
@@ -1105,3 +1119,240 @@ def test_ultra_medium_thinking_multiturn_supervised_matches_hf(
         f"Cookbook: {nemotron_ultra_tokenizer.decode(cookbook)}\n"
         f"HF: {nemotron_ultra_tokenizer.decode(hf)}"
     )
+
+
+# =============================================================================
+# Preserve-Thinking Renderer Tests (HF truncate_history_thinking=False)
+# =============================================================================
+
+# The default Nemotron-3 renderers strip <think> blocks from historical assistant
+# turns, matching the HF template default truncate_history_thinking=True. The
+# preserve-thinking variants keep them, matching truncate_history_thinking=False.
+
+
+@pytest.fixture(scope="module")
+def nemotron_preserve_thinking_renderer(nemotron_tokenizer):
+    return get_renderer("nemotron3_preserve_thinking", nemotron_tokenizer)
+
+
+@pytest.fixture(scope="module")
+def nemotron_ultra_preserve_thinking_renderer(nemotron_ultra_tokenizer):
+    return get_renderer("nemotron3_ultra_preserve_thinking", nemotron_ultra_tokenizer)
+
+
+def test_preserve_thinking_renderer_types(
+    nemotron_preserve_thinking_renderer, nemotron_ultra_preserve_thinking_renderer
+):
+    assert isinstance(nemotron_preserve_thinking_renderer, Nemotron3PreserveThinkingRenderer)
+    assert isinstance(nemotron_preserve_thinking_renderer, Nemotron3Renderer)
+    assert isinstance(
+        nemotron_ultra_preserve_thinking_renderer, Nemotron3UltraPreserveThinkingRenderer
+    )
+    assert isinstance(nemotron_ultra_preserve_thinking_renderer, Nemotron3UltraRenderer)
+
+
+def test_preserve_thinking_has_extension_property(
+    nemotron_preserve_thinking_renderer,
+    nemotron_ultra_preserve_thinking_renderer,
+    nemotron_renderer,
+):
+    """Preserving history thinking gives the extension property; the default does not."""
+    assert nemotron_preserve_thinking_renderer.has_extension_property is True
+    assert nemotron_ultra_preserve_thinking_renderer.has_extension_property is True
+    assert nemotron_renderer.has_extension_property is False
+
+
+def test_default_strips_history_thinking(nemotron_tokenizer, nemotron_renderer):
+    """Sanity contrast: the default renderer collapses historical thinking."""
+    messages = get_multiturn_thinking_conversation()
+    decoded = nemotron_tokenizer.decode(
+        nemotron_renderer.build_supervised_example(messages)[0].to_ints()
+    )
+    assert "First turn reasoning." not in decoded  # historical thinking dropped
+    assert "<think></think>" in decoded
+    assert "Second turn reasoning." in decoded  # last turn's thinking always kept
+
+
+def test_preserve_thinking_keeps_history_thinking(
+    nemotron_tokenizer, nemotron_preserve_thinking_renderer
+):
+    """Preserve variant keeps the historical <think>...</think> block verbatim."""
+    messages = get_multiturn_thinking_conversation()
+    decoded = nemotron_tokenizer.decode(
+        nemotron_preserve_thinking_renderer.build_supervised_example(messages)[0].to_ints()
+    )
+    assert "<think>\nFirst turn reasoning.\n</think>" in decoded
+    assert "Second turn reasoning." in decoded
+
+
+def test_preserve_thinking_multiturn_supervised_matches_hf(
+    nemotron_tokenizer, nemotron_preserve_thinking_renderer
+):
+    """Preserve variant supervised example matches HF truncate_history_thinking=False."""
+    messages = get_multiturn_thinking_conversation()
+    r = nemotron_preserve_thinking_renderer
+    cookbook = r.build_supervised_example(messages)[0].to_ints()
+    hf = _hf_supervised_tokens(
+        nemotron_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        truncate_history_thinking=False,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_preserve_thinking_multiturn_generation_matches_hf(
+    nemotron_tokenizer, nemotron_preserve_thinking_renderer
+):
+    """Preserve variant generation prompt matches HF truncate_history_thinking=False."""
+    messages = get_multiturn_thinking_conversation()[:4]
+    r = nemotron_preserve_thinking_renderer
+    cookbook = r.build_generation_prompt(messages).to_ints()
+    hf = _hf_generation_tokens(
+        nemotron_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        truncate_history_thinking=False,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_preserve_thinking_historical_tool_call_supervised_matches_hf(
+    nemotron_tokenizer, nemotron_preserve_thinking_renderer
+):
+    """Historical assistant turn with thinking + text + tool_calls, preserved, matches HF."""
+    messages, tools = get_historical_tool_call_with_nonempty_text_conversation()
+    openai_tools = [{"type": "function", "function": tool} for tool in tools]
+    system_prompt = "You are a helpful assistant."
+    r = nemotron_preserve_thinking_renderer
+
+    prefix = r.create_conversation_prefix_with_tools(tools, system_prompt=system_prompt)
+    cookbook = r.build_supervised_example(prefix + messages)[0].to_ints()
+
+    hf_messages = [
+        {"role": "system", "content": system_prompt},
+        *[r.to_openai_message(m) for m in messages],
+    ]
+    hf = _hf_supervised_tokens(
+        nemotron_tokenizer, hf_messages, tools=openai_tools, truncate_history_thinking=False
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_ultra_preserve_thinking_multiturn_supervised_matches_hf(
+    nemotron_ultra_tokenizer, nemotron_ultra_preserve_thinking_renderer
+):
+    """Ultra preserve variant supervised example matches HF truncate_history_thinking=False."""
+    messages = get_multiturn_thinking_conversation()
+    r = nemotron_ultra_preserve_thinking_renderer
+    cookbook = r.build_supervised_example(messages)[0].to_ints()
+    hf = _hf_supervised_tokens(
+        nemotron_ultra_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        truncate_history_thinking=False,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_ultra_tokenizer.decode(cookbook)}\n"
+        f"HF: {nemotron_ultra_tokenizer.decode(hf)}"
+    )
+
+
+def test_ultra_preserve_thinking_multiturn_generation_matches_hf(
+    nemotron_ultra_tokenizer, nemotron_ultra_preserve_thinking_renderer
+):
+    """Ultra preserve variant generation prompt matches HF truncate_history_thinking=False."""
+    messages = get_multiturn_thinking_conversation()[:4]
+    r = nemotron_ultra_preserve_thinking_renderer
+    cookbook = r.build_generation_prompt(messages).to_ints()
+    hf = _hf_generation_tokens(
+        nemotron_ultra_tokenizer,
+        [r.to_openai_message(m) for m in messages],
+        truncate_history_thinking=False,
+    )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_ultra_tokenizer.decode(cookbook)}\n"
+        f"HF: {nemotron_ultra_tokenizer.decode(hf)}"
+    )
+
+
+def test_preserve_thinking_registered_in_model_info():
+    from tinker_cookbook import model_info
+
+    for model in [
+        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+        "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+    ]:
+        assert "nemotron3_preserve_thinking" in model_info.get_recommended_renderer_names(model)
+    assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
+        "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
+    )
+
+
+# The preserve-thinking behavior isn't limited to the two named variants above:
+# any Nemotron-3 mode renderer keeps history thinking when constructed with
+# strip_thinking_from_history=False. These check that opt-in matches HF for the
+# disable / low-effort / medium-effort modes, which have no named preserve variant.
+
+
+def _assert_mode_preserve_matches_hf(tokenizer, renderer, **hf_kwargs):
+    """Renderer (built with strip_thinking_from_history=False) matches HF with
+    truncate_history_thinking=False plus the mode flags in ``hf_kwargs``."""
+    sup_msgs = get_multiturn_thinking_conversation()
+    cookbook_sup = renderer.build_supervised_example(sup_msgs)[0].to_ints()
+    hf_sup = _hf_supervised_tokens(
+        tokenizer,
+        [renderer.to_openai_message(m) for m in sup_msgs],
+        truncate_history_thinking=False,
+        **hf_kwargs,
+    )
+    assert cookbook_sup == hf_sup, (
+        f"supervised: {tokenizer.decode(cookbook_sup)}\nHF: {tokenizer.decode(hf_sup)}"
+    )
+
+    gen_msgs = get_multiturn_thinking_conversation()[:4]
+    cookbook_gen = renderer.build_generation_prompt(gen_msgs).to_ints()
+    hf_gen = _hf_generation_tokens(
+        tokenizer,
+        [renderer.to_openai_message(m) for m in gen_msgs],
+        truncate_history_thinking=False,
+        **hf_kwargs,
+    )
+    assert cookbook_gen == hf_gen, (
+        f"generation: {tokenizer.decode(cookbook_gen)}\nHF: {tokenizer.decode(hf_gen)}"
+    )
+
+
+def test_disable_thinking_preserve_matches_hf(nemotron_tokenizer):
+    """Reasoning-off + strip_thinking_from_history=False keeps history, matches HF."""
+    renderer = Nemotron3DisableThinkingRenderer(
+        nemotron_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_tokenizer, renderer, enable_thinking=False)
+
+
+def test_low_thinking_preserve_matches_hf(nemotron_super_tokenizer):
+    """Low-effort + strip_thinking_from_history=False keeps history, matches HF (Super)."""
+    renderer = Nemotron3LowThinkingRenderer(
+        nemotron_super_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_super_tokenizer, renderer, low_effort=True)
+
+
+def test_ultra_medium_thinking_preserve_matches_hf(nemotron_ultra_tokenizer):
+    """Ultra medium-effort + strip_thinking_from_history=False keeps history, matches HF."""
+    renderer = Nemotron3UltraMediumThinkingRenderer(
+        nemotron_ultra_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_ultra_tokenizer, renderer, medium_effort=True)
+
+
+def test_ultra_disable_thinking_preserve_matches_hf(nemotron_ultra_tokenizer):
+    """Ultra reasoning-off + strip_thinking_from_history=False keeps history, matches HF."""
+    renderer = Nemotron3UltraDisableThinkingRenderer(
+        nemotron_ultra_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_ultra_tokenizer, renderer, enable_thinking=False)

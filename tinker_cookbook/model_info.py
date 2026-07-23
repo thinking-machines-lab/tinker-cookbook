@@ -27,12 +27,13 @@ _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 _KIMI_K26 = ("kimi_k26", "kimi_k26_disable_thinking", "kimi_k26_preserve_thinking")
-_NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking")
+_NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking", "nemotron3_preserve_thinking")
 _NEMOTRON3_SUPER = _NEMOTRON3 + ("nemotron3_low_thinking",)
 _NEMOTRON3_ULTRA = (
     "nemotron3_ultra",
     "nemotron3_ultra_disable_thinking",
     "nemotron3_ultra_medium_thinking",
+    "nemotron3_ultra_preserve_thinking",
 )
 _TML_V0 = ("tml_v0",)
 
