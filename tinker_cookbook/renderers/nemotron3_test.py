@@ -1287,9 +1287,72 @@ def test_preserve_thinking_registered_in_model_info():
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
     ]:
         assert "nemotron3_preserve_thinking" in model_info.get_recommended_renderer_names(model)
-    assert (
-        "nemotron3_ultra_preserve_thinking"
-        in model_info.get_recommended_renderer_names(
-            "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
-        )
+    assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
+        "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
     )
+
+
+# The preserve-thinking behavior isn't limited to the two named variants above:
+# any Nemotron-3 mode renderer keeps history thinking when constructed with
+# strip_thinking_from_history=False. These check that opt-in matches HF for the
+# disable / low-effort / medium-effort modes, which have no named preserve variant.
+
+
+def _assert_mode_preserve_matches_hf(tokenizer, renderer, **hf_kwargs):
+    """Renderer (built with strip_thinking_from_history=False) matches HF with
+    truncate_history_thinking=False plus the mode flags in ``hf_kwargs``."""
+    sup_msgs = get_multiturn_thinking_conversation()
+    cookbook_sup = renderer.build_supervised_example(sup_msgs)[0].to_ints()
+    hf_sup = _hf_supervised_tokens(
+        tokenizer,
+        [renderer.to_openai_message(m) for m in sup_msgs],
+        truncate_history_thinking=False,
+        **hf_kwargs,
+    )
+    assert cookbook_sup == hf_sup, (
+        f"supervised: {tokenizer.decode(cookbook_sup)}\nHF: {tokenizer.decode(hf_sup)}"
+    )
+
+    gen_msgs = get_multiturn_thinking_conversation()[:4]
+    cookbook_gen = renderer.build_generation_prompt(gen_msgs).to_ints()
+    hf_gen = _hf_generation_tokens(
+        tokenizer,
+        [renderer.to_openai_message(m) for m in gen_msgs],
+        truncate_history_thinking=False,
+        **hf_kwargs,
+    )
+    assert cookbook_gen == hf_gen, (
+        f"generation: {tokenizer.decode(cookbook_gen)}\nHF: {tokenizer.decode(hf_gen)}"
+    )
+
+
+def test_disable_thinking_preserve_matches_hf(nemotron_tokenizer):
+    """Reasoning-off + strip_thinking_from_history=False keeps history, matches HF."""
+    renderer = Nemotron3DisableThinkingRenderer(
+        nemotron_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_tokenizer, renderer, enable_thinking=False)
+
+
+def test_low_thinking_preserve_matches_hf(nemotron_super_tokenizer):
+    """Low-effort + strip_thinking_from_history=False keeps history, matches HF (Super)."""
+    renderer = Nemotron3LowThinkingRenderer(
+        nemotron_super_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_super_tokenizer, renderer, low_effort=True)
+
+
+def test_ultra_medium_thinking_preserve_matches_hf(nemotron_ultra_tokenizer):
+    """Ultra medium-effort + strip_thinking_from_history=False keeps history, matches HF."""
+    renderer = Nemotron3UltraMediumThinkingRenderer(
+        nemotron_ultra_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_ultra_tokenizer, renderer, medium_effort=True)
+
+
+def test_ultra_disable_thinking_preserve_matches_hf(nemotron_ultra_tokenizer):
+    """Ultra reasoning-off + strip_thinking_from_history=False keeps history, matches HF."""
+    renderer = Nemotron3UltraDisableThinkingRenderer(
+        nemotron_ultra_tokenizer, strip_thinking_from_history=False
+    )
+    _assert_mode_preserve_matches_hf(nemotron_ultra_tokenizer, renderer, enable_thinking=False)
