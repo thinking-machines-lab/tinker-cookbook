@@ -31,13 +31,13 @@ Here are instructions for how to solve a problem:
 5. Include your final answer after the "Answer:" prefix. The answer should be between one to five words.
 
 Here is an example of solving a real question:
-"Between 2020 and 2025, which year did New York City see the most population growth and how did San Francisco population change in that year?"
+"What was the population of San Francisco in the year that New York City saw its most population growth between 2020 and 2025?"
 
-1. Think step by step: In order to answer this question, I need to know the population of New York City and San Francisco between 2020 and 2025. I will search for the population of New York City in each year
+1. Think step by step: In order to answer this question, I first need to know which year between 2020 and 2025 New York City saw the most population growth. I will search for the population of New York City in each year.
 2. Calling search tool: <tool_call>{"name": "search", "arguments": {"query_list": ["Population New York city between 2020 and 2025"]}}</tool_call> (Output omitted for brevity)
-3. Think step by step again: I have the population of New York City in each year, and I see that the population of New York City grew the most in 2024. I need to know the population of San Francisco in 2024. I will search for the population of San Francisco in each year.
-<tool_call>{"name": "search", "arguments": {"query_list": ["Population San Francisco between 2023 and 2024"]}}</tool_call> (Output omitted for brevity)
-4. Answer: The population of New York City grew the most in 2024, and the population of San Francisco changed by XXXX in 2024.
+3. Think step by step again: I have the population of New York City in each year, and I see that the population of New York City grew the most in 2024. Now I need to know the population of San Francisco in 2024. I will search for it.
+<tool_call>{"name": "search", "arguments": {"query_list": ["Population San Francisco 2024"]}}</tool_call> (Output omitted for brevity)
+4. Answer: XXXX
 """
 
 
