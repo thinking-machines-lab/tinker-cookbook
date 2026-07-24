@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+from typing import cast
+
 import tinker
 
 from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.eval.benchmarks._types import BenchmarkResult
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator
 from tinker_cookbook.rl.types import (
+    ActionExtra,
+    Env,
     EnvGroupBuilder,
+    RLDataset,
+    StepResult,
     Trajectory,
     TrajectoryGroup,
     Transition,
@@ -48,6 +56,55 @@ class _FakeBuilder(EnvGroupBuilder):
 
     def logging_tags(self) -> list[str]:
         return self._tags
+
+
+class _OneStepEnv(Env):
+    """Environment that ends after one sampled action."""
+
+    async def initial_observation(self) -> tuple[tinker.ModelInput, list[str]]:
+        return tinker.ModelInput.from_ints([1, 2, 3]), []
+
+    async def step(self, action: list[int], *, extra: ActionExtra | None = None) -> StepResult:
+        return StepResult(
+            reward=1.0,
+            episode_done=True,
+            next_observation=tinker.ModelInput.from_ints([]),
+            next_stop_condition=[],
+        )
+
+
+class _OneStepBuilder(EnvGroupBuilder):
+    async def make_envs(self) -> list[Env]:
+        return [_OneStepEnv()]
+
+
+class _FakeDataset(RLDataset):
+    def __init__(self, builders: list[EnvGroupBuilder]):
+        self._builders = builders
+
+    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+        assert index == 0
+        return self._builders
+
+    def __len__(self) -> int:
+        return 1
+
+
+class _RecordingSamplingClient:
+    def __init__(self):
+        self.temperatures: list[float] = []
+
+    async def sample_async(
+        self,
+        *,
+        prompt: tinker.ModelInput,
+        num_samples: int,
+        sampling_params: tinker.SamplingParams,
+    ):
+        self.temperatures.append(sampling_params.temperature)
+        return SimpleNamespace(
+            sequences=[SimpleNamespace(tokens=[4, 5], logprobs=[0.1, 0.2], stop_reason="stop")]
+        )
 
 
 def _make_evaluator(name: str, builders: list[EnvGroupBuilder]) -> RLTestSetEvaluator:
@@ -150,3 +207,14 @@ class TestLastResult:
         assert isinstance(result, BenchmarkResult)
         assert result.num_examples == 2  # 2 groups, not 4 trajectories
         assert result.num_correct == 1  # first group has reward > 0
+
+
+class TestTemperature:
+    def test_eval_uses_configured_temperature(self):
+        dataset = _FakeDataset([_OneStepBuilder()])
+        evaluator = RLTestSetEvaluator(dataset, max_tokens=8, temperature=0.5)
+        sampling_client = _RecordingSamplingClient()
+
+        asyncio.run(evaluator(cast(tinker.SamplingClient, sampling_client)))
+
+        assert sampling_client.temperatures == [0.5]
