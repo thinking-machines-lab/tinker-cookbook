@@ -347,6 +347,10 @@ def set_rollout_executor(executor: Executor | None) -> None:
 
     Pass any ``concurrent.futures.Executor`` -- ``ProcessPoolExecutor`` works
     out of the box, or wrap Ray / custom cluster dispatchers as ``Executor``.
+    ``ProcessPoolExecutor`` must use the ``"spawn"`` (or ``"forkserver"``)
+    start method: the Tinker client's background event-loop thread does not
+    survive ``fork()``, so fork-started workers hang silently. The default
+    start method on Linux is ``fork``, so pass ``mp_context`` explicitly.
 
     Pass ``None`` to revert to the default in-process async behavior.
 
@@ -354,15 +358,43 @@ def set_rollout_executor(executor: Executor | None) -> None:
         executor (Executor | None): The executor to use for dispatching
             rollout tasks, or ``None`` to run rollouts in-process.
 
+    Raises:
+        ValueError: If ``executor`` is a ``ProcessPoolExecutor`` using the
+            ``fork`` start method.
+
     Example::
 
+        import multiprocessing
         from concurrent.futures import ProcessPoolExecutor
 
-        set_rollout_executor(ProcessPoolExecutor(max_workers=4))
+        set_rollout_executor(
+            ProcessPoolExecutor(max_workers=4, mp_context=multiprocessing.get_context("spawn"))
+        )
         # ... run training ...
         set_rollout_executor(None)  # revert to in-process
     """
+    _check_executor_start_method(executor)
     _rollout_executor.set(executor)
+
+
+def _check_executor_start_method(executor: Executor | None) -> None:
+    """Reject process pools whose workers are created via ``fork``.
+
+    The Tinker client runs a background event-loop thread that does not
+    survive ``fork()``; workers in a fork-started pool deadlock silently
+    when they touch the client. Fail fast at registration time instead.
+    """
+    mp_context = getattr(executor, "_mp_context", None)
+    get_start_method = getattr(mp_context, "get_start_method", None)
+    if get_start_method is not None and get_start_method() == "fork":
+        raise ValueError(
+            "This ProcessPoolExecutor uses the 'fork' start method (the default on "
+            "Linux). Worker processes created via fork() hang when using the Tinker "
+            "client, because its background threads do not survive fork(). Create "
+            "the pool with ProcessPoolExecutor(..., "
+            'mp_context=multiprocessing.get_context("spawn")) '
+            "(or 'forkserver') instead."
+        )
 
 
 def get_rollout_executor() -> Executor | None:

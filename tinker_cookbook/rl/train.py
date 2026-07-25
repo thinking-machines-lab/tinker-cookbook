@@ -1872,10 +1872,15 @@ async def main(
         config (Config): Training configuration.
         rollout_executor (Executor | None): Optional ``concurrent.futures.Executor``
             for offloading group rollouts to separate processes or remote
-            workers. Pass ``ProcessPoolExecutor(max_workers=N)`` for
+            workers. Pass ``ProcessPoolExecutor(max_workers=N,
+            mp_context=multiprocessing.get_context("spawn"))`` for
             multi-process execution, or any custom ``Executor`` (Ray,
-            cluster dispatchers, etc.). Default ``None`` runs rollouts as
-            asyncio coroutines in-process.
+            cluster dispatchers, etc.). Process pools must use the
+            ``"spawn"`` (or ``"forkserver"``) start method: the Tinker
+            client's background event-loop thread does not survive
+            ``fork()``, so fork-started workers (the Linux default) hang
+            silently. Default ``None`` runs rollouts as asyncio
+            coroutines in-process.
 
     Raises:
         ConfigurationError: If ``kl_penalty_coef > 0`` but
