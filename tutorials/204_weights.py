@@ -96,6 +96,7 @@ async def _(api_key, conversation_to_datum, mo, model_info, renderers, tinker):
         ],
         renderer,
         max_length=512,
+        train_on_what=renderers.TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     )
 
     fb_future = await training_client.forward_backward_async([datum], loss_fn="cross_entropy")
