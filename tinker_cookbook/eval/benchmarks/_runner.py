@@ -347,13 +347,21 @@ def _validate_requirements(benchmark: BenchmarkBuilder, config: BenchmarkConfig)
             f"Set config.judge_sampling_client to a Tinker SamplingClient for the judge model."
         )
     if benchmark.requires_sandbox and config.sandbox_factory is None:
+        from tinker_cookbook.eval.benchmarks._common import SANDBOX_MISSING_MESSAGE
+        from tinker_cookbook.sandbox import SandboxBackend, resolve_backend
+
+        backend = resolve_backend(config.sandbox_backend)
         try:
-            from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox  # noqa: F401
+            if backend == SandboxBackend.HYPERBROWSER:
+                from tinker_cookbook.sandbox.hyperbrowser_sandbox import (  # noqa: F401
+                    HyperbrowserSandbox,
+                )
+            else:
+                from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox  # noqa: F401
         except ImportError:
             raise ValueError(
-                f"Benchmark '{benchmark.name}' requires a sandbox for code execution. "
-                f"Either install Modal (`pip install 'tinker-cookbook[modal]'`) "
-                f"or provide a custom sandbox_factory in BenchmarkConfig."
+                f"Benchmark '{benchmark.name}' requires a sandbox for code execution.\n"
+                f"{SANDBOX_MISSING_MESSAGE}"
             ) from None
 
 

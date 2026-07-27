@@ -1,9 +1,10 @@
 """
 Code grading utilities for RL training.
 
-Supports two execution backends:
+Supports three execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
+- hyperbrowser: Cloud-based Hyperbrowser sandbox
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 # Global sandbox backend clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
 _modal_pool: Any = None  # ModalSandboxPool, but avoid import at module level
+_hyperbrowser_pool: Any = None  # HyperbrowserSandboxPool, likewise
 
 
 def _get_sandboxfusion_client() -> SandboxFusionClient:
@@ -39,6 +41,22 @@ def _get_modal_pool():
         image = modal.Image.debian_slim().pip_install("numpy")
         _modal_pool = ModalSandboxPool(image=image)
     return _modal_pool
+
+
+def _get_hyperbrowser_pool():
+    """Get or create the Hyperbrowser sandbox pool."""
+    global _hyperbrowser_pool
+    if _hyperbrowser_pool is None:
+        from tinker_cookbook.sandbox.hyperbrowser_sandbox import (
+            HyperbrowserImage,
+            HyperbrowserSandboxPool,
+        )
+
+        # Layers on a base image are applied at sandbox startup, so this needs
+        # no local Docker daemon.
+        image = HyperbrowserImage.base("python").pip_install("numpy")
+        _hyperbrowser_pool = HyperbrowserSandboxPool(image=image)
+    return _hyperbrowser_pool
 
 
 def extract_code_from_model(model_response: str) -> str | None:
@@ -91,14 +109,18 @@ async def _check_with_sandboxfusion(
     )
 
 
-async def _check_with_modal(
+async def _check_with_pool(
+    pool: Any,
     test_cases: dict[str, str],
     generation: str,
     timeout: int,
     total_timeout: int,
 ) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using Modal sandbox."""
-    pool = _get_modal_pool()
+    """Execute tests in a cloud sandbox pool (Modal or Hyperbrowser).
+
+    Both pools expose the same ``run_in_workdir`` contract, so the grading logic
+    is shared.
+    """
     result = await pool.run_in_workdir(
         files={
             "test_cases.txt": json.dumps(test_cases),
@@ -129,7 +151,8 @@ async def sandbox_check_correctness(
         sample: List of test cases in LiveCodeBench format
         generation: Generated code to test
         timeout: Per-test timeout in seconds
-        backend: Sandbox backend to use (defaults to "sandboxfusion")
+        backend: Sandbox backend to use — "sandboxfusion" (default), "modal",
+            or "hyperbrowser"
 
     Returns:
         Tuple of (all_passed: bool, details: dict)
@@ -145,7 +168,13 @@ async def sandbox_check_correctness(
         total_timeout = (timeout + 1) * test_cnt + 5
 
         if use_backend == SandboxBackend.MODAL:
-            return await _check_with_modal(test_cases, generation, timeout, total_timeout)
+            return await _check_with_pool(
+                _get_modal_pool(), test_cases, generation, timeout, total_timeout
+            )
+        elif use_backend == SandboxBackend.HYPERBROWSER:
+            return await _check_with_pool(
+                _get_hyperbrowser_pool(), test_cases, generation, timeout, total_timeout
+            )
         elif use_backend == SandboxBackend.SANDBOXFUSION:
             return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
         else:

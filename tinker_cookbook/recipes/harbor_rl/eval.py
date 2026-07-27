@@ -27,12 +27,13 @@ from tinker_cookbook.recipes.harbor_rl.harbor_env import (
     HarborTask,
     SandboxFactory,
     _initial_messages,
-    default_sandbox_factory,
+    make_sandbox_factory,
 )
 from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, HarborReward
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
+from tinker_cookbook.sandbox import SandboxBackend
 from tinker_cookbook.tool_use import build_agent_tool_env
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.ml_log import dump_config
@@ -49,6 +50,8 @@ class EvalConfig:
     max_turns: int = 10
     max_tokens: int = 2048
     temperature: float = 0.0
+    # Cloud sandbox provider: "modal" or "hyperbrowser".
+    sandbox_backend: SandboxBackend = SandboxBackend.MODAL
     sandbox_timeout: int = 3600
     command_timeout: int = 120
     grader_timeout: int = 60
@@ -172,7 +175,7 @@ async def evaluate_task(
 async def run_eval(
     config: EvalConfig,
     tasks: list[HarborTask],
-    sandbox_factory: SandboxFactory = default_sandbox_factory,
+    sandbox_factory: SandboxFactory | None = None,
 ) -> list[TaskResult]:
     """Run evaluation on a list of Harbor tasks.
 
@@ -181,11 +184,13 @@ async def run_eval(
     Args:
         config: Evaluation configuration.
         tasks: List of HarborTask to evaluate.
-        sandbox_factory: Factory for creating sandboxes (defaults to Modal).
+        sandbox_factory: Factory for creating sandboxes. Defaults to the factory
+            for ``config.sandbox_backend``.
 
     Returns:
         List of per-task results.
     """
+    sandbox_factory = sandbox_factory or make_sandbox_factory(config.sandbox_backend)
     results_dir = Path(config.output_path) / datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir.mkdir(parents=True, exist_ok=True)
     print(f"Results dir: {results_dir}")

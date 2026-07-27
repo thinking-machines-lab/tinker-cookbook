@@ -16,8 +16,7 @@ from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, Harbo
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
-from tinker_cookbook.sandbox import SandboxInterface
-from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+from tinker_cookbook.sandbox import SandboxBackend, SandboxInterface, resolve_backend
 from tinker_cookbook.tool_use import build_agent_tool_env
 from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
 
@@ -33,7 +32,7 @@ HARBOR_SYSTEM_PROMPT = (
 SandboxFactory = Callable[[Path, int], Awaitable[SandboxInterface]]
 
 
-async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
+async def modal_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
     """Create a Modal sandbox from a task environment directory.
 
     Args:
@@ -42,9 +41,52 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
     """
     import modal
 
+    from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+
     dockerfile_path = env_dir / "Dockerfile"
     image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
     return await ModalSandbox.create(image=image, timeout=timeout)
+
+
+async def hyperbrowser_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
+    """Create a Hyperbrowser sandbox from a task environment directory.
+
+    The image is named after the hash of ``env_dir``, so the first run builds and
+    uploads it (needs a local Docker) and every later run — on any machine —
+    launches the already-uploaded image.
+
+    Args:
+        env_dir: Path to the task's environment/ directory (must contain a Dockerfile).
+        timeout: Sandbox lifetime in seconds.
+    """
+    from tinker_cookbook.sandbox.hyperbrowser_sandbox import (
+        HyperbrowserImage,
+        HyperbrowserSandbox,
+    )
+
+    image = HyperbrowserImage.from_dockerfile(env_dir / "Dockerfile", env_dir)
+    return await HyperbrowserSandbox.create(image=image, timeout=timeout)
+
+
+def make_sandbox_factory(backend: SandboxBackend | None = None) -> SandboxFactory:
+    """Return the sandbox factory for a cloud backend.
+
+    Falls back to ``TINKER_SANDBOX_BACKEND``, then Modal.
+    """
+    resolved = resolve_backend(backend)
+    if resolved == SandboxBackend.MODAL:
+        return modal_sandbox_factory
+    if resolved == SandboxBackend.HYPERBROWSER:
+        return hyperbrowser_sandbox_factory
+    raise ValueError(
+        f"Harbor tasks need a cloud sandbox backend (modal or hyperbrowser), got {resolved}. "
+        "SandboxFusion has no per-episode sandbox lifecycle."
+    )
+
+
+async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
+    """Create a sandbox using the backend from ``TINKER_SANDBOX_BACKEND`` (default Modal)."""
+    return await make_sandbox_factory()(env_dir, timeout)
 
 
 @dataclass(frozen=True)
@@ -91,7 +133,7 @@ def _initial_messages(
 
 
 class HarborEnvGroupBuilder(EnvGroupBuilder):
-    """EnvGroupBuilder that creates Harbor environments with Modal sandboxes."""
+    """EnvGroupBuilder that creates Harbor environments with cloud sandboxes."""
 
     def __init__(
         self,
@@ -107,6 +149,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         max_generation_tokens: int | None = None,
         context_overflow_reward: float = -0.1,
         sandbox_factory: SandboxFactory | None = None,
+        sandbox_backend: SandboxBackend | None = None,
         reward_fn: RewardFn | None = None,
     ):
         self.task = task
@@ -120,7 +163,7 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.max_trajectory_tokens = max_trajectory_tokens
         self.max_generation_tokens = max_generation_tokens
         self.context_overflow_reward = context_overflow_reward
-        self.sandbox_factory = sandbox_factory or default_sandbox_factory
+        self.sandbox_factory = sandbox_factory or make_sandbox_factory(sandbox_backend)
         self.reward_fn = reward_fn
         self._sandboxes: list[SandboxInterface] = []
 
@@ -212,6 +255,7 @@ class HarborDatasetBuilder(RLDatasetBuilder):
     max_generation_tokens: int | None = None
     context_overflow_reward: float = -0.1
     sandbox_factory: SandboxFactory | None = None
+    sandbox_backend: SandboxBackend | None = None
     reward_fn: RewardFn | None = None
 
     def _make_env_group_builders(self, group_size: int) -> list[HarborEnvGroupBuilder]:
@@ -229,6 +273,7 @@ class HarborDatasetBuilder(RLDatasetBuilder):
                 max_generation_tokens=self.max_generation_tokens,
                 context_overflow_reward=self.context_overflow_reward,
                 sandbox_factory=self.sandbox_factory,
+                sandbox_backend=self.sandbox_backend,
                 reward_fn=self.reward_fn,
             )
             for task in self.tasks

@@ -242,19 +242,29 @@ def is_task_complete(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+SANDBOX_MISSING_MESSAGE = (
+    "Code execution benchmarks require a sandbox backend. Either:\n"
+    "  1. Install Modal: pip install 'tinker-cookbook[modal]'\n"
+    "  2. Install Hyperbrowser: pip install 'tinker-cookbook[hyperbrowser]' "
+    "(then set sandbox_backend='hyperbrowser' or TINKER_SANDBOX_BACKEND=hyperbrowser)\n"
+    "  3. Provide a custom sandbox_factory in BenchmarkConfig"
+)
+
+
 def get_sandbox_factory(config, *, packages: list[str] | None = None) -> object:
-    """Get a sandbox factory from config, falling back to Modal.
+    """Get a sandbox factory from config, falling back to a cloud backend.
 
     If ``config.sandbox_factory`` is set, returns it directly — the user
     provides their own :class:`~tinker_cookbook.sandbox.SandboxInterface`
-    implementation.  Otherwise, falls back to Modal with a clear error
-    if Modal is not installed.
+    implementation.  Otherwise, builds a factory for ``config.sandbox_backend``
+    (or ``TINKER_SANDBOX_BACKEND``, default Modal), with a clear error if that
+    backend is not installed.
 
     Args:
         config: A :class:`BenchmarkConfig` (imported at call time to avoid
             circular imports).
         packages: Optional apt packages to install in the sandbox image.
-            Only applies when using the default Modal backend. For example,
+            Only applies to the default cloud backends. For example,
             ``["git", "python3-pip"]`` for SWE-bench.
 
     Returns:
@@ -263,30 +273,52 @@ def get_sandbox_factory(config, *, packages: list[str] | None = None) -> object:
     if config.sandbox_factory is not None:
         return config.sandbox_factory
 
+    from tinker_cookbook.sandbox import SandboxBackend, resolve_backend
+
+    backend = resolve_backend(getattr(config, "sandbox_backend", None))
     try:
-        import modal
-
-        from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
-
-        image = modal.Image.debian_slim()
-        if packages:
-            image = image.apt_install(*packages)
-
-        async def _modal_factory():
-            return await ModalSandbox.create(image=image, timeout=1800)
-
-        return _modal_factory
+        if backend == SandboxBackend.HYPERBROWSER:
+            return _hyperbrowser_sandbox_factory(packages)
+        return _modal_sandbox_factory(packages)
     except ImportError:
 
         async def _missing_factory():
-            raise RuntimeError(
-                "Code execution benchmarks require a sandbox backend. "
-                "Either:\n"
-                "  1. Install Modal: pip install 'tinker-cookbook[modal]'\n"
-                "  2. Provide a custom sandbox_factory in BenchmarkConfig"
-            )
+            raise RuntimeError(SANDBOX_MISSING_MESSAGE)
 
         return _missing_factory
+
+
+def _modal_sandbox_factory(packages: list[str] | None) -> object:
+    import modal
+
+    from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+
+    image = modal.Image.debian_slim()
+    if packages:
+        image = image.apt_install(*packages)
+
+    async def _modal_factory():
+        return await ModalSandbox.create(image=image, timeout=1800)
+
+    return _modal_factory
+
+
+def _hyperbrowser_sandbox_factory(packages: list[str] | None) -> object:
+    from tinker_cookbook.sandbox.hyperbrowser_sandbox import (
+        HyperbrowserImage,
+        HyperbrowserSandbox,
+    )
+
+    # Layers on a base image run as sandbox startup commands, so no local Docker
+    # daemon is needed for these benchmarks.
+    image = HyperbrowserImage.base()
+    if packages:
+        image = image.apt_install(*packages)
+
+    async def _hyperbrowser_factory():
+        return await HyperbrowserSandbox.create(image=image, timeout=1800)
+
+    return _hyperbrowser_factory
 
 
 # ---------------------------------------------------------------------------

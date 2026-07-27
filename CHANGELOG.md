@@ -13,6 +13,19 @@ Each entry includes:
 
 ---
 
+### [cookbook] Add Hyperbrowser as a cloud sandbox backend
+**Date:** 2026-07-27
+**Type:** new
+**Tags:** sandbox, rl, eval
+
+Adds [Hyperbrowser Sandboxes](https://hyperbrowser.ai/docs/sandboxes/introduction) as a peer to Modal, installable via `pip install 'tinker-cookbook[hyperbrowser]'` and authenticated with `HYPERBROWSER_API_KEY`. `HyperbrowserSandbox` implements `SandboxInterface` and `HyperbrowserSandboxPool` matches `ModalSandboxPool`, so every cloud code-execution path works on either provider: `code_rl` grading (`sandbox_backend=hyperbrowser`), the Harbor RL recipe (`--sandbox_backend=hyperbrowser`), and the sandboxed evals (`BenchmarkConfig(sandbox_backend=...)`). `TINKER_SANDBOX_BACKEND=hyperbrowser` switches the default everywhere without code changes.
+
+`HyperbrowserImage` mirrors the `modal.Image` surface (`base`, `from_registry`, `from_dockerfile`, `apt_install`, `pip_install`, `run_commands`). Unlike Modal, Hyperbrowser has no server-side image builder, so custom images are built locally with `docker buildx` and uploaded; images are named by a hash of their contents and reused when already uploaded, making that a once-ever cost per unique image rather than once per rollout. Package layers on a base image run as sandbox startup commands instead, so `code_rl` grading and the code-execution benchmarks need no local Docker at all.
+
+Also makes `harbor_rl`'s Modal import lazy, so the recipe is importable with only one backend installed.
+
+---
+
 ### [cookbook] Fix base-model single-turn evals + replace `parse_success` bool with `ParseTermination` enum ([#688](https://github.com/thinking-machines-lab/tinker-cookbook/pull/688))
 **Date:** 2026-04-30
 **Type:** fix

@@ -11,6 +11,7 @@ import tinker
 
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env
+from tinker_cookbook.sandbox import SandboxBackend
 
 # ---------------------------------------------------------------------------
 # Type aliases — reuse RL conventions where possible
@@ -272,11 +273,22 @@ class BenchmarkConfig:
     """Renderer for the judge model. If None, uses the candidate renderer."""
 
     # Sandbox (for benchmarks that execute code: mbpp, livecodebench, terminal_bench, swe_bench)
+    sandbox_backend: SandboxBackend | None = None
+    """Which cloud sandbox provider to use: ``modal`` or ``hyperbrowser``.
+    When ``None``, reads ``TINKER_SANDBOX_BACKEND`` and otherwise defaults to Modal.
+    Ignored when ``sandbox_factory`` is set.
+
+    Example::
+
+        config = BenchmarkConfig(sandbox_backend=SandboxBackend.HYPERBROWSER)
+    """
+
     sandbox_factory: Callable[[], Any] | None = None
     """Async callable returning a :class:`~tinker_cookbook.sandbox.SandboxInterface`.
     Signature: ``async def factory() -> SandboxInterface``.
     Called once per eval example to create an isolated execution environment.
-    When ``None``, defaults to Modal (requires ``pip install 'tinker-cookbook[modal]'``).
+    When ``None``, defaults to the ``sandbox_backend`` provider (requires
+    ``pip install 'tinker-cookbook[modal]'`` or ``[hyperbrowser]``).
 
     Example::
 

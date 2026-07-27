@@ -48,6 +48,29 @@ Optional environment variables for Modal:
 - `MODAL_POOL_SIZE`: Number of concurrent sandboxes (default: 32)
 - `MODAL_CREATION_RATE_LIMIT`: Max sandboxes created per second (default: 4)
 
+#### Hyperbrowser (Alternative)
+
+[Hyperbrowser](https://hyperbrowser.ai/docs/sandboxes/introduction) also provides cloud-based sandboxed execution without local Docker setup. To use Hyperbrowser:
+
+1. Install the hyperbrowser extra and set your API key:
+```bash
+uv pip install 'tinker-cookbook[hyperbrowser] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+export HYPERBROWSER_API_KEY=...
+```
+
+2. Set the sandbox backend in your training command:
+```bash
+python -m tinker_cookbook.recipes.code_rl.train \
+    sandbox_backend=hyperbrowser \
+    ...
+```
+
+Optional environment variables for Hyperbrowser:
+
+- `HYPERBROWSER_POOL_SIZE`: Number of concurrent sandboxes (default: 32)
+- `HYPERBROWSER_CREATION_RATE_LIMIT`: Max sandboxes created per second (default: 4)
+- `HYPERBROWSER_REGION`: Sandbox region, e.g. `us-east` (default: account default)
+
 ### Example command
 
 Train a `Qwen3.5-4B` model with thinking enabled:

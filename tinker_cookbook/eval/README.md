@@ -97,6 +97,7 @@ Additional setup:
 - **IFBench**: Also requires ``uv pip install 'ifbench @ git+https://github.com/allenai/IFBench.git'`` (not on PyPI). The benchmark raises ``ImportError`` without it.
 - **HF auth (gated)**: Set `HF_TOKEN` or run `huggingface-cli login` for gated datasets (GPQA).
 - **Modal auth**: Run `modal token new` for sandbox benchmarks (MBPP, LiveCodeBench, Terminal Bench, SWE-bench).
+- **Hyperbrowser (alternative to Modal)**: Run `uv pip install 'tinker-cookbook[hyperbrowser]'`, export `HYPERBROWSER_API_KEY`, and either set `TINKER_SANDBOX_BACKEND=hyperbrowser` or pass `BenchmarkConfig(sandbox_backend=SandboxBackend.HYPERBROWSER)`. No local Docker needed — these benchmarks layer their packages onto a base image at sandbox startup.
 - **`judge_sampling_client`**: Benchmarks using LLM-as-judge or user simulation require a separate Tinker sampling client for the judge model. Pass via `BenchmarkConfig(judge_sampling_client=..., judge_renderer=...)`.
 
 ### Browse results

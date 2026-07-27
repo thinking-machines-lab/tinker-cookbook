@@ -64,26 +64,47 @@ class SandboxInterface(Protocol):
     async def cleanup(self) -> None: ...
 ```
 
-`ModalSandbox` implements this interface.
+`ModalSandbox` and `HyperbrowserSandbox` implement this interface.
 
 ### SandboxFactory and injection
 
-`harbor_env.py` defines a backend-agnostic factory type and a default Modal implementation:
+`harbor_env.py` defines a backend-agnostic factory type and one implementation per cloud backend:
 
 ```python
 SandboxFactory = Callable[[Path, int], Awaitable[SandboxInterface]]
 
-async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
+
+async def modal_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterface:
     """Create a Modal sandbox from a task environment directory."""
     import modal
+    from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+
     dockerfile_path = env_dir / "Dockerfile"
     image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
     return await ModalSandbox.create(image=image, timeout=timeout)
 ```
 
-The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`).
+The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`, Hyperbrowser a content-addressed `HyperbrowserImage`).
 
-`cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
+Pick a backend with `--sandbox_backend=modal|hyperbrowser` (or `TINKER_SANDBOX_BACKEND`); `make_sandbox_factory()` maps that to the right factory. `cli_main()` and `run_eval()` also accept an explicit `sandbox_factory`, which overrides the backend choice. Either way the factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
+
+### Backend setup
+
+Modal (default):
+
+```bash
+uv pip install 'tinker-cookbook[modal]'
+modal token new
+```
+
+Hyperbrowser:
+
+```bash
+uv pip install 'tinker-cookbook[hyperbrowser]'
+export HYPERBROWSER_API_KEY=...
+```
+
+Harbor tasks build an image from each task's Dockerfile. Hyperbrowser has no server-side builder, so the first run of a task builds the image locally with `docker buildx` and uploads it; because images are named by content hash, every later run (on any machine) launches the uploaded image and skips Docker entirely. See [`sandbox/README.md`](../../sandbox/README.md) for prebuilding on a Docker-capable machine.
 
 ## Running
 
