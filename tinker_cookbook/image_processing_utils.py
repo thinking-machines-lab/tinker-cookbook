@@ -31,7 +31,7 @@ def get_image_processor(model_name: str) -> ImageProcessor:
     # (BlackPaddedImageTokenizer); they have no Hugging Face image processor.
     # The tml_v0 cookbook renderer ignores
     # the image_processor argument, so return None instead of failing in AutoImageProcessor.
-    if model_name == "thinkingmachines/Inkling":
+    if model_name.startswith("thinkingmachines/Inkling"):
         return None
 
     from transformers.models.auto.image_processing_auto import AutoImageProcessor

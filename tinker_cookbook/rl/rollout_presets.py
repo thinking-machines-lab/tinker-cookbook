@@ -152,16 +152,16 @@ def agentic() -> RolloutConfig:
 def default_rollout_config_for_model(model_name: str) -> RolloutConfig:
     """The rollout configuration a model gets when none is specified.
 
-    ``thinkingmachines/Inkling`` (including its ``:peft:`` long-context
-    variants) defaults to :func:`agentic` — it is a tool-use model and its
-    recommended renderer (``tml_v0``) is built for multi-turn agents.  Every
-    other model defaults to :func:`simple`.
+    ``thinkingmachines/Inkling`` models (including their ``:peft:``
+    long-context variants) default to :func:`agentic` — they are tool-use
+    models and their recommended renderer (``tml_v0``) is built for
+    multi-turn agents.  Every other model defaults to :func:`simple`.
 
     Pass an explicit ``rollout_config`` (e.g. ``simple()``) anywhere a
     config is accepted to override the model default.
     """
     base_model = model_name.split(":", 1)[0]
-    if base_model == "thinkingmachines/Inkling":
+    if base_model.startswith("thinkingmachines/Inkling"):
         return agentic()
     return simple()
 
@@ -169,7 +169,7 @@ def default_rollout_config_for_model(model_name: str) -> RolloutConfig:
 def default_rollout_strategy_for_model(model_name: str) -> RolloutStrategy:
     """The group rollout strategy a model gets when none is specified.
 
-    ``thinkingmachines/Inkling`` defaults to
+    ``thinkingmachines/Inkling`` models default to
     :class:`~tinker_cookbook.rl.rollout_strategy.MinViableGroup` (agentic
     rollouts run against real tool backends, where occasional infrastructure
     failures shouldn't discard whole groups); every other model defaults to
@@ -179,6 +179,6 @@ def default_rollout_strategy_for_model(model_name: str) -> RolloutStrategy:
     or a strategy instance) to override the model default.
     """
     base_model = model_name.split(":", 1)[0]
-    if base_model == "thinkingmachines/Inkling":
+    if base_model.startswith("thinkingmachines/Inkling"):
         return MinViableGroup()
     return FailFast()

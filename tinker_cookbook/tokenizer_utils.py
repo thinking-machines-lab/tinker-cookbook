@@ -210,7 +210,7 @@ def get_tokenizer(model_name: str) -> Tokenizer:
         return tokenizer()
 
     base_model_name = model_name.split(":", 1)[0]
-    if base_model_name == "thinkingmachines/Inkling":
+    if base_model_name.startswith("thinkingmachines/Inkling"):
         # Duck-typed facade (encode/decode/eos_token_id); not a PreTrainedTokenizer.
         return cast(Tokenizer, TmlRenderersTokenizerAdapter(model_name))
 

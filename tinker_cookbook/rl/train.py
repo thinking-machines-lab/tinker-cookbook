@@ -496,7 +496,7 @@ class Config:
     remove_constant_reward_groups: bool = False
     # Tolerance for errors during rollouts (container crashes, sandbox flakes, etc.).
     # None (default): the model's default strategy (MinViableGroup for
-    # thinkingmachines/Inkling, FailFast for everything else; see
+    # thinkingmachines/Inkling models, FailFast for everything else; see
     # rollout_presets.default_rollout_strategy_for_model).
     # False: crash on any error (FailFast).
     # True: retry failed trajectories with default budget (RetryOnFailure(max_retries=3)).
@@ -505,7 +505,7 @@ class Config:
     # Stop-reason-keyed reward semantics applied after group grading (e.g.
     # agentic().termination for grade-then-clamp: limit-stopped trajectories get
     # min(reward, 0)). None (default) resolves to the model's default
-    # (agentic().termination for thinkingmachines/Inkling, no policy for
+    # (agentic().termination for thinkingmachines/Inkling models, no policy for
     # everything else; see rollout_presets.default_rollout_config_for_model).
     # To force no reward adjustment on a model whose default has one, pass
     # TerminationRewardPolicy(zero_reward_on_limit=False). This is the
@@ -549,7 +549,7 @@ class Config:
 
         ``termination=None`` (the default) resolves via
         :func:`~tinker_cookbook.rl.rollout_presets.default_rollout_config_for_model`,
-        so ``thinkingmachines/Inkling`` gets the agentic grade-then-clamp
+        so ``thinkingmachines/Inkling`` models get the agentic grade-then-clamp
         policy and other models get no reward adjustment.  An explicit
         policy wins.
         """
@@ -562,7 +562,7 @@ class Config:
 
         ``rollout_error_tolerance=None`` (the default) resolves via
         :func:`~tinker_cookbook.rl.rollout_presets.default_rollout_strategy_for_model`
-        (``MinViableGroup`` for ``thinkingmachines/Inkling``, ``FailFast``
+        (``MinViableGroup`` for ``thinkingmachines/Inkling`` models, ``FailFast``
         otherwise).  Explicit values — ``False``, ``True``, or a strategy
         instance — win over the model default.
         """

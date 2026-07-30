@@ -230,8 +230,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_moonshot_info()[model_version_full]
     elif org == "nvidia":
         return get_nvidia_info()[model_version_full]
-    elif model_name == "thinkingmachines/Inkling":
-        # Inkling is rendered by the standalone tml-renderers package.
+    elif model_name.startswith("thinkingmachines/Inkling"):
+        # Inkling models are rendered by the standalone tml-renderers package.
         # Version/size parsing is TBD; use the full model version for now.
         return ModelAttributes(
             organization=org,
