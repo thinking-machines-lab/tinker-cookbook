@@ -1,7 +1,7 @@
 # Audio
 
-Recipes for fine-tuning audio-input models (Inkling) with Tinker using
-supervised fine-tuning and reinforcement learning.
+Recipes for fine-tuning audio-input models (Inkling and Inkling-Small) with
+Tinker using supervised fine-tuning and reinforcement learning.
 
 For minimal Inkling audio and vision sampling examples using `tml-renderers`,
 see the [Inkling scripts](../../scripts/inkling/).

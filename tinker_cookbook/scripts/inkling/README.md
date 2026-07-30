@@ -1,10 +1,18 @@
 # Inkling scripts
 
-Minimal scripts for sampling Inkling with reasoning-effort, audio, and image
-inputs. They require the `inkling` extra:
+Minimal scripts for sampling Inkling and Inkling-Small with reasoning-effort,
+audio, and image inputs. They require the `inkling` extra:
 
 ```bash
 uv pip install 'tinker-cookbook[inkling]'
+```
+
+Every script defaults to `thinkingmachines/Inkling`; pass `model_name` to target
+another model in the family:
+
+```bash
+python -m tinker_cookbook.scripts.inkling.sample_reasoning \
+    model_name=thinkingmachines/Inkling-Small
 ```
 
 For setup, supported inputs, reasoning-effort behavior, and API guidance, see

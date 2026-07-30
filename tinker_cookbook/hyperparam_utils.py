@@ -130,6 +130,7 @@ def _get_hidden_size(model_name: str) -> int:
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 2688,
         # Thinking Machines Lab Inkling
         "thinkingmachines/Inkling": 6144,
+        "thinkingmachines/Inkling-Small": 4096,
     }
 
     if model_name in _KNOWN_HIDDEN_SIZES:
