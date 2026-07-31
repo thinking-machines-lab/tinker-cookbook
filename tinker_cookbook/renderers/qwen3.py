@@ -37,6 +37,17 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
+def _frame_thinking(reasoning: str) -> str:
+    """Frame reasoning the way Qwen3's chat template does.
+
+    The template writes `<think>\\n{reasoning}\\n</think>\\n\\n` around the turn being
+    produced -- padded, and present even when the reasoning is empty. Rendering
+    `<think>{reasoning}</think>` instead differs from `apply_chat_template` by 3 tokens
+    with reasoning and 4 without, on the turn the model is about to continue.
+    """
+    return "<think>\n" + reasoning.strip("\n") + "\n</think>\n\n"
+
+
 def _merge_consecutive_text_parts(
     chunks: list[ImagePart | TextPart],
 ) -> list[ImagePart | TextPart]:
@@ -166,10 +177,18 @@ class Qwen3Renderer(Renderer):
             rendered_parts = []
             for p in parts:
                 if p["type"] == "thinking":
-                    rendered_parts.append(f"<think>{p['thinking']}</think>")
+                    rendered_parts.append(_frame_thinking(p["thinking"]))
                 elif p["type"] == "text":
                     rendered_parts.append(p["text"])
             output_content = "".join(rendered_parts)
+            # The HF template opens the block on the turn being produced whether or not
+            # it reasoned, so a turn with no thinking part still gets an empty one.
+            if (
+                message["role"] == "assistant"
+                and ctx.is_last
+                and not any(p["type"] == "thinking" for p in parts)
+            ):
+                output_content = _frame_thinking("") + output_content
         else:
             # String content - pass through as-is.
             # Note: strip_thinking_from_history only works with list-based content.

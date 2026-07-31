@@ -706,3 +706,41 @@ def test_qwen3_5_normalize_noop_when_think_present(qwen3_5_tokenizer, qwen3_5_re
 
     assert _is_message(streaming_message)
     assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
+
+
+@pytest.mark.parametrize("reasoning", [None, "2+2 is 4"])
+def test_qwen3_produced_assistant_turn_matches_hf(reasoning: str | None):
+    """A produced assistant turn must be framed the way the chat template frames it.
+
+    Every other HF-parity case here ends on a user message, so `add_generation_prompt`
+    exercises the generation prefix and nothing covers how a *produced* assistant turn
+    is written -- which is where the renderer differed. The template writes
+    `<think>\\n{reasoning}\\n</think>\\n\\n` around that turn, and writes the block even
+    when there is no reasoning, so rendering `<think>{reasoning}</think>` (or nothing)
+    came out 3 tokens short with reasoning and 4 short without.
+    """
+    model = "Qwen/Qwen3-8B"
+    tokenizer = get_tokenizer(model)
+    hf_tokenizer = AutoTokenizer.from_pretrained(model)
+    renderer = get_renderer("qwen3", tokenizer)
+
+    thinking_parts = [{"type": "thinking", "thinking": reasoning}] if reasoning else []
+    convo = [
+        {"role": "user", "content": "What is 2+2?"},
+        {"role": "assistant", "content": [*thinking_parts, {"type": "text", "text": "4"}]},
+    ]
+    # The template reads reasoning from a top-level `reasoning_content` and ignores
+    # content parts it does not know, so the reference has to be fed the wire shape --
+    # handed the parts directly it renders the turn empty and every comparison passes.
+    hf_convo = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "4",
+            **({"reasoning_content": reasoning} if reasoning else {}),
+        },
+    ]
+
+    cookbook = tokenizer.decode(renderer.build_generation_prompt(convo).to_ints())
+    hf = hf_tokenizer.apply_chat_template(hf_convo, tokenize=False, add_generation_prompt=True)
+    assert cookbook == hf, f"cookbook:\n{cookbook!r}\n\nhf:\n{hf!r}"
