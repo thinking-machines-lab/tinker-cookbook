@@ -97,6 +97,9 @@ class Qwen3Renderer(Renderer):
     """
 
     supports_streaming = True
+    # The 2507-Instruct variants below do not use the `<think>` tag at all, so they must
+    # not be given the block the template writes around a produced turn.
+    frames_thinking = True
 
     def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
         """
@@ -184,11 +187,23 @@ class Qwen3Renderer(Renderer):
             # The HF template opens the block on the turn being produced whether or not
             # it reasoned, so a turn with no thinking part still gets an empty one.
             if (
-                message["role"] == "assistant"
+                self.frames_thinking
+                and message["role"] == "assistant"
                 and ctx.is_last
                 and not any(p["type"] == "thinking" for p in parts)
             ):
                 output_content = _frame_thinking("") + output_content
+        elif (
+            self.frames_thinking
+            and message["role"] == "assistant"
+            and ctx.is_last
+            and "</think>" in content
+        ):
+            # An inline block in string content is normalized the way the template
+            # normalizes it, so `<think>\n\n</think>\nx` and `<think>\n\n</think>\n\nx`
+            # both render as the latter rather than passing through as written.
+            reasoning, _, rest = content.partition("</think>")
+            output_content = _frame_thinking(reasoning.rpartition("<think>")[2]) + rest.lstrip("\n")
         else:
             # String content - pass through as-is.
             # Note: strip_thinking_from_history only works with list-based content.
@@ -503,6 +518,8 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     <think>...</think>) in case the conversation includes thinking.
     """
 
+    frames_thinking = False
+
     @property
     def has_extension_property(self) -> bool:
         """Qwen3 Instruct always satisfies extension - no thinking to strip from history."""
@@ -698,5 +715,7 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
 
     Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
     """
+
+    frames_thinking = False
 
     pass
