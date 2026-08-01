@@ -2,7 +2,7 @@
 
 This directory contains code execution backends for sandboxed evaluation (e.g., grading code in RL environments).
 
-There are currently two available backends: SandboxFusion for local execution and Modal for cloud execution.
+There are currently three available backends: SandboxFusion for local execution, Modal for cloud execution, and Fystash for warm Firecracker rooms.
 
 ## Backends
 
@@ -65,3 +65,46 @@ print(result.stdout)
 Environment variables:
 
 - `MODAL_POOL_SIZE`: Number of sandboxes in the pool (default: 32)
+
+### Fystash (cloud Firecracker rooms)
+
+[Fystash](https://fystash.ai) provides warm Firecracker rooms as a `SandboxInterface` backend (`SandboxBackend.FYSTASH`). No optional extra is required (stdlib HTTP).
+
+```python
+from tinker_cookbook.sandbox import FystashSandbox, FystashSandboxPool
+
+sandbox = await FystashSandbox.create(timeout=600)
+await sandbox.write_file("/tmp/hi.py", "print('hello')")
+result = await sandbox.run_command("python /tmp/hi.py")
+print(result.stdout)
+await sandbox.cleanup()
+
+# Optional capacity-backed pool (harbor_rl / code_rl)
+pool = FystashSandboxPool(pool_size=8)
+await pool.start()
+result = await pool.run_in_workdir(
+    files={"code.py": "print('hello')"},
+    command=["python", "code.py"],
+)
+await pool.terminate()
+```
+
+Harbor RL selection:
+
+```bash
+export FYSTASH_API_KEY=key-…          # https://fystash.ai/signup
+# sandbox_backend=fystash on train/eval, or:
+export TINKER_SANDBOX_BACKEND=fystash
+```
+
+Environment variables:
+
+- `FYSTASH_API_KEY`: Required
+- `FYSTASH_API`: API base (default `https://api.fystash.ai`)
+- `FYSTASH_TEMPLATE_ID`: Template id (default `default`; ignored when `FYSTASH_DOCKER_IMAGE` is set)
+- `FYSTASH_DOCKER_IMAGE`: Optional DinD pull only — does **not** build Harbor task Dockerfiles
+- `FYSTASH_POOL_SIZE`: When `>0`, harbor_rl factory acquires from `FystashSandboxPool` (default cold create when unset/`0`)
+- `FYSTASH_POOL_CREATE_RATE`: Concurrent replenish (default `4`)
+- `FYSTASH_CAPACITY_TTL_S`: Capacity reservation TTL (default `3600`)
+
+**Honesty:** Modal's harbor factory builds `environment/Dockerfile`. Fystash does not — template or prebuilt image pull only. See [`recipes/harbor_rl/README.md`](../recipes/harbor_rl/README.md) for the full Fystash subsection.

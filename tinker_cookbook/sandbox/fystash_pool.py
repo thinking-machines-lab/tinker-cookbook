@@ -15,6 +15,7 @@ Env:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shlex
@@ -24,8 +25,8 @@ from typing import Any
 
 from tinker_cookbook.sandbox.fystash_sandbox import (
     FystashSandbox,
+    _memory_for_template,
     _RoomApi,
-    __memory_for_template,
 )
 from tinker_cookbook.sandbox.sandbox_interface import SandboxResult
 
@@ -154,7 +155,7 @@ class FystashSandboxPool:
                 attach_fabric=True,
                 labels=labels,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error("episode batch replenish failed: %s", exc)
             return
         batch_id = str(batch.get("batch_id") or "")
@@ -184,12 +185,10 @@ class FystashSandboxPool:
             if self._dind and self._docker_image:
                 try:
                     await sb._prepare_dind(self._docker_image)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.error("DinD prepare failed for %s: %s", room_id, exc)
-                    try:
+                    with contextlib.suppress(Exception):
                         await sb.cleanup()
-                    except Exception:  # noqa: BLE001
-                        pass
                     continue
             await self._warm_pool.put(sb)
 
@@ -197,7 +196,7 @@ class FystashSandboxPool:
         while not self._terminated:
             try:
                 await self._maintain_pool_step()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("Error maintaining FystashSandboxPool: %s", exc)
             await asyncio.sleep(1.0)
 
@@ -263,10 +262,8 @@ class FystashSandboxPool:
         self._terminated = True
         if self._maintain_task is not None:
             self._maintain_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._maintain_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
             self._maintain_task = None
 
         while self._active_count > 0:
@@ -284,19 +281,15 @@ class FystashSandboxPool:
         )
 
         for batch_id in list(self._batch_ids):
-            try:
+            with contextlib.suppress(Exception):
                 await asyncio.to_thread(self._api.destroy_episode_batch, batch_id)
-            except Exception:  # noqa: BLE001
-                pass
         self._batch_ids.clear()
 
         if self._reservation_id:
-            try:
+            with contextlib.suppress(Exception):
                 await asyncio.to_thread(
                     self._api.release_capacity, self._reservation_id
                 )
-            except Exception:  # noqa: BLE001
-                pass
             self._reservation_id = None
 
         self._api.close()

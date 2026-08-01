@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import shlex
@@ -88,7 +89,7 @@ class _RoomApi:
             try:
                 parsed = json.loads(detail)
                 detail = str(parsed.get("detail", detail))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             raise FystashApiError(exc.code, detail) from exc
 
@@ -362,10 +363,8 @@ class FystashSandbox:
                 await sb._prepare_dind(image)
             return sb
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 await asyncio.to_thread(api.destroy, room_id)
-            except Exception:  # noqa: BLE001
-                pass
             api.close()
             raise
 
@@ -395,7 +394,7 @@ class FystashSandbox:
                 timeout_ms=timeout_ms,
                 stdin=stdin,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             msg = str(exc).lower()
             if any(k in msg for k in ("not found", "destroyed", "terminated", "404")):
                 raise SandboxTerminatedError(str(exc)) from exc
@@ -519,7 +518,7 @@ class FystashSandbox:
         self._cleaned = True
         try:
             await asyncio.to_thread(self._api.destroy, self._room_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         finally:
             if self._on_cleanup is not None:
@@ -527,7 +526,7 @@ class FystashSandbox:
                     maybe = self._on_cleanup(self)
                     if asyncio.iscoroutine(maybe):
                         await maybe
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             if self._owns_api:
                 self._api.close()
