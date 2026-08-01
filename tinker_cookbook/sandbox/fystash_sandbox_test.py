@@ -61,3 +61,23 @@ def test_fystash_create_requires_api_key() -> None:
 
         with pytest.raises(RuntimeError, match="FYSTASH_API_KEY"):
             asyncio.run(_run())
+
+
+def test_pool_start_requires_api_key() -> None:
+    from tinker_cookbook.sandbox.fystash_pool import FystashSandboxPool
+
+    with mock.patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("FYSTASH_API_KEY", None)
+        with pytest.raises(RuntimeError, match="FYSTASH_API_KEY"):
+            FystashSandboxPool(pool_size=2)
+
+
+def test_from_existing_does_not_own_api() -> None:
+    from tinker_cookbook.sandbox.fystash_sandbox import _RoomApi
+
+    api = _RoomApi("https://api.fystash.ai", "dummy")
+    sb = FystashSandbox.from_existing(
+        api, room_id="r1", agent_id="tinker", template_id="default"
+    )
+    assert sb._owns_api is False
+    assert sb.sandbox_id == "r1"

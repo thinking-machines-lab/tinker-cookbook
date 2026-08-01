@@ -1,9 +1,10 @@
 """
 Code grading utilities for RL training.
 
-Supports two execution backends:
+Supports three execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
+- fystash: Warm Firecracker rooms via Fystash (capacity pool)
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 # Global sandbox backend clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
 _modal_pool: Any = None  # ModalSandboxPool, but avoid import at module level
+_fystash_pool: Any = None
 
 
 def _get_sandboxfusion_client() -> SandboxFusionClient:
@@ -40,6 +42,17 @@ def _get_modal_pool():
         _modal_pool = ModalSandboxPool(image=image)
     return _modal_pool
 
+
+
+
+def _get_fystash_pool():
+    """Get or create the Fystash capacity-backed sandbox pool."""
+    global _fystash_pool
+    if _fystash_pool is None:
+        from tinker_cookbook.sandbox.fystash_pool import FystashSandboxPool
+
+        _fystash_pool = FystashSandboxPool()
+    return _fystash_pool
 
 def extract_code_from_model(model_response: str) -> str | None:
     """Extract the last fenced code block from a model response."""
@@ -116,6 +129,34 @@ async def _check_with_modal(
     }
 
 
+
+
+async def _check_with_fystash(
+    test_cases: dict[str, str],
+    generation: str,
+    timeout: int,
+    total_timeout: int,
+) -> tuple[bool, dict[str, Any]]:
+    """Execute tests using Fystash capacity-backed pool."""
+    pool = _get_fystash_pool()
+    if not pool._started:
+        await pool.start()
+    result = await pool.run_in_workdir(
+        files={
+            "test_cases.txt": json.dumps(test_cases),
+            "code.py": generation,
+            "testing_util.py": TEST_UTIL,
+            "run.py": TEST_CODE % {"timeout": timeout},
+        },
+        command=["python", "run.py"],
+        timeout=total_timeout,
+    )
+    return result.exit_code == 0, {
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
 async def sandbox_check_correctness(
     sample: list[dict[str, Any]],
     generation: str,
@@ -146,6 +187,8 @@ async def sandbox_check_correctness(
 
         if use_backend == SandboxBackend.MODAL:
             return await _check_with_modal(test_cases, generation, timeout, total_timeout)
+        elif use_backend == SandboxBackend.FYSTASH:
+            return await _check_with_fystash(test_cases, generation, timeout, total_timeout)
         elif use_backend == SandboxBackend.SANDBOXFUSION:
             return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
         else:

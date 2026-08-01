@@ -165,6 +165,56 @@ class _RoomApi:
     def destroy(self, room_id: str) -> dict[str, Any]:
         return self._request("DELETE", f"/v1/rooms/{room_id}")
 
+    def create_episode_batch(
+        self,
+        *,
+        count: int,
+        template_id: str = "default",
+        agent_id: str = "tinker",
+        room_id_prefix: str = "tkp",
+        memory_mib: int = 256,
+        strategy: str = "wave",
+        attach_fabric: bool = True,
+        labels: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "count": int(count),
+            "template_id": template_id,
+            "agent_id": agent_id,
+            "room_id_prefix": room_id_prefix,
+            "memory_mib": int(memory_mib),
+            "strategy": strategy,
+            "attach_fabric": attach_fabric,
+        }
+        if labels is not None:
+            body["labels"] = labels
+        return self._request("POST", "/v1/episodes/batch", json_body=body)
+
+    def destroy_episode_batch(self, batch_id: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/v1/episodes/batch/{batch_id}")
+
+    def reserve_capacity(
+        self,
+        *,
+        count: int,
+        template_id: str = "default",
+        ttl_s: int = 3600,
+        kind: str = "hard_l1_fence",
+        labels: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "count": int(count),
+            "template_id": template_id,
+            "ttl_s": int(ttl_s),
+            "kind": kind,
+        }
+        if labels is not None:
+            body["labels"] = labels
+        return self._request("POST", "/v1/capacity/reserve", json_body=body)
+
+    def release_capacity(self, reservation_id: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/v1/capacity/reservations/{reservation_id}")
+
 
 def _decode_b64(value: str | None) -> str:
     if not value:
@@ -196,6 +246,8 @@ class FystashSandbox:
         create_wall_ms: float | None,
         dind: bool,
         max_stream_output_bytes: int = 128 * 1024,
+        owns_api: bool = True,
+        on_cleanup: Any | None = None,
     ) -> None:
         self._api = api
         self._room_id = room_id
@@ -207,6 +259,38 @@ class FystashSandbox:
         self._max_stream_output_bytes = max_stream_output_bytes
         self.create_wall_ms = create_wall_ms
         self._cleaned = False
+        self._owns_api = owns_api
+        self._on_cleanup = on_cleanup
+
+    @classmethod
+    def from_existing(
+        cls,
+        api: _RoomApi,
+        *,
+        room_id: str,
+        agent_id: str,
+        timeout: int = 600,
+        template_id: str = "default",
+        docker_image: str | None = None,
+        create_wall_ms: float | None = None,
+        dind: bool = False,
+        max_stream_output_bytes: int = 128 * 1024,
+        on_cleanup: Any | None = None,
+    ) -> FystashSandbox:
+        """Wrap an already-running room (episode batch / pool replenish)."""
+        return cls(
+            api=api,
+            room_id=room_id,
+            agent_id=agent_id,
+            timeout=timeout,
+            template_id=template_id,
+            docker_image=docker_image,
+            create_wall_ms=create_wall_ms,
+            dind=dind,
+            max_stream_output_bytes=max_stream_output_bytes,
+            owns_api=False,
+            on_cleanup=on_cleanup,
+        )
 
     @classmethod
     async def create(
@@ -438,10 +522,30 @@ class FystashSandbox:
         except Exception:  # noqa: BLE001
             pass
         finally:
-            self._api.close()
+            if self._on_cleanup is not None:
+                try:
+                    maybe = self._on_cleanup(self)
+                    if asyncio.iscoroutine(maybe):
+                        await maybe
+                except Exception:  # noqa: BLE001
+                    pass
+            if self._owns_api:
+                self._api.close()
 
 
 async def fystash_sandbox_factory(env_dir: Path, timeout: int) -> FystashSandbox:
-    """SandboxFactory for Harbor RL — env_dir accepted but Dockerfile not built."""
+    """SandboxFactory for Harbor RL — env_dir accepted but Dockerfile not built.
+
+    When ``FYSTASH_POOL_SIZE>0``, acquire from the capacity-backed pool.
+    """
     _ = env_dir
+    try:
+        pool_size = int(os.environ.get("FYSTASH_POOL_SIZE", "0"))
+    except ValueError:
+        pool_size = 0
+    if pool_size > 0:
+        from tinker_cookbook.sandbox.fystash_pool import get_or_start_pool
+
+        pool = await get_or_start_pool()
+        return await pool.acquire(timeout=timeout)
     return await FystashSandbox.create(timeout=timeout)

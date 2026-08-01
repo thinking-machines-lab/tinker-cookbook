@@ -110,6 +110,18 @@ TINKER_SANDBOX_BACKEND=fystash uv run python …
 
 **Honesty:** Modal's default factory builds `environment/Dockerfile`. Fystash does **not** — it uses a warmed template (or pulls a prebuilt image when `FYSTASH_DOCKER_IMAGE` is set). See https://docs.fystash.ai
 
+### Fystash capacity pool (optional)
+
+For denser Harbor RL / code_rl fan-out, set a pool size so creates happen under a capacity reservation:
+
+```bash
+export FYSTASH_POOL_SIZE=8
+export FYSTASH_POOL_CREATE_RATE=4
+export FYSTASH_CAPACITY_TTL_S=3600
+```
+
+When `FYSTASH_POOL_SIZE>0`, `fystash_sandbox_factory` acquires from `FystashSandboxPool` (reserve → episode-batch replenish → acquire). Paid Fystash quota max is 64 slots.
+
 ## Running
 
 First, download the Terminal-Bench tasks:
