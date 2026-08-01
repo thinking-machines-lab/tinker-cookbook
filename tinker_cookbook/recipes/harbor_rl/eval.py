@@ -27,7 +27,7 @@ from tinker_cookbook.recipes.harbor_rl.harbor_env import (
     HarborTask,
     SandboxFactory,
     _initial_messages,
-    default_sandbox_factory,
+    resolve_sandbox_factory,
 )
 from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, HarborReward
 from tinker_cookbook.renderers import get_renderer
@@ -56,6 +56,8 @@ class EvalConfig:
     checkpoint_url: str | None = None
     base_url: str | None = None
     renderer_name: str | None = None
+    # Sandbox backend: "modal" (default) or "fystash". Also TINKER_SANDBOX_BACKEND.
+    sandbox_backend: str | None = None
 
 
 @dataclass
@@ -172,7 +174,7 @@ async def evaluate_task(
 async def run_eval(
     config: EvalConfig,
     tasks: list[HarborTask],
-    sandbox_factory: SandboxFactory = default_sandbox_factory,
+    sandbox_factory: SandboxFactory | None = None,
 ) -> list[TaskResult]:
     """Run evaluation on a list of Harbor tasks.
 
@@ -181,11 +183,16 @@ async def run_eval(
     Args:
         config: Evaluation configuration.
         tasks: List of HarborTask to evaluate.
-        sandbox_factory: Factory for creating sandboxes (defaults to Modal).
+        sandbox_factory: Factory for creating sandboxes. When None, resolved from
+            ``config.sandbox_backend`` / ``TINKER_SANDBOX_BACKEND`` (default Modal).
 
     Returns:
         List of per-task results.
     """
+    factory = resolve_sandbox_factory(
+        sandbox_backend=config.sandbox_backend,
+        sandbox_factory=sandbox_factory,
+    )
     results_dir = Path(config.output_path) / datetime.now().strftime("%Y%m%d_%H%M%S")
     results_dir.mkdir(parents=True, exist_ok=True)
     print(f"Results dir: {results_dir}")
@@ -231,7 +238,7 @@ async def run_eval(
                     task,
                     policy,
                     renderer,
-                    sandbox_factory,
+                    factory,
                     config,
                     results_dir,
                     lock,

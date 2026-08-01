@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import tomllib
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -16,7 +17,8 @@ from tinker_cookbook.recipes.harbor_rl.harbor_tools import HarborBashTool, Harbo
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
-from tinker_cookbook.sandbox import SandboxInterface
+from tinker_cookbook.sandbox import SandboxBackend, SandboxInterface
+from tinker_cookbook.sandbox.fystash_sandbox import fystash_sandbox_factory
 from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 from tinker_cookbook.tool_use import build_agent_tool_env
 from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
@@ -45,6 +47,30 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
     dockerfile_path = env_dir / "Dockerfile"
     image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
     return await ModalSandbox.create(image=image, timeout=timeout)
+
+
+def resolve_sandbox_factory(
+    sandbox_backend: str | None = None,
+    sandbox_factory: SandboxFactory | None = None,
+) -> SandboxFactory:
+    """Resolve a SandboxFactory from an explicit factory, CLI backend, or env.
+
+    Priority: explicit ``sandbox_factory`` > ``sandbox_backend`` /
+    ``TINKER_SANDBOX_BACKEND`` > Modal default.
+
+    Backends: ``modal`` (default), ``fystash``.
+    """
+    if sandbox_factory is not None:
+        return sandbox_factory
+    backend = (sandbox_backend or os.environ.get("TINKER_SANDBOX_BACKEND") or "modal").strip().lower()
+    if backend in ("", SandboxBackend.MODAL, "modal"):
+        return default_sandbox_factory
+    if backend in (SandboxBackend.FYSTASH, "fystash"):
+        return fystash_sandbox_factory
+    raise ValueError(
+        f"Unknown sandbox_backend={backend!r}. Supported: modal, fystash "
+        "(or pass sandbox_factory explicitly)."
+    )
 
 
 @dataclass(frozen=True)

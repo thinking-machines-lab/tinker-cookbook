@@ -4,10 +4,7 @@ from pathlib import Path
 import chz
 
 from tinker_cookbook.recipes.harbor_rl.eval import EvalConfig, TaskResult, run_eval
-from tinker_cookbook.recipes.harbor_rl.harbor_env import (
-    default_sandbox_factory,
-    load_harbor_tasks,
-)
+from tinker_cookbook.recipes.harbor_rl.harbor_env import load_harbor_tasks
 
 DATASETS: dict[str, str] = {
     "terminal_bench": "terminal-bench-2.0/terminal-bench",
@@ -29,6 +26,8 @@ class CLIConfig:
     command_timeout: int = 120
     grader_timeout: int = 60
     max_tasks: int | None = None
+    # Sandbox backend: "modal" (default) or "fystash". Also TINKER_SANDBOX_BACKEND.
+    sandbox_backend: str | None = None
 
     base_url: str | None = None
     renderer_name: str | None = None
@@ -71,10 +70,11 @@ async def run_benchmark(cli_config: CLIConfig, benchmark: str) -> list[TaskResul
         checkpoint_url=cli_config.checkpoint_url,
         base_url=cli_config.base_url,
         renderer_name=cli_config.renderer_name,
+        sandbox_backend=cli_config.sandbox_backend,
     )
     tasks = load_harbor_tasks(DATASETS[benchmark])
     print(f"Running {benchmark} on {len(tasks)} tasks")
-    results = await run_eval(eval_config, tasks, sandbox_factory=default_sandbox_factory)
+    results = await run_eval(eval_config, tasks)
     print_summary(benchmark, results)
     return results
 

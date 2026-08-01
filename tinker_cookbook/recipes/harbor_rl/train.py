@@ -10,6 +10,7 @@ from tinker_cookbook.recipes.harbor_rl.harbor_env import (
     HarborDatasetBuilder,
     HarborTask,
     SandboxFactory,
+    resolve_sandbox_factory,
 )
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 
@@ -36,6 +37,8 @@ class CLIConfig:
     max_trajectory_tokens: int = 32 * 1024
     max_generation_tokens: int | None = None
     context_overflow_reward: float = -0.1
+    # Sandbox backend: "modal" (default) or "fystash". Also TINKER_SANDBOX_BACKEND.
+    sandbox_backend: str | None = None
 
     # Training hyperparameters
     group_size: int = 4
@@ -86,6 +89,11 @@ async def cli_main(
         else cli_config.max_tokens
     )
 
+    factory = resolve_sandbox_factory(
+        sandbox_backend=cli_config.sandbox_backend,
+        sandbox_factory=sandbox_factory,
+    )
+
     dataset_builder = HarborDatasetBuilder(
         tasks=tasks,
         batch_size=cli_config.groups_per_batch,
@@ -99,7 +107,7 @@ async def cli_main(
         max_trajectory_tokens=cli_config.max_trajectory_tokens,
         max_generation_tokens=max_generation_tokens,
         context_overflow_reward=cli_config.context_overflow_reward,
-        sandbox_factory=sandbox_factory,
+        sandbox_factory=factory,
     )
 
     config = Config(

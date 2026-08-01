@@ -83,7 +83,32 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
 
 The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`).
 
-`cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
+`cli_main()` / `run_eval()` accept an optional `sandbox_factory` parameter. When `None`, the factory is resolved from `sandbox_backend` / `TINKER_SANDBOX_BACKEND` (default Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
+
+### Fystash backend
+
+[Fystash](https://fystash.ai) provides warm Firecracker rooms as a `SandboxInterface` backend (`SandboxBackend.FYSTASH`). No optional extra is required (stdlib HTTP).
+
+```bash
+export FYSTASH_API_KEY=key-…          # https://fystash.ai/signup
+export FYSTASH_API=https://api.fystash.ai   # optional
+export FYSTASH_TEMPLATE_ID=default          # optional; ignored when FYSTASH_DOCKER_IMAGE is set
+# optional DinD (pull only — does not build task Dockerfiles):
+# export FYSTASH_DOCKER_IMAGE=ghcr.io/example/task:latest
+```
+
+Train / eval with:
+
+```bash
+uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py \
+    sandbox_backend=fystash \
+    …
+
+# or
+TINKER_SANDBOX_BACKEND=fystash uv run python …
+```
+
+**Honesty:** Modal's default factory builds `environment/Dockerfile`. Fystash does **not** — it uses a warmed template (or pulls a prebuilt image when `FYSTASH_DOCKER_IMAGE` is set). See https://docs.fystash.ai
 
 ## Running
 
