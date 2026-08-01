@@ -16,6 +16,7 @@ import tinker
 
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
+    ContentPart,
     ImagePart,
     ImageProcessorProtocol,
     Message,
@@ -24,7 +25,6 @@ from tinker_cookbook.renderers.base import (
     RenderedMessage,
     Renderer,
     TextPart,
-    ThinkingPart,
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
@@ -49,13 +49,13 @@ def _frame_thinking(reasoning: str) -> str:
     return "<think>\n" + reasoning.strip("\n") + "\n</think>\n\n"
 
 
-def _unframe_thinking(parts: list[ThinkingPart | TextPart]) -> list[ThinkingPart | TextPart]:
+def _unframe_thinking(parts: list[ContentPart]) -> list[ContentPart]:
     """Reverse `_frame_thinking`, so render -> parse is the identity.
 
     The template's `strip`/`lstrip` mean the padding is framing rather than content, and
     an empty block is a turn that did not reason rather than one that reasoned emptily.
     """
-    out: list[ThinkingPart | TextPart] = []
+    out: list[ContentPart] = []
     after_block = False
     for p in parts:
         if p["type"] == "thinking":
@@ -65,7 +65,9 @@ def _unframe_thinking(parts: list[ThinkingPart | TextPart]) -> list[ThinkingPart
             # An empty block is dropped, but the content after it was still lstripped.
             after_block = True
         elif p["type"] == "text":
-            out.append({"type": "text", "text": p["text"].lstrip("\n") if after_block else p["text"]})
+            out.append(
+                {"type": "text", "text": p["text"].lstrip("\n") if after_block else p["text"]}
+            )
             after_block = False
         else:
             out.append(p)

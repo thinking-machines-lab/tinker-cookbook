@@ -765,7 +765,7 @@ def test_qwen3_produced_turn_survives_a_render_parse_roundtrip(reasoning: str | 
     convo = [{"role": "user", "content": "What is 2+2?"}, {"role": "assistant", "content": parts}]
 
     model_input, _ = renderer.build_supervised_example(convo)
-    produced = tokenizer.decode(model_input.to_ints()).split("<|im_start|>assistant\n")[1]
+    produced = str(tokenizer.decode(model_input.to_ints())).split("<|im_start|>assistant\n")[1]
     parsed, termination = renderer.parse_response(
         tokenizer.encode(produced, add_special_tokens=False)
     )
