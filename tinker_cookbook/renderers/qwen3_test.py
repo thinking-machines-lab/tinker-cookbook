@@ -630,6 +630,17 @@ def qwen3_5_renderer(qwen3_5_tokenizer):
     return Qwen3_5Renderer(qwen3_5_tokenizer)
 
 
+def test_qwen3_5_trims_message_content(qwen3_5_renderer):
+    messages = [{"role": "user", "content": "hi\n"}]
+    actual = qwen3_5_renderer.build_generation_prompt(messages).to_ints()
+    expected = extract_token_ids(
+        AutoTokenizer.from_pretrained("Qwen/Qwen3.6-35B-A3B").apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True
+        )
+    )
+    assert actual == expected
+
+
 def test_qwen3_5_parse_response_restores_prefilled_think_tag(qwen3_5_tokenizer, qwen3_5_renderer):
     """parse_response should restore <think>\\n when it was prefilled by generation prompt."""
     # Simulate sampled tokens after <think>\n prefill: "reasoning\n</think>\n\nanswer<|im_end|>"

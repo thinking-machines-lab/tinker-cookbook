@@ -26,6 +26,7 @@ from tinker_cookbook.renderers.base import (
     Message,
     ParseTermination,
     RenderContext,
+    RenderedMessage,
     Role,
     TextPart,
     ToolCall,
@@ -55,6 +56,11 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
     the last user message. This is handled via ctx.last_user_index, which is
     populated by the base build_generation_prompt/build_supervised_example.
     """
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        if isinstance(message["content"], str):
+            message = {**message, "content": message["content"].strip()}
+        return super().render_message(message, ctx)
 
     def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
         """Override to produce the full generation suffix directly.
