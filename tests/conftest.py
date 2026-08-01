@@ -17,12 +17,24 @@ import pytest
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip smoke tests locally when TINKER_API_KEY is not set. Fail on CI."""
+    """Skip smoke tests locally when TINKER_API_KEY is not set. Fail on CI.
+
+    Sandbox-backend smokes (Modal / Fystash) gate on their own credentials and
+    do not need a Tinker API key.
+    """
     if os.environ.get("TINKER_API_KEY"):
         return
 
+    sandbox_only = {"test_modal_sandbox.py", "test_fystash_sandbox.py"}
+
     # Separate smoke tests from downstream_compat tests (which don't need API keys)
-    smoke_items = [item for item in items if "downstream_compat" not in str(item.fspath)]
+    # and from sandbox-only tests that use their own auth skip markers.
+    smoke_items = [
+        item
+        for item in items
+        if "downstream_compat" not in str(item.fspath)
+        and os.path.basename(str(item.fspath)) not in sandbox_only
+    ]
     if not smoke_items:
         return
 
