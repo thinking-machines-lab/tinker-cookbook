@@ -475,10 +475,12 @@ def _assert_streaming_matches_batch(renderer, response_str: str):
         expected_thinking = ""
         expected_text = batch_content
 
-    assert thinking_from_deltas == expected_thinking
+    # Deltas carry the wire text; the parsed parts have the template's `<think>\n...\n</think>\n\n`
+    # padding normalized out, which is lossy, so the two agree up to that padding.
+    assert thinking_from_deltas.strip("\n") == expected_thinking
     # Text deltas may include tool call markup before final parsing strips it
     if not batch_message.get("tool_calls") and not batch_message.get("unparsed_tool_calls"):
-        assert text_from_deltas == expected_text
+        assert text_from_deltas.lstrip("\n") == expected_text.lstrip("\n")
 
     return deltas, batch_message
 
@@ -706,3 +708,67 @@ def test_qwen3_5_normalize_noop_when_think_present(qwen3_5_tokenizer, qwen3_5_re
 
     assert _is_message(streaming_message)
     assert ensure_list(streaming_message["content"]) == ensure_list(batch_message["content"])
+
+
+@pytest.mark.parametrize("reasoning", [None, "2+2 is 4"])
+def test_qwen3_produced_assistant_turn_matches_hf(reasoning: str | None):
+    """A produced assistant turn must be framed the way the chat template frames it.
+
+    Every other HF-parity case here ends on a user message, so `add_generation_prompt`
+    exercises the generation prefix and nothing covers how a *produced* assistant turn
+    is written -- which is where the renderer differed. The template writes
+    `<think>\\n{reasoning}\\n</think>\\n\\n` around that turn, and writes the block even
+    when there is no reasoning, so rendering `<think>{reasoning}</think>` (or nothing)
+    came out 3 tokens short with reasoning and 4 short without.
+    """
+    model = "Qwen/Qwen3-8B"
+    tokenizer = get_tokenizer(model)
+    hf_tokenizer = AutoTokenizer.from_pretrained(model)
+    renderer = get_renderer("qwen3", tokenizer)
+
+    thinking_parts = [{"type": "thinking", "thinking": reasoning}] if reasoning else []
+    convo = [
+        {"role": "user", "content": "What is 2+2?"},
+        {"role": "assistant", "content": [*thinking_parts, {"type": "text", "text": "4"}]},
+    ]
+    # The template reads reasoning from a top-level `reasoning_content` and ignores
+    # content parts it does not know, so the reference has to be fed the wire shape --
+    # handed the parts directly it renders the turn empty and every comparison passes.
+    hf_convo = [
+        {"role": "user", "content": "What is 2+2?"},
+        {
+            "role": "assistant",
+            "content": "4",
+            **({"reasoning_content": reasoning} if reasoning else {}),
+        },
+    ]
+
+    cookbook = tokenizer.decode(renderer.build_generation_prompt(convo).to_ints())
+    hf = hf_tokenizer.apply_chat_template(hf_convo, tokenize=False, add_generation_prompt=True)
+    assert cookbook == hf, f"cookbook:\n{cookbook!r}\n\nhf:\n{hf!r}"
+
+
+@pytest.mark.parametrize("reasoning", [None, "2+2 is 4"])
+def test_qwen3_produced_turn_survives_a_render_parse_roundtrip(reasoning: str | None):
+    """Framing is written on render, so it must come back off on parse.
+
+    The template's `strip`/`lstrip` make the padding framing rather than content, and an
+    empty block a turn that did not reason -- so parsing must drop both to return the
+    message that was rendered. Nothing covered a produced turn with structured content
+    and no reasoning, which is the shape where the block is empty.
+    """
+    tokenizer = get_tokenizer("Qwen/Qwen3-8B")
+    renderer = get_renderer("qwen3", tokenizer)
+
+    thinking_parts = [{"type": "thinking", "thinking": reasoning}] if reasoning else []
+    parts = [*thinking_parts, {"type": "text", "text": "4"}]
+    convo = [{"role": "user", "content": "What is 2+2?"}, {"role": "assistant", "content": parts}]
+
+    model_input, _ = renderer.build_supervised_example(convo)
+    produced = str(tokenizer.decode(model_input.to_ints())).split("<|im_start|>assistant\n")[1]
+    parsed, termination = renderer.parse_response(
+        tokenizer.encode(produced, add_special_tokens=False)
+    )
+
+    assert termination.is_clean
+    assert ensure_list(parsed["content"]) == parts
