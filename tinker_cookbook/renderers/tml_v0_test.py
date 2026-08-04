@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import pickle
 import wave
 from pathlib import Path
 from typing import Any, cast
@@ -102,6 +103,12 @@ def _renderer() -> tml_v0.TmlV0Renderer:
     _require_tml_renderers()
     tokenizer = get_tokenizer("thinkingmachines/Inkling")
     return cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
+
+
+def _disable_thinking_renderer() -> tml_v0.TmlV0Renderer:
+    _require_tml_renderers()
+    tokenizer = get_tokenizer("thinkingmachines/Inkling")
+    return cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0_disable_thinking", tokenizer))
 
 
 def _input_len(model_input) -> int:
@@ -353,6 +360,45 @@ def test_build_supervised_example_effort_validates_range() -> None:
 
     with pytest.raises(ValueError, match=r"thinking effort must be.*\[0, 1\)"):
         renderer.build_supervised_example(_messages(), effort=1.0)
+
+
+def test_constructor_effort_validates_range() -> None:
+    _require_tml_renderers()
+    tokenizer = get_tokenizer("thinkingmachines/Inkling")
+
+    with pytest.raises(ValueError, match=r"thinking effort must be.*\[0, 1\)"):
+        tml_v0.TmlV0Renderer(tokenizer, effort=1.0)
+
+
+def test_disable_thinking_renderer_renders_at_zero_effort() -> None:
+    renderer = _disable_thinking_renderer()
+
+    assert (
+        renderer.build_generation_prompt(_messages()).to_ints()
+        == _renderer().build_generation_prompt(_messages(), effort=0.0).to_ints()
+    )
+
+
+def test_renderer_effort_survives_pickle() -> None:
+    renderer = _disable_thinking_renderer()
+
+    restored = pickle.loads(pickle.dumps(renderer))
+
+    assert (
+        restored.build_generation_prompt(_messages()).to_ints()
+        == renderer.build_generation_prompt(_messages()).to_ints()
+    )
+
+
+def test_conversation_to_datum_uses_renderer_effort() -> None:
+    """The generic supervised path never passes effort; the renderer supplies it."""
+    datum = conversation_to_datum(_messages(), _disable_thinking_renderer(), max_length=None)
+    expected, _ = _renderer().build_supervised_example(_messages(), effort=0.0)
+    default_datum = conversation_to_datum(_messages(), _renderer(), max_length=None)
+
+    # conversation_to_datum shifts, so the datum drops the final rendered token.
+    assert datum.model_input.to_ints() == expected.to_ints()[:-1]
+    assert datum.model_input.to_ints() != default_datum.model_input.to_ints()
 
 
 def test_generation_prompt_is_prefix_of_supervised_example() -> None:
