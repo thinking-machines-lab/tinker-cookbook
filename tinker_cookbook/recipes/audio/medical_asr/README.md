@@ -29,8 +29,7 @@ that to 91.5% — from missing one term in five to fewer than one in eleven.
 ## Requirements
 
 `tml_renderers` for Inkling rendering, plus `jiwer` and `soundfile` for
-grading & the audio cache (installed by the `inkling` and `audio` extras:
-`pip install "tinker_cookbook[audio,inkling]"`).
+grading & the audio cache (`pip install "tinker_cookbook[audio]"`).
 
 ## Data
 

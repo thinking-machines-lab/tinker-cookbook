@@ -37,12 +37,8 @@ general-purpose model that can code, reason, call tools, and process image and
 audio inputs. Inkling-Small is a smaller, lower-cost model in the same family
 that shares Inkling's rendering path and reasoning-effort interface. Tinker
 Cookbook supports sampling and post-training both through the standalone
-`tml-renderers` library; install it with the `inkling` extra, which also pulls in
-the required `torch>=2.10`:
-
-```bash
-uv pip install 'tinker-cookbook[inkling]'
-```
+`tml-renderers` library, included in the default installation together with the
+required `torch>=2.10`.
 
 Pass `model_name="thinkingmachines/Inkling"` or
 `model_name="thinkingmachines/Inkling-Small"` anywhere the cookbook accepts a

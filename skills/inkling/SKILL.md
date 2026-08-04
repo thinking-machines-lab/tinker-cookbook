@@ -17,11 +17,7 @@ Working with Inkling differs from other Tinker models in three ways, each covere
 
 ## Setup
 
-Inkling renders through the standalone [`tml-renderers`](https://pypi.org/project/tml-renderers/) package, which ships in the `inkling` extra (it also pulls in the required `torch>=2.10`):
-
-```bash
-uv pip install 'tinker-cookbook[inkling]'
-```
+Inkling renders through the standalone [`tml-renderers`](https://pypi.org/project/tml-renderers/) package, included in the default installation together with the required `torch>=2.10`.
 
 Pass `thinkingmachines/Inkling` or `thinkingmachines/Inkling-Small` anywhere the cookbook takes a model name. The tokenizer and renderer (`tml_v0`) are selected automatically for any `thinkingmachines/Inkling*` model, including the [`:peft:` long-context variants](https://tinker-docs.thinkingmachines.ai/tinker/models/):
 
@@ -125,7 +121,7 @@ python -m tinker_cookbook.scripts.inkling.sample_audio
 python -m tinker_cookbook.scripts.inkling.sample_vision
 ```
 
-Audio fine-tuning recipes (speech recognition, emotion plus transcription, medical ASR domain adaptation) live in `tinker_cookbook/recipes/audio/` and need `pip install 'tinker_cookbook[audio,inkling]'`.
+Audio fine-tuning recipes (speech recognition, emotion plus transcription, medical ASR domain adaptation) live in `tinker_cookbook/recipes/audio/` and need `pip install 'tinker_cookbook[audio]'`.
 
 ## Common pitfalls
 
@@ -135,8 +131,8 @@ Audio fine-tuning recipes (speech recognition, emotion plus transcription, medic
 | Eval scores that don't reproduce | Effort not recorded or not set | Pin and log the effort value for every eval run |
 | Train/test mismatch after SFT | Data rendered at a different effort than sampling | Render training data with the effort you deploy at |
 | Responses truncated mid-thought | `max_tokens` not scaled with effort | Raise the budget; high effort can need 16k+ tokens |
-| `ModuleNotFoundError: tml_renderers` | Missing extra | `uv pip install 'tinker-cookbook[inkling]'` |
-| `TmlV0Renderer requires PyTorch 2.10 or newer` | Old torch | Install via the `inkling` extra, or `pip install "torch>=2.10"` |
+| `ModuleNotFoundError: tml_renderers` | Incomplete installation | Reinstall `tinker-cookbook` |
+| `TmlV0Renderer requires PyTorch 2.10 or newer` | Old torch | Reinstall `tinker-cookbook`, or run `pip install "torch>=2.10"` |
 | `get_lr` raises `NotImplementedError` | No general-purpose default LR is published for Inkling | Calibrate for your task: pick a starting value and sweep |
 | `NotImplementedError` on prefill | TMLv0 sampling rejects partial assistant messages | Pass complete messages instead |
 | Frequent `MALFORMED` terminations | Truncated or unparseable output | Raise `max_tokens`; retry with a corrective message carrying the parse error |
@@ -156,7 +152,7 @@ Model and documentation:
 
 Packages and code:
 
-- [`tml-renderers`](https://pypi.org/project/tml-renderers/) — the rendering library behind `tml_v0`, installed by the `inkling` extra
+- [`tml-renderers`](https://pypi.org/project/tml-renderers/) — the rendering library behind `tml_v0`
 - [`tinker-cookbook`](https://github.com/thinking-machines-lab/tinker-cookbook) — this repository
 - [`sample_reasoning.py`](https://github.com/thinking-machines-lab/tinker-cookbook/blob/main/tinker_cookbook/scripts/inkling/sample_reasoning.py) — the effort sweep script
 - `tinker_cookbook/renderers/tml_v0.py` — the cookbook renderer adapter

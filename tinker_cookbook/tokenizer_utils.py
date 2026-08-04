@@ -17,12 +17,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
 
 # ---------------------------------------------------------------------------
-# Optional ``tml_renderers`` import shim.
+# ``tml_renderers`` import shim.
 #
-# ``tml_renderers`` is not part of the base cookbook dependency set; install
-# the ``inkling`` extra (``pip install 'tinker-cookbook[inkling]'``) to use
-# Inkling. The ``TML_RENDERERS_SOURCE_DIR`` escape hatch only exists so a
-# source checkout can be used without installing.
+# The ``TML_RENDERERS_SOURCE_DIR`` escape hatch allows a source checkout to be
+# used without installing.
 # ---------------------------------------------------------------------------
 
 
@@ -45,10 +43,8 @@ def ensure_tml_renderers_importable() -> None:
                 sys.path.remove(source_str)
 
     raise ModuleNotFoundError(
-        "Could not import optional dependency 'tml_renderers'. "
-        "Install it with: uv pip install 'tinker-cookbook[inkling]', "
-        "or set TML_RENDERERS_SOURCE_DIR to a directory containing the "
-        "tml_renderers package."
+        "Could not import dependency 'tml_renderers'. Reinstall tinker-cookbook, "
+        "or set TML_RENDERERS_SOURCE_DIR to a directory containing the tml_renderers package."
     )
 
 
@@ -69,8 +65,8 @@ class TmlTokenizer(Protocol):
     """Structural type for the underlying ``tml_renderers`` tokenizer.
 
     Cookbook never constructs this object (``tml_renderers.tokenizers`` does),
-    and ``tml_renderers`` is an optional, lazily imported dependency, so its
-    concrete type is not referenceable here. This protocol pins the small
+    and ``tml_renderers`` is lazily imported, so its concrete type is not
+    referenceable here. This protocol pins the small
     surface the cookbook adapter and renderer actually rely on, making the
     contract explicit instead of ``Any`` duck-typing.
     """

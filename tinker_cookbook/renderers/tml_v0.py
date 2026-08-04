@@ -42,9 +42,8 @@ from tinker_cookbook.tokenizer_utils import (
 )
 
 if TYPE_CHECKING:
-    # tml_renderers is an optional dependency (the `inkling` extra) imported
-    # lazily at runtime; import it here for annotations only. It ships py.typed
-    # stubs, so pyright checks these types whenever the package is installed.
+    # tml_renderers is imported lazily at runtime; import it here for
+    # annotations only. It ships py.typed stubs, so pyright checks these types.
     from tml_renderers import chat as tml_chat  # pyright: ignore[reportMissingImports]
     from tml_renderers import v0 as tml_v0  # pyright: ignore[reportMissingImports]
 
@@ -81,9 +80,7 @@ def _validate_torch_version() -> None:
     if (major, minor) < _MINIMUM_TORCH_VERSION:
         raise RuntimeError(
             f"TmlV0Renderer requires PyTorch 2.10 or newer; found {torch.__version__}. "
-            "Install a supported version via the inkling extra "
-            "(uv pip install 'tinker-cookbook[inkling]') or directly with "
-            'pip install "torch>=2.10".'
+            'Reinstall tinker-cookbook or run `pip install "torch>=2.10"`.'
         )
 
 

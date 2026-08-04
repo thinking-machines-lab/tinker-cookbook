@@ -77,19 +77,23 @@ For an identifier to pass to the SDK, call `service_client.get_server_capabiliti
 
 1. **Sequential API calls:** The #1 performance mistake. Always use `_async` variants and submit calls back-to-back before awaiting. Use `asyncio.gather` for concurrent evaluation — never sequential loops over API calls. Tinker is designed for high request concurrency from a single Python process; when exact limits matter, check the current SDK/client configuration rather than inventing small caps. For very high parallelism, shard work across multiple Python processes and pass pickled sampling clients where appropriate.
 
-2. **Sampler desync:** Create a **new** sampling client after saving weights. A stale client silently samples from old weights.
+2. **Client-side timeouts and retries:** Don't wrap Tinker requests in your own timeouts (e.g. `asyncio.wait_for` around `sample_async`) or retry loops. The SDK and backend already retry transient failures, and the SDK detects stuck requests. Tinker is optimized for throughput over latency, so request latency varies with system load and generation length; there is no correct fixed timeout. Under load, aggressive timeouts turn slow-but-progressing steps into total failure (every request in a batch times out, retries just add load), which especially bites RL sampling loops that bound per-batch sampling time. Submit requests concurrently and wait for them; slow steps resolve on their own. Reserve `RetryOnFailure` / `per_rollout_timeout` for non-Tinker failures (flaky sandboxes, tool errors), not as a bound on sampling latency. If sampling speed is dramatically blocking your training jobs, email support (<https://tinker-docs.thinkingmachines.ai/support/>) with your session ID.
 
-3. **LoRA LR:** Use `hyperparam_utils.get_lr(model_name)` - LoRA needs ~10x higher LR than full fine-tuning.
+3. **Sampler desync:** Create a **new** sampling client after saving weights. A stale client silently samples from old weights.
 
-4. **Renderer mismatch:** Use `model_info.get_recommended_renderer_name()` — never hardcode renderer names.
+4. **LoRA LR:** Use `hyperparam_utils.get_lr(model_name)` - LoRA needs ~10x higher LR than full fine-tuning.
+
+5. **Renderer mismatch:** Use `model_info.get_recommended_renderer_name()` — never hardcode renderer names.
 
    **Never call `tokenizer.encode(prompt)` directly on a chat-tuned model** (gpt-oss, Llama-3-Instruct, Qwen-Instruct, etc.). Raw encoding skips the chat template, producing OOD prompt tokens. The sampler and trainer then take subtly different code paths on those OOD inputs, and per-token sampler/trainer logprob KL can inflate by 5×+ (max ratios in the tens), silently breaking PPO/CISPO/GRPO importance ratios. Use `tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)` (take `["input_ids"]` from the returned `BatchEncoding`) or a cookbook renderer for the prompt. Raw `encode` is correct only for base / continued-pretraining / NLL-eval workflows where there is no conversation.
 
-5. **Type construction:** Use helper functions, not manual dict construction. See `supervised/data.py` and `supervised/common.py`.
+6. **Context length:** Be mindful of the context length of the model you pick. Each model's maximum sequence length is listed on <https://tinker-docs.thinkingmachines.ai/tinker/models/>, and sequences that exceed it get truncated or rejected. For long-horizon tasks (multi-turn agentic RL, long tool-use trajectories, long documents), always prefer the extended-context variant of the model if one is available — these are the `:peft:<length>` model IDs in `get_server_capabilities().supported_models` (e.g. `...:peft:131072` for 128K, `...:peft:262144` for 256K). Also check trajectory caps like `max_trajectory_tokens` and datum `max_length` — a model with a large context window still truncates if the loop's limits are smaller.
 
-6. **Group semantics:** RL advantages are centered within each group.
+7. **Type construction:** Use helper functions, not manual dict construction. See `supervised/data.py` and `supervised/common.py`.
 
-7. **DPO:** Start with `dpo_beta=0.1`, LR~1e-5.
+8. **Group semantics:** RL advantages are centered within each group.
+
+9. **DPO:** Start with `dpo_beta=0.1`, LR~1e-5.
 
 ---
 

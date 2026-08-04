@@ -64,7 +64,6 @@ trained checkpoints stop after ~70 tokens, so the budget costs nothing later.
 - `env.py` — LibriSpeech streaming + WAV cache, SL/RL dataset builders, the
   `-WER` env, and the WER evaluator (message/datum plumbing comes from
   [`../data.py`](../data.py), scoring from [`../grading.py`](../grading.py))
-- `env_test.py` — datum masking / env reward / dataset tests (skip without
-  the optional `tml_renderers` package, i.e. the `inkling` extra)
+- `env_test.py` — datum masking / env reward / dataset tests
 - `sl_train.py` — SFT entrypoint → `supervised.train`
 - `rl_train.py` — RL entrypoint → `rl.train`

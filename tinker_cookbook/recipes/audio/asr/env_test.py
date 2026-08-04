@@ -1,8 +1,4 @@
-"""Tests for the ASR recipe's data, SFT datum, env, and reward pipeline.
-
-Skip when the optional ``tml_renderers`` package is not importable (install
-the ``inkling`` extra), like ``renderers/tml_v0_test.py``.
-"""
+"""Tests for the ASR recipe's data, SFT datum, env, and reward pipeline."""
 
 from __future__ import annotations
 
