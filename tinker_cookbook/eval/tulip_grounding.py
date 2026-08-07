@@ -68,10 +68,14 @@ episode's own tools returned.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from tulip.reasoning.gsar_judge import BaseGSARJudge, JudgeOutput
+# `tulip-agents` is not a dependency of tinker-cookbook and isn't installed
+# in this repo's CI -- even a TYPE_CHECKING-only import of tulip.reasoning
+# .gsar_judge fails pyright there (it resolves types unconditionally,
+# runtime guards or not). BaseGSARJudge/JudgeOutput are typed as Any for
+# that reason, not because the real types don't exist -- see the module
+# docstring's Example for what a caller actually gets back.
 
 
 def _build_evidence_corpus(predicted_actions_json: str) -> str:
@@ -91,7 +95,7 @@ def _build_evidence_corpus(predicted_actions_json: str) -> str:
     return "\n".join(lines) if lines else "No tool calls were made this episode."
 
 
-async def score_trajectory_grounding(logs: dict[str, Any], judge: BaseGSARJudge) -> JudgeOutput:
+async def score_trajectory_grounding(logs: dict[str, Any], judge: Any) -> Any:
     """Score one tau2-bench trajectory's ``logs`` dict for groundedness.
 
     Args:
@@ -111,7 +115,7 @@ async def score_trajectory_grounding(logs: dict[str, Any], judge: BaseGSARJudge)
     return await judge.judge(report_synthesis=final_message, evidence_corpus=evidence)
 
 
-async def score_trajectories_file(path: str, judge: BaseGSARJudge) -> dict[str, JudgeOutput]:
+async def score_trajectories_file(path: str, judge: Any) -> dict[str, Any]:
     """Score every line of a local ``trajectories.jsonl`` file.
 
     Local files only — for a cloud ``save_dir`` (e.g. ``s3://...``), read
@@ -127,7 +131,7 @@ async def score_trajectories_file(path: str, judge: BaseGSARJudge) -> dict[str, 
         Rows with no ``agent_final_message`` in ``logs`` (e.g. an episode
         that ended mid tool-call sequence) are skipped, not scored as 0.
     """
-    results: dict[str, JudgeOutput] = {}
+    results: dict[str, Any] = {}
     with open(path, encoding="utf-8") as f:
         for line_num, raw_line in enumerate(f, 1):
             line = raw_line.strip()

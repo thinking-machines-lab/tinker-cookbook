@@ -118,14 +118,25 @@ class TestLiveGrounding:
     )
 
     def _judge(self):
-        from tulip.reasoning.gsar_judge import StructuredOutputGSARJudge
+        # tulip-agents isn't installed in this repo's CI (it's an optional
+        # dependency of this one test module, not of tinker-cookbook) -- the
+        # class this test skips on (pytestmark above) never actually runs
+        # there, but pyright still resolves imports regardless of runtime
+        # skip markers, so these need an explicit, narrow ignore rather than
+        # a real type error.
+        import tulip.reasoning.gsar_judge as _gsar_judge  # pyright: ignore[reportMissingImports]
+
+        StructuredOutputGSARJudge = _gsar_judge.StructuredOutputGSARJudge
 
         if os.environ.get("OPENAI_API_KEY"):
-            from tulip.models.native.openai import OpenAIModel
+            import tulip.models.native.openai as _openai_model  # pyright: ignore[reportMissingImports]
 
+            OpenAIModel = _openai_model.OpenAIModel
             model = OpenAIModel(model="gpt-4o-mini")
         else:
-            from tulip.models.native.openai import OpenAIModel
+            import tulip.models.native.openai as _openai_model  # pyright: ignore[reportMissingImports]
+
+            OpenAIModel = _openai_model.OpenAIModel
 
             model = OpenAIModel(
                 model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
