@@ -16,6 +16,7 @@ from tinker_cookbook.renderers import (
     StreamingThinkingDelta,
     TextPart,
     ThinkingPart,
+    ToolCall,
     get_renderer,
 )
 from tinker_cookbook.renderers.base import ensure_list
@@ -824,3 +825,34 @@ def test_a_turn_that_did_not_reason_gets_exactly_one_empty_block(
         + "<think>\n\n</think>\n\nI'm fine, thank you!<|im_end|>"
     )
     assert rendered == expected, f"renderer:\n{rendered!r}\n\nexpected:\n{expected!r}"
+
+
+@pytest.mark.parametrize(
+    "content,separator",
+    [("", ""), ("Let me check.", "\n")],
+    ids=["no-text", "text"],
+)
+def test_qwen3_tool_call_separator_follows_the_template(content: str, separator: str):
+    """The newline separates the calls from the text before them, and the calls from each
+    other. With no text there is nothing to separate, and the template writes nothing:
+
+        {%- if (loop.first and content) or (not loop.first) %}{{- '\n' }}{%- endif %}
+    """
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
+    renderer = get_renderer("qwen3_instruct", tokenizer)
+    call = ToolCall(function=ToolCall.FunctionBody(name="get_weather", arguments='{"city": "SF"}'))
+    messages = [
+        {"role": "user", "content": "weather in SF?"},
+        {"role": "assistant", "content": content, "tool_calls": [call]},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(cast(list[Message], messages))
+    rendered = tokenizer.decode(model_input.to_ints())
+
+    expected = (
+        "<|im_start|>user\nweather in SF?<|im_end|>\n<|im_start|>assistant\n"
+        f"{content}{separator}"
+        '<tool_call>\n{"name": "get_weather", "arguments": {"city": "SF"}}\n</tool_call>'
+        "<|im_end|>"
+    )
+    assert rendered == expected
