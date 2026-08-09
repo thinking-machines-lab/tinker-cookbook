@@ -52,6 +52,7 @@ from tinker_cookbook.renderers.base import (
     ensure_list,
     ensure_text,
     format_content_as_string,
+    has_thinking,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
@@ -985,6 +986,51 @@ _RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET = {"deepseekv3_thinking"}
 # Renderers whose supervised target keeps a header the generation prompt does not end with, so
 # observation != generation_prompt however the boundary moves.
 _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"nemotron3"}
+
+
+@pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
+def test_last_assistant_turn_observes_the_prefill_too(
+    model_name: str, renderer_name: str, conversation_fn
+):
+    """LAST_ASSISTANT_TURN stops training where LAST_ASSISTANT_MESSAGE does.
+
+    The two modes weight different amounts -- a turn can span several messages -- but both are
+    sampled from the prompt for the conversation up to the last user message, so both must
+    observe its prefill. Only LAST_ASSISTANT_MESSAGE was covered, which let the boundary move
+    here without changing a token or failing a test.
+    """
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    messages = conversation_fn()
+
+    last_user = max((idx for idx, m in enumerate(messages) if m["role"] == "user"), default=-1)
+    if last_user + 1 >= len(messages) or messages[last_user + 1]["role"] != "assistant":
+        pytest.skip("no assistant turn after the last user message")
+    if len(messages) - (last_user + 1) > 1 and not renderer.has_extension_property:
+        # A turn spanning several messages needs one example per message, which is what
+        # build_supervised_examples is for; a single sequence cannot show them all.
+        pytest.skip("multi-message turn on a renderer that does not extend")
+    if _conversation_has_tools(messages) and renderer_name in _RENDERERS_WITHOUT_TOOL_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support tool calling")
+    if any(has_thinking(m["content"]) for m in messages) and (
+        renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT
+        or renderer_name in _RENDERERS_WITH_THINKING_STRIPPING
+    ):
+        pytest.skip(f"{renderer_name} cannot round-trip thinking here")
+    if renderer_name in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(f"{renderer_name} has different headers for supervised vs generation")
+
+    model_input, weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+    )
+    tokens = model_input.to_ints()
+    trained = [w > 0 for w in weights.tolist()]
+    if True not in trained:
+        pytest.skip("nothing trained")
+    observation = tokens[: trained.index(True)]
+
+    assert observation == renderer.build_generation_prompt(messages[: last_user + 1]).to_ints()
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
