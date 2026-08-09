@@ -1694,7 +1694,10 @@ class Renderer(ABC):
         """Build tokens and per-token weights for supervised fine-tuning.
 
         Returns a list of (model_input, weights) tuples. Multiple examples are
-        needed when the renderer does not satisfy the extension property.
+        needed when the renderer does not satisfy the extension property: it writes an
+        assistant message one way as history and another as the turn being produced, so a
+        single sequence cannot show every turn the context it was sampled from. One example
+        per trained message can, each ending at the message it trains.
 
         Args:
             messages (list[Message]): The conversation to render.
@@ -1708,11 +1711,28 @@ class Renderer(ABC):
 
         if self.has_extension_property:
             return [self.build_supervised_example(messages, train_on_what=train_on_what)]
-        else:
-            # TODO: Add a default implementation that calls `build_supervised_example` for each message and merges examples with shared prefixes.
-            raise NotImplementedError(
-                "build_supervised_examples has not been implemented for this renderer."
+
+        match train_on_what:
+            case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
+                candidates = range(len(messages) - 1, len(messages))
+            case TrainOnWhat.LAST_ASSISTANT_TURN:
+                candidates = range(self._produced_turn_start_index(messages), len(messages))
+            case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+                candidates = range(len(messages))
+            case _:
+                raise NotImplementedError(
+                    f"build_supervised_examples cannot split {train_on_what} for a renderer "
+                    "without the extension property: it weights messages that are not turns "
+                    "the model produces, so there is no prompt to end each example at."
+                )
+
+        return [
+            self.build_supervised_example(
+                messages[: idx + 1], train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE
             )
+            for idx in candidates
+            if messages[idx]["role"] == "assistant"
+        ]
 
     def build_supervised_example(
         self,
