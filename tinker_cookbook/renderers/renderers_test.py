@@ -695,14 +695,18 @@ def test_supervised_example_against_hf_chat_templates(
         hf_convo, tools=tools_for_hf, tokenize=False, add_generation_prompt=False, **hf_kwargs
     )
     assert isinstance(hf_output, str)
-    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
+    # The text, not the tokens. `apply_chat_template` tokenizes a whole conversation at once
+    # and an example is a prompt plus what was sampled after it, so the two segment the same
+    # string differently wherever a boundary falls inside a merge: `<think>\n` is
+    # `<think>`,`\n` in a prompt that stops between them and `<think>`,`\n\n` in a document
+    # that does not. Both decode the same, and only one is reachable by sampling.
+    rendered = tokenizer.decode(cookbook_tokens)
+    # Templates differ on whether the last turn ends with the turn separator; ours writes it
+    # before the *next* turn, so a whole-conversation render never carries a trailing one.
+    # `removesuffix` takes exactly that one and is a no-op where the template wrote none.
+    expected = hf_output.removesuffix("\n")
 
-    assert cookbook_tokens == hf_tokens, (
-        f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
-        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens}\n"
-        f"HF string: {tokenizer.decode(hf_tokens)}"
-    )
+    assert rendered == expected, f"[{conv_desc}]\nrendered: {rendered!r}\nexpected: {expected!r}"
 
 
 @pytest.mark.parametrize(
@@ -980,7 +984,7 @@ _RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET = {"deepseekv3_thinking"}
 
 # Renderers whose supervised target keeps a header the generation prompt does not end with, so
 # observation != generation_prompt however the boundary moves.
-_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"qwen3_5", "nemotron3"}
+_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"nemotron3"}
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
