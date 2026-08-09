@@ -27,6 +27,7 @@ import json
 import random
 import uuid
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 from PIL import Image
@@ -1042,6 +1043,30 @@ _RENDERERS_WITH_A_GENERATION_PREFILL = [
     ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
     ("moonshotai/Kimi-K2.5", "kimi_k25"),
 ]
+
+
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
+def test_a_caller_prefill_composes_with_the_format_one(model_name: str, renderer_name: str):
+    """`prefill` is the caller's slot; a format's own prefill must not consume it.
+
+    Renderers whose prompt ends in `<think>` write it through that same parameter, so one of
+    them defaulted rather than composed: any caller passing a prefill silently turned thinking
+    mode off.
+    """
+    skip_if_deepseek_tokenizer_bug(model_name)
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    messages = [Message(role="user", content="q")]
+
+    plain = cast(str, tokenizer.decode(renderer.build_generation_prompt(messages).to_ints()))
+    prefilled = cast(
+        str, tokenizer.decode(renderer.build_generation_prompt(messages, prefill="Sure").to_ints())
+    )
+
+    assert prefilled == plain + "Sure", (
+        f"{renderer_name} did not append the caller's prefill to its own prompt:\n"
+        f"  without: {plain!r}\n  with:    {prefilled!r}"
+    )
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
