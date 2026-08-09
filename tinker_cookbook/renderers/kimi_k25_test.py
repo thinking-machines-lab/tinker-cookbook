@@ -811,3 +811,26 @@ def test_kimi_k25_image_content(image_dimensions_and_expected_tokens: tuple[int,
         else:
             raise ValueError(f"Unknown chunk type: {type(chunk)}")
     assert hf_offset == len(hf_output)
+
+
+@pytest.mark.parametrize("renderer_name", ["kimi_k25", "kimi_k26"])
+def test_the_think_prefill_is_observation_not_something_the_turn_produced(renderer_name: str):
+    """A supervised example ends its observation where sampling begins.
+
+    `build_generation_prompt` prefills `<think>`, so the model is handed that token. Left in
+    the message's output it is trained anyway, and the example's observation stops one token
+    short of the prompt the same turn is sampled after.
+    """
+    tokenizer = get_tokenizer(KIMI_K25_MODEL)
+    renderer = get_renderer(renderer_name, tokenizer)
+    prefix: list[Message] = [{"role": "user", "content": "What is 2+2?"}]
+    messages = prefix + [{"role": "assistant", "content": "4"}]
+
+    model_input, weights = renderer.build_supervised_example(messages)
+    ids, w = model_input.to_ints(), list(weights)
+    observation = ids[: next(i for i, x in enumerate(w) if x > 0)]
+
+    assert observation == renderer.build_generation_prompt(prefix).to_ints(), (
+        f"trains after {tokenizer.decode(observation)!r}, sampled after "
+        f"{tokenizer.decode(renderer.build_generation_prompt(prefix).to_ints())!r}"
+    )

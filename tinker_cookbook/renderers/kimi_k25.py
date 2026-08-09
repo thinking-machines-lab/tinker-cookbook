@@ -10,6 +10,8 @@ from tinker_cookbook.renderers.base import (
     ContentPart,
     ImageProcessorProtocol,
     Message,
+    RenderContext,
+    RenderedMessage,
     Role,
     ToolSpec,
     image_to_chunk,
@@ -114,6 +116,31 @@ class KimiK25Renderer(KimiK2Renderer):
         if prefill is None:
             prefill = "<think>"
         return super().build_generation_prompt(messages, role=role, prefill=prefill)
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render a message, keeping the `<think>` prefill on the observation side.
+
+        `build_generation_prompt` prefills `<think>`, so the model is handed that token
+        rather than sampling it. Left in the output it is trained anyway -- an example
+        whose observation stops short of the prompt its turn is sampled after.
+        """
+        rendered = super().render_message(message, ctx)
+        if message["role"] != "assistant" or not ctx.is_last:
+            return rendered
+        chunks = list(rendered.output)
+        first = chunks[0] if chunks else None
+        if not isinstance(first, tinker.types.EncodedTextChunk) or not first.tokens:
+            return rendered
+        if first.tokens[0] != self._think_open_token:
+            return rendered
+
+        header_tokens = list(rendered.header.tokens) if rendered.header else []
+        chunks[0] = tinker.types.EncodedTextChunk(tokens=list(first.tokens[1:]))
+        return RenderedMessage(
+            header=tinker.types.EncodedTextChunk(tokens=header_tokens + [self._think_open_token]),
+            output=chunks,
+            stop_overlap=rendered.stop_overlap,
+        )
 
     def _normalize_response_tokens(self, response: list[int]) -> list[int]:
         """Restore the synthetic <think> prefill before parsing sampled tokens."""
