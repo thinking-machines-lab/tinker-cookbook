@@ -511,7 +511,10 @@ class KimiK2Renderer(Renderer):
         weights_tensor = torch.tensor(weights_data)
 
         model_input_chunks = [chunk for chunk, _ in model_input_chunks_weights]
-        return tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        model_input = tinker.ModelInput(chunks=model_input_chunks)
+        return model_input, self._train_after_the_generation_prompt(
+            messages, train_on_what, model_input, weights_tensor
+        )
 
     @property
     def _end_message_token(self) -> int:
