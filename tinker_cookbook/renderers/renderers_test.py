@@ -696,14 +696,13 @@ def test_supervised_example_against_hf_chat_templates(
         hf_convo, tools=tools_for_hf, tokenize=False, add_generation_prompt=False, **hf_kwargs
     )
     assert isinstance(hf_output, str)
-    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
 
-    assert cookbook_tokens == hf_tokens, (
-        f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
-        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens}\n"
-        f"HF string: {tokenizer.decode(hf_tokens)}"
-    )
+    # Compared as text: a supervised example splits where sampling begins, and that split
+    # can fall inside a token merge, so the two segmentations legitimately differ.
+    cookbook_text = tokenizer.decode(cookbook_tokens)
+    hf_text = hf_output.removesuffix("\n")
+
+    assert cookbook_text == hf_text, f"[{conv_desc}] cookbook != HF chat template"
 
 
 @pytest.mark.parametrize(
@@ -972,10 +971,10 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "kimi_k2",
 }
 
-# Renderers where supervised and generation have different headers (HF thinking=True behavior).
-# These add </think> to supervised assistant headers but <think> to generation prompt,
-# so observation != generation_prompt by design.
-_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking", "qwen3_5", "nemotron3"}
+# Renderers where a supervised target with no ThinkingPart keeps a header of its own -- HF's
+# `</think>`, or an empty `<think></think>` -- while build_generation_prompt ends with an open
+# `<think>`. A target that does carry a ThinkingPart has matching headers and is not exempt.
+_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking", "nemotron3"}
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)

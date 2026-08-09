@@ -22,6 +22,7 @@ from typing import (
     Protocol,
     TypedDict,
     Union,
+    cast,
 )
 
 import pydantic
@@ -1813,7 +1814,63 @@ class Renderer(ABC):
         weights_tensor = torch.tensor(weights_data)
 
         model_input_chunks = [chunk for chunk, _ in model_input_chunks_weights]
-        return tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        return self._observation_is_the_generation_prompt(
+            messages, train_on_what, tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        )
+
+    def _observation_is_the_generation_prompt(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat,
+        model_input: tinker.ModelInput,
+        weights: torch.Tensor,
+    ) -> tuple[tinker.ModelInput, torch.Tensor]:
+        """Put the observation/action boundary where sampling begins.
+
+        Splits on text rather than tokens: the boundary can fall inside a merge, where
+        `<think>\n` is `<think>`,`\n\n` in a conversation tokenised at once and
+        `<think>`,`\n` in a prompt that stops between them. Sampling produces the second.
+
+        Returns the example unchanged when it cannot tell where the boundary belongs.
+        """
+        unchanged = (model_input, weights)
+        if train_on_what not in (
+            TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+            TrainOnWhat.LAST_ASSISTANT_TURN,
+        ):
+            return unchanged
+        if not messages or messages[-1]["role"] != "assistant":
+            return unchanged
+        if not all(isinstance(c, tinker.types.EncodedTextChunk) for c in model_input.chunks):
+            return unchanged
+
+        trained: list[bool] = (weights > 0).tolist()
+        if True not in trained:
+            return unchanged
+        start = trained.index(True)
+        if not all(trained[start:]):
+            return unchanged
+
+        tokens = model_input.to_ints()
+        prompt = self.build_generation_prompt(messages[:-1]).to_ints()
+        if tokens[:start] == prompt:
+            return unchanged
+
+        text = cast(str, self.tokenizer.decode(tokens))
+        prompt_text = cast(str, self.tokenizer.decode(prompt))
+        if not text.startswith(prompt_text):
+            return unchanged
+
+        action = self.tokenizer.encode(text[len(prompt_text) :], add_special_tokens=False)
+        return (
+            tinker.ModelInput(
+                chunks=[
+                    tinker.types.EncodedTextChunk(tokens=prompt),
+                    tinker.types.EncodedTextChunk(tokens=action),
+                ]
+            ),
+            torch.tensor([0.0] * len(prompt) + [1.0] * len(action)),
+        )
 
 
 def tokens_weights_from_strings_weights(
