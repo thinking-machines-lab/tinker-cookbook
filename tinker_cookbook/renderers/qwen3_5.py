@@ -32,6 +32,7 @@ from tinker_cookbook.renderers.base import (
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
+    has_thinking,
 )
 from tinker_cookbook.renderers.qwen3 import Qwen3VLRenderer
 
@@ -78,11 +79,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             return ""
 
         content = message.get("content", "")
-        has_think = False
-        if isinstance(content, list):
-            has_think = any(p["type"] == "thinking" for p in content)
-        elif isinstance(content, str):
-            has_think = "<think>" in content
+        has_think = has_thinking(content)
 
         return "" if has_think else "<think>\n\n</think>\n\n"
 
