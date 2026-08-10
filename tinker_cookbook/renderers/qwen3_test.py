@@ -783,3 +783,44 @@ def test_qwen3_produced_turn_survives_a_render_parse_roundtrip(reasoning: str | 
 
     assert termination.is_clean
     assert ensure_list(parsed["content"]) == parts
+
+
+@pytest.mark.parametrize("renderer_name", ["qwen3", "qwen3_disable_thinking"])
+@pytest.mark.parametrize(
+    "content",
+    ["I'm fine, thank you!", [{"type": "text", "text": "I'm fine, thank you!"}]],
+    ids=["str", "list"],
+)
+def test_a_turn_that_did_not_reason_gets_exactly_one_empty_block(
+    renderer_name: str, content: str | list[dict[str, str]]
+):
+    """The block has one writer, whatever shape the content arrived in.
+
+    #849 gave the produced turn its empty block for list-shaped content. A plain string
+    went through the branch below it and got none, and `Qwen3DisableThinkingRenderer` --
+    which writes the block into the header itself -- got a second one on top.
+    """
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
+    renderer = get_renderer(renderer_name, tokenizer)
+    messages = [
+        {"role": "user", "content": "Hello, how are you?"},
+        {"role": "assistant", "content": content},
+    ]
+
+    model_input, _ = renderer.build_supervised_example(cast(list[Message], messages))
+    rendered = tokenizer.decode(model_input.to_ints())
+
+    assert rendered.count("<think>") == 1, f"expected one empty block, got: {rendered!r}"
+    # A supervised example is the generation prompt for the prefix, then the turn -- what
+    # `build_supervised_example` documents, and the sequence the model is sampled from.
+    # Comparing against the whole-document form instead would need its trailing separator
+    # explained away; nothing here needs explaining away.
+    expected = (
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": "Hello, how are you?"}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        + "<think>\n\n</think>\n\nI'm fine, thank you!<|im_end|>"
+    )
+    assert rendered == expected, f"renderer:\n{rendered!r}\n\nexpected:\n{expected!r}"
