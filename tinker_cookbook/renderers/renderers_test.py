@@ -52,6 +52,7 @@ from tinker_cookbook.renderers.base import (
     ensure_list,
     ensure_text,
     format_content_as_string,
+    has_thinking,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
@@ -655,11 +656,10 @@ def test_supervised_example_against_hf_chat_templates(
         )
 
     # Skip supervised tests for thinking renderer - we intentionally don't add </think> to the
-    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always adds it
-    if renderer_override in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
-        pytest.skip(
-            f"{renderer_override} intentionally differs from HF for supervised target (no </think>)"
-        )
+    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always
+    # adds it. A target without a ThinkingPart has nothing to preserve and stays HF-compatible.
+    if renderer_override in _RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET:
+        pytest.skip(f"{renderer_override} renders the supervised target the way sampling makes it")
 
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
@@ -696,14 +696,18 @@ def test_supervised_example_against_hf_chat_templates(
         hf_convo, tools=tools_for_hf, tokenize=False, add_generation_prompt=False, **hf_kwargs
     )
     assert isinstance(hf_output, str)
-    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
+    # The text, not the tokens. `apply_chat_template` tokenizes a whole conversation at once
+    # and an example is a prompt plus what was sampled after it, so the two segment the same
+    # string differently wherever a boundary falls inside a merge: `<think>\n` is
+    # `<think>`,`\n` in a prompt that stops between them and `<think>`,`\n\n` in a document
+    # that does not. Both decode the same, and only one is reachable by sampling.
+    rendered = tokenizer.decode(cookbook_tokens)
+    # Templates differ on whether the last turn ends with the turn separator; ours writes it
+    # before the *next* turn, so a whole-conversation render never carries a trailing one.
+    # `removesuffix` takes exactly that one and is a no-op where the template wrote none.
+    expected = hf_output.removesuffix("\n")
 
-    assert cookbook_tokens == hf_tokens, (
-        f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
-        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens}\n"
-        f"HF string: {tokenizer.decode(hf_tokens)}"
-    )
+    assert rendered == expected, f"[{conv_desc}]\nrendered: {rendered!r}\nexpected: {expected!r}"
 
 
 @pytest.mark.parametrize(
@@ -941,6 +945,7 @@ _CONSISTENCY_RENDERERS = [
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
     ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+    ("moonshotai/Kimi-K2.5", "kimi_k25"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
 ]
@@ -972,10 +977,60 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "kimi_k2",
 }
 
-# Renderers where supervised and generation have different headers (HF thinking=True behavior).
-# These add </think> to supervised assistant headers but <think> to generation prompt,
-# so observation != generation_prompt by design.
-_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking", "qwen3_5", "nemotron3"}
+# Renderers whose supervised target is rendered the way sampling produces it rather than the
+# way the template renders history. HF writes a finished turn as history -- deepseek as a bare
+# `</think>`, the opening tag living only in the generation prompt -- and no sampling can
+# produce that, so the document comparison does not apply to the target.
+_RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET = {"deepseekv3_thinking"}
+
+# Renderers whose supervised target keeps a header the generation prompt does not end with, so
+# observation != generation_prompt however the boundary moves.
+_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"nemotron3"}
+
+
+@pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
+def test_last_assistant_turn_observes_the_prefill_too(
+    model_name: str, renderer_name: str, conversation_fn
+):
+    """LAST_ASSISTANT_TURN stops training where LAST_ASSISTANT_MESSAGE does.
+
+    The two modes weight different amounts -- a turn can span several messages -- but both are
+    sampled from the prompt for the conversation up to the last user message, so both must
+    observe its prefill. Only LAST_ASSISTANT_MESSAGE was covered, which let the boundary move
+    here without changing a token or failing a test.
+    """
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    messages = conversation_fn()
+
+    last_user = max((idx for idx, m in enumerate(messages) if m["role"] == "user"), default=-1)
+    if last_user + 1 >= len(messages) or messages[last_user + 1]["role"] != "assistant":
+        pytest.skip("no assistant turn after the last user message")
+    if len(messages) - (last_user + 1) > 1 and not renderer.has_extension_property:
+        # A turn spanning several messages needs one example per message, which is what
+        # build_supervised_examples is for; a single sequence cannot show them all.
+        pytest.skip("multi-message turn on a renderer that does not extend")
+    if _conversation_has_tools(messages) and renderer_name in _RENDERERS_WITHOUT_TOOL_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support tool calling")
+    if any(has_thinking(m["content"]) for m in messages) and (
+        renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT
+        or renderer_name in _RENDERERS_WITH_THINKING_STRIPPING
+    ):
+        pytest.skip(f"{renderer_name} cannot round-trip thinking here")
+    if renderer_name in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(f"{renderer_name} has different headers for supervised vs generation")
+
+    model_input, weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+    )
+    tokens = model_input.to_ints()
+    trained = [w > 0 for w in weights.tolist()]
+    if True not in trained:
+        pytest.skip("nothing trained")
+    observation = tokens[: trained.index(True)]
+
+    assert observation == renderer.build_generation_prompt(messages[: last_user + 1]).to_ints()
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)

@@ -7,7 +7,6 @@ import warnings
 import tinker
 import torch
 
-from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     ContentPart,
     Message,
@@ -200,8 +199,8 @@ class KimiK2Renderer(Renderer):
 
         Each message uses role-specific tokens (``<|im_user|>``, ``<|im_assistant|>``,
         ``<|im_system|>``) with ``<|im_middle|>`` separating the role from content.
-        For assistant messages, ``ctx.is_last`` controls whether thinking is preserved
-        or replaced with empty ``<think></think>``.
+        For assistant messages, ``ctx.in_produced_turn`` controls whether thinking is
+        preserved or replaced with empty ``<think></think>``.
 
         Args:
             message (Message): The chat message to render.
@@ -262,7 +261,7 @@ class KimiK2Renderer(Renderer):
 
             # Preserve thinking for the last assistant message, or for all messages
             # when strip_thinking_from_history is False.
-            if (ctx.is_last or not self.strip_thinking_from_history) and thinking_content:
+            if (ctx.in_produced_turn or not self.strip_thinking_from_history) and thinking_content:
                 output_str = f"<think>{thinking_content}</think>"
             else:
                 output_str = "<think></think>"
@@ -333,12 +332,11 @@ class KimiK2Renderer(Renderer):
                 last_assistant_idx == -1 or idx > last_assistant_idx
             )
 
-            # We cannot simply set is_last=False since we might be generating a new assistant message following a tool response,
-            # and we need to preserve the thinking that leads to the tool call.
             ctx = RenderContext(
                 idx=idx,
-                is_last=is_last_assistant,
+                is_last=idx == len(messages) - 1,
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                in_produced_turn=is_last_assistant,
             )
             rendered_message = self.render_message(message, ctx)
             header_chunk = rendered_message.header
@@ -415,103 +413,28 @@ class KimiK2Renderer(Renderer):
 
         return supervised_examples
 
+    def _produced_turn_start_index(self, messages: list[Message]) -> int:
+        """The turn starts after the last assistant message that did not call a tool.
+
+        Kimi's template keeps the reasoning of every assistant message after that point, so
+        a turn spans the whole assistant/tool exchange rather than the messages after the
+        last user one. The final message is excluded from the scan: it is the target, and a
+        turn cannot start after itself.
+        """
+        for idx in range(len(messages) - 2, -1, -1):
+            if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
+                return idx + 1
+        return 0
+
     def build_supervised_example(
         self,
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        """Build a single supervised training example with proper thinking preservation.
-
-        Ensures a default system message is present and preserves thinking content
-        for assistant messages in the last assistant turn (after the last non-tool-call
-        assistant message).
-
-        Args:
-            messages (list[Message]): The conversation messages for supervised training.
-            train_on_what (TrainOnWhat): Which message tokens to assign training weight.
-
-        Returns:
-            tuple[tinker.ModelInput, torch.Tensor]: The tokenized model input and
-                per-token weight tensor.
-        """
-        messages = self._ensure_system_message(messages)
-
-        # Kimi K2 hf template preserves the thinking of the assistant messages after the last non-tool-call assistant message.
-        # We do the same in general. However, we intentionally skip the last message (which differs from HF template behavior) since for a complete conversation,
-        # we would want to preserve the thinking of the last round of conversation between the user and the assistant (which could include multiple assistant messages and tool calls).
-        # This is because the trajectory would then be taken for SFT without losing all the thinking content.
-        last_assistant_idx = -1
-        for idx in range(len(messages) - 2, -1, -1):
-            if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
-                last_assistant_idx = idx
-                break
-
-        model_input_chunks_weights: list[tuple[tinker.types.ModelInputChunk, float]] = []
-
-        for idx, message in enumerate(messages):
-            if train_on_what == TrainOnWhat.CUSTOMIZED:
-                assert "trainable" in message, (
-                    "When using CUSTOMIZED train_on_what, each message must have a trainable field"
-                )
-            else:
-                assert "trainable" not in message, (
-                    "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field"
-                )
-
-            is_assistant = message["role"] == "assistant"
-            is_last_message = idx == len(messages) - 1
-            is_user_or_system = message["role"] in ["user", "system"]
-
-            # For Kimi K2, preserve thinking only for the suffix after the last non-tool-call assistant.
-            # If no such assistant exists, the suffix is the entire message list.
-            # Preserve thinking only for assistants after the last non-tool-call assistant.
-            is_last_assistant_turn = is_assistant and (
-                last_assistant_idx == -1 or idx > last_assistant_idx
-            )
-
-            is_last_assistant = is_assistant and is_last_message
-            ctx = RenderContext(
-                idx=idx,
-                is_last=is_last_assistant_turn,
-                prev_message=messages[idx - 1] if idx > 0 else None,
-            )
-            rendered_message = self.render_message(message, ctx)
-
-            header_part = rendered_message.header
-            output_parts = rendered_message.output
-
-            header_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
-            if header_part:
-                model_input_chunks_weights += [(header_part, header_weight)]
-
-            # We include all assistant messages in the last round of assistant-tool interactions as the last assistant message.
-            match train_on_what:
-                case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-                    output_has_weight = is_last_assistant
-                case TrainOnWhat.LAST_ASSISTANT_TURN:
-                    output_has_weight = is_last_assistant_turn
-                case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-                    output_has_weight = is_assistant
-                case TrainOnWhat.ALL_MESSAGES:
-                    output_has_weight = True
-                case TrainOnWhat.ALL_TOKENS:
-                    output_has_weight = True
-                case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
-                    output_has_weight = is_user_or_system
-                case TrainOnWhat.CUSTOMIZED:
-                    output_has_weight = message.get("trainable", False)
-                case _:
-                    raise RendererError(f"Unknown train_on_what: {train_on_what}")
-
-            model_input_chunks_weights += [
-                (output_part, int(output_has_weight)) for output_part in output_parts if output_part
-            ]
-
-        weights_data = [w for chunk, w in model_input_chunks_weights for _ in range(chunk.length)]
-        weights_tensor = torch.tensor(weights_data)
-
-        model_input_chunks = [chunk for chunk, _ in model_input_chunks_weights]
-        return tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        """Build a supervised example, prepending the default system message if absent."""
+        return super().build_supervised_example(
+            self._ensure_system_message(messages), train_on_what=train_on_what
+        )
 
     @property
     def _end_message_token(self) -> int:
