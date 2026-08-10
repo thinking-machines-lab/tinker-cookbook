@@ -71,6 +71,7 @@ from tinker_cookbook.renderers.base import (
     Role,
     TextPart,
     ToolSpec,
+    has_thinking,
 )
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -208,11 +209,7 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         """
         is_historical = ctx.idx < ctx.last_user_index
         content = message.get("content", "")
-        has_think = False
-        if isinstance(content, list):
-            has_think = any(p["type"] == "thinking" for p in content)
-        elif isinstance(content, str):
-            has_think = "<think>" in content
+        has_think = has_thinking(content)
         # No empty prefix when the thinking itself will be rendered in the output:
         # always for the current turn, and for history when it is preserved.
         if has_think and (not is_historical or not self.strip_thinking_from_history):
@@ -277,13 +274,18 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         """
         assert "tool_calls" in message
         content = message.get("content", "")
-        has_thinking = isinstance(content, list) and any(p["type"] == "thinking" for p in content)
+        # Deliberately not `has_thinking`: this asks whether `_format_thinking_text` ran, and
+        # it only runs on a ThinkingPart. An inline `<think>` in a string never went through
+        # it and so never wrote the trailing \n this is compensating for.
+        has_thinking_part = isinstance(content, list) and any(
+            p["type"] == "thinking" for p in content
+        )
         has_nonempty_text = isinstance(content, list) and any(
             p["type"] == "text" and p.get("text", "") for p in content
         )
         # Thinking ends with \n; only add \n prefix if there's text after thinking
         # (which won't end with \n) or no thinking at all.
-        prefix = "" if (has_thinking and not has_nonempty_text) else "\n"
+        prefix = "" if (has_thinking_part and not has_nonempty_text) else "\n"
         calls = "".join(self._format_tool_call_xml(tc) + "\n" for tc in message["tool_calls"])
         return [TextPart(type="text", text=prefix + calls)]
 
@@ -446,11 +448,7 @@ class Nemotron3UltraRenderer(Nemotron3Renderer):
         """
         is_historical = ctx.idx < ctx.last_user_index
         content = message.get("content", "")
-        has_think = False
-        if isinstance(content, list):
-            has_think = any(p["type"] == "thinking" for p in content)
-        elif isinstance(content, str):
-            has_think = "<think>" in content
+        has_think = has_thinking(content)
         if has_think and (not is_historical or not self.strip_thinking_from_history):
             return ""
         return "<think></think>"
