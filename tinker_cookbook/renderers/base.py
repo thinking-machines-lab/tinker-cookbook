@@ -1812,8 +1812,6 @@ class Renderer(ABC):
                 )
 
             is_last_message = idx == len(messages) - 1
-            is_assistant = message["role"] == "assistant"
-            is_user_or_system = message["role"] in ["user", "system"]
             in_produced_turn = idx >= turn_start
 
             # only apply weight to header if train_on_what is ALL_TOKENS
@@ -1833,23 +1831,7 @@ class Renderer(ABC):
             if header_part:
                 model_input_chunks_weights += [(header_part, header_weight)]
 
-            match train_on_what:
-                case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-                    output_has_weight = is_last_message and is_assistant
-                case TrainOnWhat.LAST_ASSISTANT_TURN:
-                    output_has_weight = is_assistant and in_produced_turn
-                case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-                    output_has_weight = is_assistant
-                case TrainOnWhat.ALL_MESSAGES:
-                    output_has_weight = True
-                case TrainOnWhat.ALL_TOKENS:
-                    output_has_weight = True
-                case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
-                    output_has_weight = is_user_or_system
-                case TrainOnWhat.CUSTOMIZED:
-                    output_has_weight = message.get("trainable", False)
-                case _:
-                    raise RendererError(f"Unknown train_on_what: {train_on_what}")
+            output_has_weight = self._output_is_trained(message, ctx, train_on_what)
 
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
@@ -1896,6 +1878,32 @@ class Renderer(ABC):
             return weights
 
         return torch.cat([torch.zeros(len(prompt)), weights[len(prompt) :]])
+
+    def _output_is_trained(
+        self, message: Message, ctx: RenderContext, train_on_what: TrainOnWhat
+    ) -> bool:
+        """Whether this message's output carries loss.
+
+        The rule a renderer is most likely to need to change: `KimiK2Renderer` wanted a
+        different `LAST_ASSISTANT_TURN` and, with this inline in the assembly loop, had to
+        copy the whole loop to get it. Override this instead.
+        """
+        is_assistant = message["role"] == "assistant"
+        match train_on_what:
+            case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
+                return ctx.is_last and is_assistant
+            case TrainOnWhat.LAST_ASSISTANT_TURN:
+                return is_assistant and ctx.in_produced_turn
+            case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+                return is_assistant
+            case TrainOnWhat.ALL_MESSAGES | TrainOnWhat.ALL_TOKENS:
+                return True
+            case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
+                return message["role"] in ("user", "system")
+            case TrainOnWhat.CUSTOMIZED:
+                return message.get("trainable", False)
+            case _:
+                raise RendererError(f"Unknown train_on_what: {train_on_what}")
 
     def _produced_turn_start_index(self, messages: list[Message]) -> int:
         """Index of the first message in the turn the model is being asked to produce.
