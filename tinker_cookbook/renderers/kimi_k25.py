@@ -110,8 +110,6 @@ class KimiK25Renderer(KimiK2Renderer):
         Returns:
             tinker.ModelInput: The tokenized model input ready for sampling.
         """
-        # The open tag belongs to the format, not the caller, so a caller's prefill is
-        # appended after it rather than replacing it.
         return super().build_generation_prompt(
             messages, role=role, prefill="<think>" + (prefill or "")
         )
@@ -186,7 +184,6 @@ class KimiK25DisableThinkingRenderer(KimiK25Renderer):
         Returns:
             tinker.ModelInput: The tokenized model input ready for sampling.
         """
-        # The closed pair belongs to the format, not the caller; see KimiK25Renderer.
         return super(KimiK25Renderer, self).build_generation_prompt(
             messages, role=role, prefill="<think></think>" + (prefill or "")
         )
