@@ -499,10 +499,6 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
             new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + think_close_tokens)
             return RenderedMessage(header=new_header, output=rendered.output)
 
-        # The supervised target opens its own block. `build_generation_prompt` prefills
-        # `<think>`, so a turn that did not reason is sampled as `</think>answer` after it --
-        # write the pair and let the boundary land between them. HF renders this turn the way
-        # it renders history, as a bare `</think>`, which is a form no sampling can produce.
         if is_assistant_turn and ctx.is_last and content and not has_thinking(content):
             empty_block = self.tokenizer.encode("<think></think>", add_special_tokens=False)
             first, *rest = rendered.output
