@@ -851,6 +851,18 @@ def message_to_jsonable(message: Message) -> dict[str, Any]:
     return result
 
 
+def has_thinking(content: Content) -> bool:
+    """Whether content carries reasoning, in either shape it can arrive in.
+
+    Structured content carries a ThinkingPart; a string carries an opening ``<think>``,
+    closed or not. Renderers ask this to decide whether to write the empty block their
+    template puts on a turn that did not reason.
+    """
+    if isinstance(content, list):
+        return any(p["type"] == "thinking" for p in content)
+    return "<think>" in content
+
+
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
     """Filter out ThinkingPart elements from a content part list.
 
@@ -1813,7 +1825,63 @@ class Renderer(ABC):
         weights_tensor = torch.tensor(weights_data)
 
         model_input_chunks = [chunk for chunk, _ in model_input_chunks_weights]
-        return tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        model_input = tinker.ModelInput(chunks=model_input_chunks)
+        return model_input, self._train_after_the_generation_prompt(
+            messages, train_on_what, model_input, weights_tensor
+        )
+
+    def _train_after_the_generation_prompt(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat,
+        model_input: tinker.ModelInput,
+        weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Withhold loss from everything build_generation_prompt would have supplied.
+
+        A renderer whose generation prompt ends in a prefill -- an open ``<think>`` -- leaves
+        that prefill on whichever side its header logic puts it, so the model is trained to
+        produce a token it is always given. Only the weights move; the tokens are untouched.
+
+        Returns them unchanged when the render does not begin with the prompt, which means the
+        two disagree about more than where the boundary falls.
+        """
+        boundary = self._first_trained_message_index(messages, train_on_what)
+        if boundary is None:
+            return weights
+        if not all(isinstance(c, tinker.types.EncodedTextChunk) for c in model_input.chunks):
+            return weights
+
+        prompt = self.build_generation_prompt(messages[:boundary]).to_ints()
+        if model_input.to_ints()[: len(prompt)] != prompt:
+            return weights
+
+        return torch.cat([torch.zeros(len(prompt)), weights[len(prompt) :]])
+
+    def _first_trained_message_index(
+        self, messages: list[Message], train_on_what: TrainOnWhat
+    ) -> int | None:
+        """Index of the message the generation prompt stops before, or None if there isn't one.
+
+        Only the modes that mean "train the turn sampling would produce" have such a point; the
+        others weight messages the generation prompt would have rendered as history.
+        """
+        match train_on_what:
+            case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
+                boundary = len(messages) - 1
+            case TrainOnWhat.LAST_ASSISTANT_TURN:
+                boundary = (
+                    max(
+                        (idx for idx, m in enumerate(messages) if m["role"] == "user"),
+                        default=-1,
+                    )
+                    + 1
+                )
+            case _:
+                return None
+        if not 0 <= boundary < len(messages):
+            return None
+        return boundary if messages[boundary]["role"] == "assistant" else None
 
 
 def tokens_weights_from_strings_weights(

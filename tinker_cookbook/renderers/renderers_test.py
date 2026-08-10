@@ -655,11 +655,10 @@ def test_supervised_example_against_hf_chat_templates(
         )
 
     # Skip supervised tests for thinking renderer - we intentionally don't add </think> to the
-    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always adds it
-    if renderer_override in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
-        pytest.skip(
-            f"{renderer_override} intentionally differs from HF for supervised target (no </think>)"
-        )
+    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always
+    # adds it. A target without a ThinkingPart has nothing to preserve and stays HF-compatible.
+    if renderer_override in _RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET:
+        pytest.skip(f"{renderer_override} renders the supervised target the way sampling makes it")
 
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
@@ -941,6 +940,7 @@ _CONSISTENCY_RENDERERS = [
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
     ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+    ("moonshotai/Kimi-K2.5", "kimi_k25"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
 ]
@@ -972,10 +972,15 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "kimi_k2",
 }
 
-# Renderers where supervised and generation have different headers (HF thinking=True behavior).
-# These add </think> to supervised assistant headers but <think> to generation prompt,
-# so observation != generation_prompt by design.
-_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking", "qwen3_5", "nemotron3"}
+# Renderers whose supervised target is rendered the way sampling produces it rather than the
+# way the template renders history. HF writes a finished turn as history -- deepseek as a bare
+# `</think>`, the opening tag living only in the generation prompt -- and no sampling can
+# produce that, so the document comparison does not apply to the target.
+_RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET = {"deepseekv3_thinking"}
+
+# Renderers whose supervised target keeps a header the generation prompt does not end with, so
+# observation != generation_prompt however the boundary moves.
+_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"qwen3_5", "nemotron3"}
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
