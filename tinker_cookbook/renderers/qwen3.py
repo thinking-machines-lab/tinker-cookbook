@@ -30,6 +30,7 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     _tool_call_payload,
     detect_unterminated_tool_block,
+    has_thinking,
     image_to_chunk,
     parse_content_blocks,
     parse_response_for_stop_token,
@@ -140,6 +141,11 @@ class Qwen3Renderer(Renderer):
         """
         if not self.frames_thinking or message["role"] != "assistant":
             return False
+        if ctx.last_user_index < 0:
+            # The template gates on `loop.index0 > ns.last_query_index`, and that defaults to
+            # the final index when no user message exists -- so a conversation without one is
+            # never framed, however it ends.
+            return False
         return ctx.is_last or not self.strip_thinking_from_history
 
     def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
@@ -205,6 +211,8 @@ class Qwen3Renderer(Renderer):
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
 
         content = message["content"]
+        frames = self._frames_produced_turn(message, ctx)
+        has_reasoning = has_thinking(content)
 
         if isinstance(content, list):
             # Structured content - handle with list operations
@@ -218,7 +226,6 @@ class Qwen3Renderer(Renderer):
                 parts = remove_thinking(parts)
             # Render parts in order, preserving interleaved thinking/text structure.
             # No separator needed - whitespace is preserved in TextPart for roundtrip identity.
-            frames = self._frames_produced_turn(message, ctx)
             rendered_parts = []
             after_block = False
             for p in parts:
@@ -235,11 +242,7 @@ class Qwen3Renderer(Renderer):
                     rendered_parts.append(p["text"].lstrip("\n") if after_block else p["text"])
                     after_block = False
             output_content = "".join(rendered_parts)
-            # The template opens the block on the turn being produced whether or not it
-            # reasoned, so a turn with no thinking part still gets an empty one.
-            if frames and not any(p["type"] == "thinking" for p in parts):
-                output_content = _frame_thinking("") + output_content.lstrip("\n")
-        elif self._frames_produced_turn(message, ctx) and "</think>" in content:
+        elif frames and "</think>" in content:
             # An inline block in string content is normalized the way the template
             # normalizes it, so `<think>\n\n</think>\nx` and `<think>\n\n</think>\n\nx`
             # both render as the latter rather than passing through as written.
@@ -252,19 +255,33 @@ class Qwen3Renderer(Renderer):
             # with ThinkingPart separated from text (as returned by parse_response).
             output_content = content
 
+        # The template's `content` is the message's own text, and the separator below asks
+        # about that -- not about the empty block, which is framing the template writes
+        # itself. Captured before the block is prepended.
+        has_text = bool(output_content)
+
+        # The template opens the block on the turn being produced whether or not it
+        # reasoned, so a turn that did not reason still gets an empty one -- whatever
+        # shape its content arrived in.
+        if frames and not has_reasoning:
+            output_content = _frame_thinking("") + output_content.lstrip("\n")
+
         # Handle tool response wrapping
         if message["role"] == "tool":
             output_content = self._wrap_qwen_tool_response(output_content)
 
         # Handle tool_calls field
         if "tool_calls" in message:
-            # Add leading newline to match HF template behavior
-            output_content += "\n" + "\n".join(
+            # The template separates the calls from the text before them, and from each
+            # other, but writes nothing before the first when there is no text:
+            # `{%- if (loop.first and content) or (not loop.first) %}{{- \'\\n\' }}`.
+            calls = "\n".join(
                 [
                     f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
+            output_content += ("\n" if has_text else "") + calls
         output_content += "<|im_end|>"
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
@@ -516,42 +533,16 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
-    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        """Render a message, prepending an empty thinking block to the last assistant message.
+    def _get_generation_suffix(self, role: str, ctx: RenderContext) -> list[int]:
+        """The empty block is part of the prompt, so sampling starts after it.
 
-        For the last assistant message that lacks a thinking block, an empty
-        ``<think>\\n\\n</think>\\n\\n`` is added to the header to signal non-thinking mode.
-
-        Args:
-            message (Message): The chat message to render.
-            ctx (RenderContext): Positional context including index and is_last flag.
-
-        Returns:
-            RenderedMessage: Header (with optional empty think block) and output token chunks.
+        The Qwen3.5 disable-thinking renderer says the same thing the same way.
         """
-        # Get the base rendered message
-        rendered = super().render_message(message, ctx)
-
-        # Add empty thinking block to header for last assistant message
-        # This goes in header (weight=0) so observation matches generation prompt.
-        if message["role"] == "assistant" and ctx.is_last:
-            content = message.get("content", "")
-            if isinstance(content, str):
-                has_think = "<think>" in content
-            else:
-                has_think = any(p["type"] == "thinking" for p in content)
-
-            if not has_think:
-                empty_think_tokens = self.tokenizer.encode(
-                    "<think>\n\n</think>\n\n", add_special_tokens=False
-                )
-                old_header_tokens = list(rendered.header.tokens) if rendered.header else []
-                new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + empty_think_tokens)
-                rendered = RenderedMessage(
-                    header=new_header, output=rendered.output, stop_overlap=rendered.stop_overlap
-                )
-
-        return rendered
+        maybe_newline = "\n" if ctx.idx > 0 else ""
+        return self.tokenizer.encode(
+            f"{maybe_newline}<|im_start|>{role}\n<think>\n\n</think>\n\n",
+            add_special_tokens=False,
+        )
 
 
 class Qwen3InstructRenderer(Qwen3Renderer):
