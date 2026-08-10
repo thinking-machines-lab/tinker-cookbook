@@ -389,7 +389,14 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
 
     # Render expected message to get full response tokens
     rendered = renderer.render_message(
-        expected_message, RenderContext(idx=1, is_last=True, prev_message=user_message)
+        expected_message,
+        RenderContext(
+            idx=1,
+            is_last=True,
+            prev_message=user_message,
+            last_user_index=0,
+            in_produced_turn=True,
+        ),
     )
     full_response_tokens = [t for chunk in rendered.output for t in chunk.tokens]
 
