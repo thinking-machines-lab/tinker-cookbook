@@ -368,6 +368,9 @@ class TestModelDefaults:
         ):
             assert default_rollout_config_for_model(name) == agentic()
 
+    def test_inkling_family_models_default_to_agentic(self):
+        assert default_rollout_config_for_model("thinkingmachines/Inkling-2") == agentic()
+
     def test_other_models_default_to_simple(self):
         for name in ("Qwen/Qwen3.5-4B", "meta-llama/Llama-3.2-1B", "thinkingmachines/Model"):
             assert default_rollout_config_for_model(name) == simple()

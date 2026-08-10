@@ -83,15 +83,11 @@ def mock_tml_renderers_chat(monkeypatch: pytest.MonkeyPatch) -> type[_FakeTmlRen
 
 
 def _require_tml_renderers() -> None:
-    try:
-        ensure_tml_renderers_importable()
-        chat = tml_v0.import_module("tml_renderers.chat")
-        __import__("tml_renderers.v0")
-        __import__("tml_renderers.tinker")
-        if not hasattr(chat, "OpenAIMessage"):
-            pytest.skip("optional tml_renderers package does not expose OpenAIMessage yet")
-    except Exception as exc:
-        pytest.skip(f"optional tml_renderers package is not importable: {exc}")
+    ensure_tml_renderers_importable()
+    chat = tml_v0.import_module("tml_renderers.chat")
+    __import__("tml_renderers.v0")
+    __import__("tml_renderers.tinker")
+    assert hasattr(chat, "OpenAIMessage")
 
 
 def _messages() -> list[Message]:

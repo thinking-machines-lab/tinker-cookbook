@@ -418,7 +418,7 @@ def build_agent_tool_env(
         model_name: The model this env will run against. When set and
             ``rollout_config`` is not, the model's default configuration
             applies (:func:`~tinker_cookbook.rl.rollout_presets.default_rollout_config_for_model`:
-            ``thinkingmachines/Inkling`` defaults to
+            ``thinkingmachines/Inkling`` models default to
             :func:`~tinker_cookbook.rl.rollout_presets.agentic`). Pass
             ``rollout_config=simple()`` to opt out of a model default.
         max_turns: Maximum turns before episode ends. Default ``None`` means

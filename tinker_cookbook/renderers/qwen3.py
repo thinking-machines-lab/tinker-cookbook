@@ -16,6 +16,7 @@ import tinker
 
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
+    ContentPart,
     ImagePart,
     ImageProcessorProtocol,
     Message,
@@ -35,6 +36,43 @@ from tinker_cookbook.renderers.base import (
     remove_thinking,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
+
+
+def _frame_thinking(reasoning: str) -> str:
+    """Frame reasoning the way Qwen3's chat template does.
+
+    The template writes `<think>\\n{reasoning}\\n</think>\\n\\n` around the turn being
+    produced -- padded, and present even when the reasoning is empty. Rendering
+    `<think>{reasoning}</think>` instead differs from `apply_chat_template` by 3 tokens
+    with reasoning and 4 without, on the turn the model is about to continue.
+    """
+    return "<think>\n" + reasoning.strip("\n") + "\n</think>\n\n"
+
+
+def _unframe_thinking(parts: list[ContentPart]) -> list[ContentPart]:
+    """Reverse `_frame_thinking`, so render -> parse is the identity.
+
+    The template's `strip`/`lstrip` mean the padding is framing rather than content, and
+    an empty block is a turn that did not reason rather than one that reasoned emptily.
+    """
+    out: list[ContentPart] = []
+    after_block = False
+    for p in parts:
+        if p["type"] == "thinking":
+            reasoning = p["thinking"].strip("\n")
+            if reasoning:
+                out.append({"type": "thinking", "thinking": reasoning})
+            # An empty block is dropped, but the content after it was still lstripped.
+            after_block = True
+        elif p["type"] == "text":
+            out.append(
+                {"type": "text", "text": p["text"].lstrip("\n") if after_block else p["text"]}
+            )
+            after_block = False
+        else:
+            out.append(p)
+            after_block = False
+    return out
 
 
 def _merge_consecutive_text_parts(
@@ -86,6 +124,23 @@ class Qwen3Renderer(Renderer):
     """
 
     supports_streaming = True
+    # The 2507-Instruct variants below do not use the `<think>` tag at all, so they must
+    # not be given the block the template writes around a produced turn.
+    frames_thinking = True
+
+    def _frames_produced_turn(self, message: Message, ctx: RenderContext) -> bool:
+        """Whether to frame this message the way the template frames a produced turn.
+
+        `chat_template` gates on `loop.index0 > ns.last_query_index`, so only a turn after
+        the last user message is framed. That rule is positional, and the extension
+        property needs an assistant turn to render the same wherever it sits -- so when
+        history keeps its thinking (`strip_thinking_from_history=False`, the configuration
+        that claims the property) every assistant turn is framed alike instead. The
+        default configuration strips history, where the positional rule is exact.
+        """
+        if not self.frames_thinking or message["role"] != "assistant":
+            return False
+        return ctx.is_last or not self.strip_thinking_from_history
 
     def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
         """
@@ -163,13 +218,33 @@ class Qwen3Renderer(Renderer):
                 parts = remove_thinking(parts)
             # Render parts in order, preserving interleaved thinking/text structure.
             # No separator needed - whitespace is preserved in TextPart for roundtrip identity.
+            frames = self._frames_produced_turn(message, ctx)
             rendered_parts = []
+            after_block = False
             for p in parts:
                 if p["type"] == "thinking":
-                    rendered_parts.append(f"<think>{p['thinking']}</think>")
+                    rendered_parts.append(
+                        _frame_thinking(p["thinking"])
+                        if frames
+                        else f"<think>{p['thinking']}</think>"
+                    )
+                    after_block = frames
                 elif p["type"] == "text":
-                    rendered_parts.append(p["text"])
+                    # `content.lstrip('\n')` from template line 44: the block has just
+                    # written the padding, so content must not add its own.
+                    rendered_parts.append(p["text"].lstrip("\n") if after_block else p["text"])
+                    after_block = False
             output_content = "".join(rendered_parts)
+            # The template opens the block on the turn being produced whether or not it
+            # reasoned, so a turn with no thinking part still gets an empty one.
+            if frames and not any(p["type"] == "thinking" for p in parts):
+                output_content = _frame_thinking("") + output_content.lstrip("\n")
+        elif self._frames_produced_turn(message, ctx) and "</think>" in content:
+            # An inline block in string content is normalized the way the template
+            # normalizes it, so `<think>\n\n</think>\nx` and `<think>\n\n</think>\n\nx`
+            # both render as the latter rather than passing through as written.
+            reasoning, _, rest = content.partition("</think>")
+            output_content = _frame_thinking(reasoning.rpartition("<think>")[2]) + rest.lstrip("\n")
         else:
             # String content - pass through as-is.
             # Note: strip_thinking_from_history only works with list-based content.
@@ -248,7 +323,9 @@ class Qwen3Renderer(Renderer):
 
         if result is not None:
             parts, tool_results = result
-            assistant_message["content"] = parts
+            assistant_message["content"] = (
+                _unframe_thinking(parts) if self.frames_thinking else parts
+            )
 
             tool_calls = [t for t in tool_results if isinstance(t, ToolCall)]
             unparsed = [t for t in tool_results if isinstance(t, UnparsedToolCall)]
@@ -304,7 +381,9 @@ class Qwen3Renderer(Renderer):
 
         if result is not None:
             parts, tool_results = result
-            assistant_message["content"] = parts
+            assistant_message["content"] = (
+                _unframe_thinking(parts) if self.frames_thinking else parts
+            )
 
             tool_calls = [t for t in tool_results if isinstance(t, ToolCall)]
             unparsed = [t for t in tool_results if isinstance(t, UnparsedToolCall)]
@@ -483,6 +562,8 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     Inherits from Qwen3Renderer. ThinkingPart in content is still handled (rendered as
     <think>...</think>) in case the conversation includes thinking.
     """
+
+    frames_thinking = False
 
     @property
     def has_extension_property(self) -> bool:
@@ -679,5 +760,7 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
 
     Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
     """
+
+    frames_thinking = False
 
     pass

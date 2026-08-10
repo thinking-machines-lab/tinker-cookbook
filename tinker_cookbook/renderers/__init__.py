@@ -147,9 +147,11 @@ def get_renderer(
             - ``"nemotron3"``: Nemotron-3 with full reasoning
             - ``"nemotron3_low_thinking"``: Nemotron-3 with low-effort reasoning (Super only)
             - ``"nemotron3_disable_thinking"``: Nemotron-3 with reasoning off
+            - ``"nemotron3_preserve_thinking"``: Nemotron-3 (Nano/Super) with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``); use for multi-turn RL / long-horizon agents
             - ``"nemotron3_ultra"``: Nemotron-3 Ultra with full reasoning
             - ``"nemotron3_ultra_disable_thinking"``: Nemotron-3 Ultra with reasoning off
             - ``"nemotron3_ultra_medium_thinking"``: Nemotron-3 Ultra with medium-effort reasoning
+            - ``"nemotron3_ultra_preserve_thinking"``: Nemotron-3 Ultra with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``)
             - ``"gpt_oss_no_sysprompt"``: GPT-OSS without system prompt
             - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
             - ``"gpt_oss_medium_reasoning"``: GPT-OSS with medium reasoning
@@ -205,9 +207,11 @@ def get_renderer(
     from tinker_cookbook.renderers.nemotron3 import (
         Nemotron3DisableThinkingRenderer,
         Nemotron3LowThinkingRenderer,
+        Nemotron3PreserveThinkingRenderer,
         Nemotron3Renderer,
         Nemotron3UltraDisableThinkingRenderer,
         Nemotron3UltraMediumThinkingRenderer,
+        Nemotron3UltraPreserveThinkingRenderer,
         Nemotron3UltraRenderer,
     )
     from tinker_cookbook.renderers.qwen3 import (
@@ -266,12 +270,16 @@ def get_renderer(
         renderer = Nemotron3LowThinkingRenderer(tokenizer)
     elif name == "nemotron3_disable_thinking":
         renderer = Nemotron3DisableThinkingRenderer(tokenizer)
+    elif name == "nemotron3_preserve_thinking":
+        renderer = Nemotron3PreserveThinkingRenderer(tokenizer)
     elif name == "nemotron3_ultra":
         renderer = Nemotron3UltraRenderer(tokenizer)
     elif name == "nemotron3_ultra_disable_thinking":
         renderer = Nemotron3UltraDisableThinkingRenderer(tokenizer)
     elif name == "nemotron3_ultra_medium_thinking":
         renderer = Nemotron3UltraMediumThinkingRenderer(tokenizer)
+    elif name == "nemotron3_ultra_preserve_thinking":
+        renderer = Nemotron3UltraPreserveThinkingRenderer(tokenizer)
     elif name == "gpt_oss_no_sysprompt":
         renderer = GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":

@@ -32,8 +32,7 @@ Results:
 ## Requirements
 
 `tml_renderers` for Inkling rendering and `jiwer` for reward & eval
-(installed by the `inkling` and `audio` extras:
-`pip install "tinker_cookbook[audio,inkling]"`); `ffmpeg` and `curl` for data
+(`pip install "tinker_cookbook[audio]"`); `ffmpeg` and `curl` for data
 preparation.
 
 ## Data Preparation
