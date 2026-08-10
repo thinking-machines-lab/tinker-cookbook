@@ -1796,9 +1796,6 @@ class Renderer(ABC):
             default=-1,
         )
 
-        # Without the target: the produced turn is the last message here, and a turn cannot
-        # start after itself. build_generation_prompt passes the whole list, where the turn
-        # it is prompting for comes after the end.
         turn_start = self._produced_turn_start_index(messages[:-1])
 
         for idx, message in enumerate(messages):
