@@ -30,6 +30,7 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     _tool_call_payload,
     detect_unterminated_tool_block,
+    has_thinking,
     image_to_chunk,
     parse_content_blocks,
     parse_response_for_stop_token,
@@ -536,12 +537,7 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
         # This goes in header (weight=0) so observation matches generation prompt.
         if message["role"] == "assistant" and ctx.is_last:
             content = message.get("content", "")
-            if isinstance(content, str):
-                has_think = "<think>" in content
-            else:
-                has_think = any(p["type"] == "thinking" for p in content)
-
-            if not has_think:
+            if not has_thinking(content):
                 empty_think_tokens = self.tokenizer.encode(
                     "<think>\n\n</think>\n\n", add_special_tokens=False
                 )

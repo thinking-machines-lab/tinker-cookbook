@@ -851,6 +851,18 @@ def message_to_jsonable(message: Message) -> dict[str, Any]:
     return result
 
 
+def has_thinking(content: Content) -> bool:
+    """Whether content carries reasoning, in either shape it can arrive in.
+
+    Structured content carries a ThinkingPart; a string carries an opening ``<think>``,
+    closed or not. Renderers ask this to decide whether to write the empty block their
+    template puts on a turn that did not reason.
+    """
+    if isinstance(content, list):
+        return any(p["type"] == "thinking" for p in content)
+    return "<think>" in content
+
+
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
     """Filter out ThinkingPart elements from a content part list.
 
