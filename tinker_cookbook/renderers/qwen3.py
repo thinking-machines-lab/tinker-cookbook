@@ -739,10 +739,32 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     )
                 )
 
+        # The generation prompt may end partway through this header. Splitting the string
+        # before encoding puts the boundary where sampling starts and keeps both sides
+        # tokenised the way the model will see them.
+        prefix_str = self._produced_turn_prefix_str(message, ctx)
+        if prefix_str and header_str.startswith(prefix_str):
+            rest = header_str[len(prefix_str) :]
+            if rest:
+                output_chunks_encoded.insert(
+                    0,
+                    tinker.EncodedTextChunk(
+                        tokens=self.tokenizer.encode(rest, add_special_tokens=False)
+                    ),
+                )
+            header_str = prefix_str
+
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
         return RenderedMessage(header=header, output=output_chunks_encoded)
+
+    def _produced_turn_prefix_str(self, message: Message, ctx: RenderContext) -> str:
+        """How much of this message's header the generation prompt already wrote.
+
+        Empty when the prompt stops before the header does, which is the usual case.
+        """
+        return ""
 
 
 class Qwen3VLInstructRenderer(Qwen3VLRenderer):
