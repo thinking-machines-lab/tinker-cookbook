@@ -705,6 +705,15 @@ class RenderContext:
     differently based on whether they come before or after the last user message.
     """
 
+    in_produced_turn: bool = False
+    """Whether this message belongs to the turn the model is being asked to produce.
+
+    Distinct from ``is_last``, which is literally the final message. A turn can span several
+    messages -- an assistant message, a tool response, the assistant's follow-up -- so a
+    renderer that keeps reasoning in the produced turn while stripping it from history has to
+    ask about the turn, not the message. ``_produced_turn_start_index`` says where it starts.
+    """
+
 
 class ToolSpec(TypedDict):
     """
@@ -1638,12 +1647,15 @@ class Renderer(ABC):
             default=-1,
         )
 
+        turn_start = self._produced_turn_start_index(messages)
+
         for idx, message in enumerate(messages):
             ctx = RenderContext(
                 idx=idx,
                 is_last=(idx == len(messages) - 1),
                 prev_message=messages[idx - 1] if idx > 0 else None,
                 last_user_index=last_user_idx,
+                in_produced_turn=idx >= turn_start,
             )
             rendered_message = self.render_message(message, ctx)
             header_chunk = rendered_message.header
@@ -1660,6 +1672,7 @@ class Renderer(ABC):
             is_last=True,
             prev_message=messages[-1] if messages else None,
             last_user_index=last_user_idx,
+            in_produced_turn=True,
         )
         suffix_tokens = self._get_generation_suffix(role, suffix_ctx)
         if suffix_tokens:
@@ -1763,6 +1776,8 @@ class Renderer(ABC):
             default=-1,
         )
 
+        turn_start = self._produced_turn_start_index(messages)
+
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:
                 assert "trainable" in message, (
@@ -1776,7 +1791,7 @@ class Renderer(ABC):
             is_last_message = idx == len(messages) - 1
             is_assistant = message["role"] == "assistant"
             is_user_or_system = message["role"] in ["user", "system"]
-            is_after_last_user = last_user_idx == -1 or idx > last_user_idx
+            in_produced_turn = idx >= turn_start
 
             # only apply weight to header if train_on_what is ALL_TOKENS
             ctx = RenderContext(
@@ -1784,6 +1799,7 @@ class Renderer(ABC):
                 is_last=is_last_message,
                 prev_message=messages[idx - 1] if idx > 0 else None,
                 last_user_index=last_user_idx,
+                in_produced_turn=in_produced_turn,
             )
             rendered_message = self.render_message(message, ctx)
             header_part = rendered_message.header
@@ -1798,7 +1814,7 @@ class Renderer(ABC):
                 case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
                     output_has_weight = is_last_message and is_assistant
                 case TrainOnWhat.LAST_ASSISTANT_TURN:
-                    output_has_weight = is_assistant and is_after_last_user
+                    output_has_weight = is_assistant and in_produced_turn
                 case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
                     output_has_weight = is_assistant
                 case TrainOnWhat.ALL_MESSAGES:
@@ -1858,6 +1874,15 @@ class Renderer(ABC):
 
         return torch.cat([torch.zeros(len(prompt)), weights[len(prompt) :]])
 
+    def _produced_turn_start_index(self, messages: list[Message]) -> int:
+        """Index of the first message in the turn the model is being asked to produce.
+
+        Everything from here on is the produced turn; everything before it is history. The
+        default is the message after the last user one. Renderers whose template draws the
+        line elsewhere override this rather than reinterpreting ``ctx.is_last``.
+        """
+        return max((idx for idx, m in enumerate(messages) if m["role"] == "user"), default=-1) + 1
+
     def _first_trained_message_index(
         self, messages: list[Message], train_on_what: TrainOnWhat
     ) -> int | None:
@@ -1865,16 +1890,17 @@ class Renderer(ABC):
 
         Only the modes that mean "train the turn sampling would produce" have such a point; the
         others weight messages the generation prompt would have rendered as history.
+
+        Deliberately not ``_produced_turn_start_index``: that says where reasoning starts being
+        preserved, which a renderer may put earlier than the prompt ends. This says where the
+        prompt ends, and it is always the message after the last user one.
         """
         match train_on_what:
             case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
                 boundary = len(messages) - 1
             case TrainOnWhat.LAST_ASSISTANT_TURN:
                 boundary = (
-                    max(
-                        (idx for idx, m in enumerate(messages) if m["role"] == "user"),
-                        default=-1,
-                    )
+                    max((idx for idx, m in enumerate(messages) if m["role"] == "user"), default=-1)
                     + 1
                 )
             case _:
