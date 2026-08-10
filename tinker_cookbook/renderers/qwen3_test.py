@@ -9,6 +9,7 @@ from typing import TypeGuard, cast
 import pytest
 from transformers.models.auto.tokenization_auto import AutoTokenizer
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers import (
     Message,
     StreamingMessageHeader,
@@ -856,3 +857,33 @@ def test_qwen3_tool_call_separator_follows_the_template(content: str, separator:
         "<|im_end|>"
     )
     assert rendered == expected
+
+
+def test_qwen3_disable_thinking_refuses_a_turn_with_no_query():
+    """No user message means the template writes no block, but the prompt always opens one.
+
+    `loop.index0 > ns.last_query_index` gates the block, and `last_query_index` defaults to
+    the final index -- so a conversation with no user turn has nothing after it. Rendering it
+    anyway trains a turn after a prompt that opens a block the sequence does not contain.
+    """
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
+    renderer = get_renderer("qwen3_disable_thinking", tokenizer)
+    messages = [{"role": "system", "content": "s"}, {"role": "assistant", "content": "a"}]
+
+    with pytest.raises(RendererError, match="no user message"):
+        renderer.build_supervised_example(cast(list[Message], messages))
+
+    # With a user message the same turn renders, and observes the block it is sampled after.
+    with_query = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": "a"},
+    ]
+    model_input, weights = renderer.build_supervised_example(cast(list[Message], with_query))
+    tokens = model_input.to_ints()
+    trained = [w > 0 for w in weights.tolist()]
+    observation = tokens[: trained.index(True)]
+    assert (
+        observation
+        == renderer.build_generation_prompt(cast(list[Message], with_query[:-1])).to_ints()
+    )
