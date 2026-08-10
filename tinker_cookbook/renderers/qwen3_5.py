@@ -32,6 +32,7 @@ from tinker_cookbook.renderers.base import (
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
+    has_thinking,
 )
 from tinker_cookbook.renderers.qwen3 import Qwen3VLRenderer
 
@@ -62,15 +63,26 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             message = {**message, "content": message["content"].strip()}
         return super().render_message(message, ctx)
 
-    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
-        """Override to produce the full generation suffix directly.
-
-        Builds the header tokens manually and appends <think>\\n. This matches
-        the Qwen3.5 template's add_generation_prompt behavior for thinking mode.
-        """
+    def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
+        """The header the generation prompt ends with, including the `<think>` prefill."""
         maybe_newline = "\n" if ctx.idx > 0 else ""
-        header_str = f"{maybe_newline}<|im_start|>{role}\n<think>\n"
-        return self.tokenizer.encode(header_str, add_special_tokens=False)
+        return f"{maybe_newline}<|im_start|>{role}\n<think>\n"
+
+    def _produced_turn_prefix_str(self, message: Message, ctx: RenderContext) -> str:
+        """The produced turn is sampled after the prefill, so the prefill is observed.
+
+        Only the turn actually being produced sits at that boundary; an earlier assistant
+        turn is history however the framing gate classifies it.
+        """
+        if message["role"] != "assistant" or not ctx.is_last:
+            return ""
+        return self._generation_suffix_str(self._get_qwen_role_for_message(message), ctx)
+
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """The full generation suffix: the role header plus the `<think>` prefill."""
+        return self.tokenizer.encode(
+            self._generation_suffix_str(role, ctx), add_special_tokens=False
+        )
 
     def _assistant_header_suffix(self, message: Message, ctx: RenderContext) -> str:
         """Insert empty think block for assistant messages after the last user query."""
@@ -78,11 +90,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             return ""
 
         content = message.get("content", "")
-        has_think = False
-        if isinstance(content, list):
-            has_think = any(p["type"] == "thinking" for p in content)
-        elif isinstance(content, str):
-            has_think = "<think>" in content
+        has_think = has_thinking(content)
 
         return "" if has_think else "<think>\n\n</think>\n\n"
 
@@ -312,7 +320,6 @@ class Qwen3_5DisableThinkingRenderer(Qwen3_5Renderer):
     of <think>\\n, signaling to the model to respond directly without reasoning.
     """
 
-    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+    def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
         maybe_newline = "\n" if ctx.idx > 0 else ""
-        header_str = f"{maybe_newline}<|im_start|>{role}\n<think>\n\n</think>\n\n"
-        return self.tokenizer.encode(header_str, add_special_tokens=False)
+        return f"{maybe_newline}<|im_start|>{role}\n<think>\n\n</think>\n\n"
