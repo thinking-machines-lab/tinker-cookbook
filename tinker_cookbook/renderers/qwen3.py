@@ -739,9 +739,6 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     )
                 )
 
-        # The generation prompt may end partway through this header. Splitting the string
-        # before encoding puts the boundary where sampling starts and keeps both sides
-        # tokenised the way the model will see them.
         prefix_str = self._produced_turn_prefix_str(message, ctx)
         if prefix_str and header_str.startswith(prefix_str):
             rest = header_str[len(prefix_str) :]
