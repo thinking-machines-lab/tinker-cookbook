@@ -148,10 +148,10 @@ def get_renderer(
             - ``"nemotron3_low_thinking"``: Nemotron-3 with low-effort reasoning (Super only)
             - ``"nemotron3_disable_thinking"``: Nemotron-3 with reasoning off
             - ``"nemotron3_preserve_thinking"``: Nemotron-3 (Nano/Super) with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``); use for multi-turn RL / long-horizon agents
-            - ``"nemotron3_ultra"``: Nemotron-3 Ultra with full reasoning
-            - ``"nemotron3_ultra_disable_thinking"``: Nemotron-3 Ultra with reasoning off
+            - ``"nemotron3_ultra"``: Nemotron-3 Ultra / 3.5 Lightning with full reasoning
+            - ``"nemotron3_ultra_disable_thinking"``: Nemotron-3 Ultra / 3.5 Lightning with reasoning off
             - ``"nemotron3_ultra_medium_thinking"``: Nemotron-3 Ultra with medium-effort reasoning
-            - ``"nemotron3_ultra_preserve_thinking"``: Nemotron-3 Ultra with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``)
+            - ``"nemotron3_ultra_preserve_thinking"``: Nemotron-3 Ultra / 3.5 Lightning with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``)
             - ``"gpt_oss_no_sysprompt"``: GPT-OSS without system prompt
             - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
             - ``"gpt_oss_medium_reasoning"``: GPT-OSS with medium reasoning

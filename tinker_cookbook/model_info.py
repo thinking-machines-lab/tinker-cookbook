@@ -35,6 +35,11 @@ _NEMOTRON3_ULTRA = (
     "nemotron3_ultra_medium_thinking",
     "nemotron3_ultra_preserve_thinking",
 )
+_NEMOTRON3_LIGHTNING = (
+    "nemotron3_ultra",
+    "nemotron3_ultra_disable_thinking",
+    "nemotron3_ultra_preserve_thinking",
+)
 _TML_V0 = ("tml_v0",)
 
 
@@ -190,6 +195,9 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
         ),
         "NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": ModelAttributes(
             org, "3", "550B-A55B", True, _NEMOTRON3_ULTRA
+        ),
+        "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": ModelAttributes(
+            org, "3.5", "30B-A3B", True, _NEMOTRON3_LIGHTNING
         ),
     }
 

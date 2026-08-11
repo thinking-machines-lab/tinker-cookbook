@@ -267,7 +267,8 @@ def _(mo):
     | `qwen3_5_disable_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking disabled |
     | `deepseekv3` | DeepSeek V3 | Non-thinking mode (default) |
     | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
-    | `nemotron3` | NVIDIA Nemotron 3 | Thinking enabled |
+    | `nemotron3` | NVIDIA Nemotron 3 Nano/Super | Thinking enabled |
+    | `nemotron3_ultra` | NVIDIA Nemotron 3 Ultra / 3.5 Lightning | Thinking enabled |
     | `kimi_k26` | Kimi K2.6 | Thinking enabled (default) |
     | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 

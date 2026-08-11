@@ -24,7 +24,7 @@ Two build paths for trained LoRA adapters:
 | **GPT-OSS** (20B, 120B) | ✅ | ✅ | bf16 | `.attn` → `.self_attn` remap; interleaved expert layout |
 | **Kimi-K2.6** (~1T-A32B) | ✅ | ✅ | INT4 pack-quantized | VL model; `language_model.model.*` prefix; vLLM LoRA not yet supported |
 | **DeepSeek V3.1** | ✅ | ❌ | bf16 or native FP8 | vLLM/SGLang don't support DeepSeek LoRA |
-| **Nemotron-3** (Nano 30B, Super 120B) | ✅ | ✅ | bf16 | `backbone.*` weight prefix (handled automatically) |
+| **Nemotron-3/3.5** (Nano 30B, Lightning 30B, Super 120B) | ✅ | ✅ | bf16 | `backbone.*` weight prefix (handled automatically) |
 
 ### Legend
 

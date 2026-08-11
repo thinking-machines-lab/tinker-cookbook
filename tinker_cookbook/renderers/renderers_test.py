@@ -468,6 +468,7 @@ TOOL_CAPABLE_MODELS = {
     "meta-llama/Llama-3.1-8B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     "openai/gpt-oss-20b",
 }
@@ -494,6 +495,12 @@ _HF_TEST_MODELS = [
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+        "nemotron3_ultra_disable_thinking",
+        {"enable_thinking": False},
+    ),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -513,6 +520,7 @@ _HF_TOOL_COMPATIBLE_MODELS = {
     "Qwen/Qwen3.6-35B-A3B",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
 }
 
@@ -621,6 +629,12 @@ _SUPERVISED_TEST_MODELS = [
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+        "nemotron3_ultra_disable_thinking",
+        {"enable_thinking": False},
+    ),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -767,6 +781,7 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
         # Llama3 does not support tool calling - see llama3.py docstring
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "openai/gpt-oss-20b",
     ],

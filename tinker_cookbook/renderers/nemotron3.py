@@ -1,9 +1,9 @@
 """
 Nemotron-3 family renderer.
 
-Nemotron-3 models (Nano, Super, and Ultra) use a chat format similar to
-Qwen3.5 (im_start/im_end tokens, thinking blocks, XML-style tool calls) but
-differ in the following ways:
+Nemotron-3 models (Nano, Super, Ultra, and 3.5 Lightning) use a chat format
+similar to Qwen3.5 (im_start/im_end tokens, thinking blocks, XML-style tool
+calls) but differ in the following ways:
 
 1. Tool declarations: Nemotron-3 uses structured XML inside <tools>...</tools>
    (Qwen3.5 uses JSON per line).
@@ -16,7 +16,8 @@ differ in the following ways:
    (Qwen3.5 only does this for messages after the last user query).
 
 4. Think block separator: Nano/Super use one newline between </think> and
-   text content (Qwen3.5 uses two newlines). Ultra uses no separator newline.
+   text content (Qwen3.5 uses two newlines). Ultra and 3.5 Lightning use no
+   separator newline.
 
 5. Disable-thinking generation suffix: <think></think> with no trailing
    newlines (Qwen3.5 uses <think>\\n\\n</think>\\n\\n).
@@ -426,7 +427,7 @@ class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
 
 
 class Nemotron3UltraRenderer(Nemotron3Renderer):
-    """Renderer for Nemotron-3 Ultra.
+    """Renderer for Nemotron-3 Ultra and Nemotron-3.5 Lightning.
 
     Ultra mostly shares Nemotron-3's XML tool format and empty system-message
     behavior, but its HF template differs from Nano/Super in the formatting of
@@ -469,7 +470,7 @@ class Nemotron3UltraRenderer(Nemotron3Renderer):
 
 
 class Nemotron3UltraPreserveThinkingRenderer(Nemotron3UltraRenderer):
-    """Nemotron-3 Ultra that keeps <think> blocks from previous turns.
+    """Ultra-format Nemotron renderer that keeps prior <think> blocks.
 
     Ultra counterpart of :class:`Nemotron3PreserveThinkingRenderer`: matches
     Ultra's HF chat template with ``truncate_history_thinking=False``, keeping
@@ -527,4 +528,4 @@ class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
 class Nemotron3UltraDisableThinkingRenderer(
     Nemotron3UltraRenderer, Nemotron3DisableThinkingRenderer
 ):
-    """Renderer for Nemotron-3 Ultra with thinking disabled."""
+    """Renderer for Ultra-format Nemotron models with thinking disabled."""
