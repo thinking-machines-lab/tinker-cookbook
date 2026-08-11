@@ -261,7 +261,9 @@ class KimiK2Renderer(Renderer):
 
             # Preserve thinking for the last assistant message, or for all messages
             # when strip_thinking_from_history is False.
-            if (ctx.in_last_assistant_turn or not self.strip_thinking_from_history) and thinking_content:
+            if (
+                ctx.in_last_assistant_turn or not self.strip_thinking_from_history
+            ) and thinking_content:
                 output_str = f"<think>{thinking_content}</think>"
             else:
                 output_str = "<think></think>"
