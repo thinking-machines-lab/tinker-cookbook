@@ -199,7 +199,7 @@ class KimiK2Renderer(Renderer):
 
         Each message uses role-specific tokens (``<|im_user|>``, ``<|im_assistant|>``,
         ``<|im_system|>``) with ``<|im_middle|>`` separating the role from content.
-        For assistant messages, ``ctx.in_produced_turn`` controls whether thinking is
+        For assistant messages, ``ctx.in_last_assistant_turn`` controls whether thinking is
         preserved or replaced with empty ``<think></think>``.
 
         Args:
@@ -261,7 +261,7 @@ class KimiK2Renderer(Renderer):
 
             # Preserve thinking for the last assistant message, or for all messages
             # when strip_thinking_from_history is False.
-            if (ctx.in_produced_turn or not self.strip_thinking_from_history) and thinking_content:
+            if (ctx.in_last_assistant_turn or not self.strip_thinking_from_history) and thinking_content:
                 output_str = f"<think>{thinking_content}</think>"
             else:
                 output_str = "<think></think>"
@@ -368,7 +368,7 @@ class KimiK2Renderer(Renderer):
 
         return supervised_examples
 
-    def _produced_turn_start_index(self, messages: list[Message]) -> int:
+    def _last_assistant_turn_start_index(self, messages: list[Message]) -> int:
         """The turn starts after the last assistant message that did not call a tool.
 
         Kimi's template keeps the reasoning of every assistant message after that point, so
