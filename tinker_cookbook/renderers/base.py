@@ -1796,7 +1796,7 @@ class Renderer(ABC):
             default=-1,
         )
 
-        turn_start = self._last_assistant_turn_start_index(messages)
+        turn_start = self._last_assistant_turn_start_index(messages[:-1])
 
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:

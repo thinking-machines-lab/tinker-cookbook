@@ -304,55 +304,10 @@ class KimiK2Renderer(Renderer):
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
-        """Build a generation prompt with Kimi K2 formatting.
-
-        Ensures a default system message is present, renders all messages, and
-        appends the assistant generation header. Preserves thinking for assistant
-        messages after the last non-tool-call assistant message.
-
-        Args:
-            messages (list[Message]): The conversation messages.
-            role (Role): The role for the generation prompt (default "assistant").
-            prefill (str | None): Optional prefill text to append after the prompt header.
-
-        Returns:
-            tinker.ModelInput: The tokenized model input ready for sampling.
-        """
-        messages = self._ensure_system_message(messages)
-        chunks: list[tinker.types.ModelInputChunk] = []
-
-        # Find last assistant message without tool calls (matches hf template behavior).
-        last_assistant_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
-                last_assistant_idx = idx
-                break
-
-        for idx, message in enumerate(messages):
-            is_assistant = message["role"] == "assistant"
-            is_last_assistant = is_assistant and (
-                last_assistant_idx == -1 or idx > last_assistant_idx
-            )
-
-            ctx = RenderContext(
-                idx=idx,
-                is_last=idx == len(messages) - 1,
-                prev_message=messages[idx - 1] if idx > 0 else None,
-                in_last_assistant_turn=is_last_assistant,
-            )
-            rendered_message = self.render_message(message, ctx)
-            header_chunk = rendered_message.header
-            output_chunks = rendered_message.output
-            if header_chunk:
-                chunks.append(header_chunk)
-            chunks.extend([x for x in output_chunks if x])
-
-        # Add generation prompt for new assistant message
-        gen_prompt = f"<|im_assistant|>{role}<|im_middle|>"
-        chunks.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(gen_prompt)))
-        if prefill:
-            chunks.append(tinker.types.EncodedTextChunk(tokens=self.tokenizer.encode(prefill)))
-        return tinker.ModelInput(chunks=chunks)
+        """Build a generation prompt, prepending the default system message if absent."""
+        return super().build_generation_prompt(
+            self._ensure_system_message(messages), role=role, prefill=prefill
+        )
 
     def build_supervised_examples(
         self,
@@ -423,7 +378,7 @@ class KimiK2Renderer(Renderer):
         last user one. The final message is excluded from the scan: it is the target, and a
         turn cannot start after itself.
         """
-        for idx in range(len(messages) - 2, -1, -1):
+        for idx in range(len(messages) - 1, -1, -1):
             if messages[idx]["role"] == "assistant" and not messages[idx].get("tool_calls"):
                 return idx + 1
         return 0
