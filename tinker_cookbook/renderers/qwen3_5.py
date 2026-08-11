@@ -68,7 +68,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         maybe_newline = "\n" if ctx.idx > 0 else ""
         return f"{maybe_newline}<|im_start|>{role}\n<think>\n"
 
-    def _produced_turn_prefix_str(self, message: Message, ctx: RenderContext) -> str:
+    def _generation_suffix_in_header(self, message: Message, ctx: RenderContext) -> str:
         """The produced turn is sampled after the prefill, so the prefill is observed.
 
         Only the turn actually being produced sits at that boundary; an earlier assistant
