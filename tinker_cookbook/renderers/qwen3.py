@@ -14,6 +14,7 @@ from typing import cast
 
 import tinker
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
     ContentPart,
@@ -532,6 +533,28 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     Use this renderer when you want to train or sample from Qwen3 models in
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Refuse a produced turn in a conversation with no user message.
+
+        The template gates the empty block on `loop.index0 > ns.last_query_index`, and with
+        no user message `last_query_index` is the final index -- so nothing is ever after it
+        and the document carries no block. `add_generation_prompt` writes one regardless. The
+        two cannot both be honoured: the turn would train after a prompt that always opens a
+        block the training sequence does not contain.
+        """
+        if (
+            message["role"] == "assistant"
+            and ctx.is_last
+            and message.get("content")
+            and ctx.last_user_index < 0
+        ):
+            raise RendererError(
+                "this conversation has no user message, so Qwen3's template writes no empty "
+                "think block on the produced turn -- but the generation prompt always opens "
+                "one. Add a user message, or render with thinking enabled."
+            )
+        return super().render_message(message, ctx)
 
     def _get_generation_suffix(self, role: str, ctx: RenderContext) -> list[int]:
         """The empty block is part of the prompt, so sampling starts after it.
