@@ -255,6 +255,11 @@ class Qwen3Renderer(Renderer):
             # with ThinkingPart separated from text (as returned by parse_response).
             output_content = content
 
+        # The template's `content` is the message's own text, and the separator below asks
+        # about that -- not about the empty block, which is framing the template writes
+        # itself. Captured before the block is prepended.
+        has_text = bool(output_content)
+
         # The template opens the block on the turn being produced whether or not it
         # reasoned, so a turn that did not reason still gets an empty one -- whatever
         # shape its content arrived in.
@@ -267,13 +272,16 @@ class Qwen3Renderer(Renderer):
 
         # Handle tool_calls field
         if "tool_calls" in message:
-            # Add leading newline to match HF template behavior
-            output_content += "\n" + "\n".join(
+            # The template separates the calls from the text before them, and from each
+            # other, but writes nothing before the first when there is no text:
+            # `{%- if (loop.first and content) or (not loop.first) %}{{- \'\\n\' }}`.
+            calls = "\n".join(
                 [
                     f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
+            output_content += ("\n" if has_text else "") + calls
         output_content += "<|im_end|>"
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
