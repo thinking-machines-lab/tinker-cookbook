@@ -110,10 +110,9 @@ class KimiK25Renderer(KimiK2Renderer):
         Returns:
             tinker.ModelInput: The tokenized model input ready for sampling.
         """
-        # If no prefill specified, use <think> to enable thinking
-        if prefill is None:
-            prefill = "<think>"
-        return super().build_generation_prompt(messages, role=role, prefill=prefill)
+        return super().build_generation_prompt(
+            messages, role=role, prefill="<think>" + (prefill or "")
+        )
 
     def _normalize_response_tokens(self, response: list[int]) -> list[int]:
         """Restore the synthetic <think> prefill before parsing sampled tokens."""
@@ -185,9 +184,6 @@ class KimiK25DisableThinkingRenderer(KimiK25Renderer):
         Returns:
             tinker.ModelInput: The tokenized model input ready for sampling.
         """
-        # If no prefill specified, use <think></think> to disable thinking
-        if prefill is None:
-            prefill = "<think></think>"
         return super(KimiK25Renderer, self).build_generation_prompt(
-            messages, role=role, prefill=prefill
+            messages, role=role, prefill="<think></think>" + (prefill or "")
         )
