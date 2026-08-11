@@ -31,10 +31,10 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` | Hybrid | MoE | Medium |
 | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16` | Hybrid | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16` | Hybrid | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` | Hybrid | MoE | Medium |
-| `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` | Hybrid | MoE | Medium |
 
 ## Other families
 

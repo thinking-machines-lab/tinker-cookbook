@@ -1,17 +1,17 @@
 """
-Nemotron-3 family renderer.
+Nemotron family renderer.
 
-Nemotron-3 models (Nano, Super, Ultra, and 3.5 Lightning) use a chat format
-similar to Qwen3.5 (im_start/im_end tokens, thinking blocks, XML-style tool
-calls) but differ in the following ways:
+The supported Nemotron models (3 Nano, 3 Super, 3 Ultra, and 3.5 Lightning)
+use a chat format similar to Qwen3.5 (im_start/im_end tokens, thinking blocks,
+XML-style tool calls) but differ in the following ways:
 
-1. Tool declarations: Nemotron-3 uses structured XML inside <tools>...</tools>
+1. Tool declarations: Nemotron uses structured XML inside <tools>...</tools>
    (Qwen3.5 uses JSON per line).
 
 2. System message ordering: system_prompt comes BEFORE tools text (Qwen3.5
    puts tools first).
 
-3. Empty think block scope: Nemotron-3's HF template prepends <think></think>
+3. Empty think block scope: Nemotron's HF templates prepend <think></think>
    to ALL assistant messages that lack thinking, including historical ones
    (Qwen3.5 only does this for messages after the last user query).
 
@@ -22,15 +22,15 @@ calls) but differ in the following ways:
 5. Disable-thinking generation suffix: <think></think> with no trailing
    newlines (Qwen3.5 uses <think>\\n\\n</think>\\n\\n).
 
-6. Empty system message injection: Nemotron-3's HF template always outputs
-   a system message block even when none is provided (it always sets
-   system_message = "" which is "defined" in Jinja2). Our renderer
+6. Empty system message injection: Nemotron's HF templates always output
+   a system message block even when none is provided (each sets
+   system_message = "", which is "defined" in Jinja2). Our renderer
    prepends an empty system message in build_generation_prompt and
    build_supervised_example to match this behavior.
 
 Thinking modes
 --------------
-Nemotron-3 models support reasoning ON/OFF. Super additionally supports a
+These Nemotron models support reasoning ON/OFF. Super additionally supports a
 low-effort reasoning mode that produces shorter thinking traces; Ultra
 additionally supports a medium-effort reasoning mode.
 
