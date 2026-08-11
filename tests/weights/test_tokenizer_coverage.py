@@ -28,6 +28,7 @@ _REPRESENTATIVE_MODELS = (
     "moonshotai/Kimi-K2-Thinking",
     "moonshotai/Kimi-K2.5",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
 )
 
 
@@ -65,6 +66,14 @@ def test_tokenizer_loadable_from_allowlist(model: str) -> None:
         tok = AutoTokenizer.from_pretrained(str(dest), trust_remote_code=True)
         tokens = tok.encode("Hello world")
         assert len(tokens) > 0, f"Tokenizer for {model} produced empty encoding"
+        if "Nemotron-3.5-Lightning" in model:
+            assert tok.chat_template is not None
+            prompt = tok.apply_chat_template(
+                [{"role": "user", "content": "Hello"}],
+                add_generation_prompt=True,
+                tokenize=True,
+            )
+            assert len(prompt) > 0, "Lightning standalone chat template was not loaded"
 
 
 @pytest.mark.integration

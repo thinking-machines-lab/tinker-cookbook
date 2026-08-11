@@ -135,6 +135,16 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
     # Qwen3 — Hybrid (thinking), 32K context
     "Qwen/Qwen3-8B": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     # Nemotron — Hybrid (thinking), 64K context
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16:peft:262144": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
         "max_tokens": 65536,
         "context_window": 65536,

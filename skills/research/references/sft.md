@@ -22,8 +22,10 @@
 | `kimi_k26` | Kimi K2.6 | Thinking enabled |
 | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 | `kimi_k26_preserve_thinking` | Kimi K2.6 | Preserve historical thinking |
-| `nemotron3` | Nemotron-3 | Thinking enabled |
-| `nemotron3_disable_thinking` | Nemotron-3 | Thinking disabled |
+| `nemotron3` | Nemotron-3 Nano/Super | Thinking enabled |
+| `nemotron3_disable_thinking` | Nemotron-3 Nano/Super | Thinking disabled |
+| `nemotron3_ultra` | Nemotron-3 Ultra / 3.5 Lightning | Thinking enabled |
+| `nemotron3_ultra_disable_thinking` | Nemotron-3 Ultra / 3.5 Lightning | Thinking disabled |
 | `gpt_oss_no_sysprompt` | GPT-OSS | No system prompt |
 | `gpt_oss_low_reasoning` | GPT-OSS | Low reasoning |
 | `gpt_oss_medium_reasoning` | GPT-OSS | Medium reasoning |

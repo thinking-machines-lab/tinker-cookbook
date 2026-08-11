@@ -31,6 +31,34 @@ class TestQwen3_6:
 
 
 class TestNemotron3:
+    def test_lightning_uses_ultra_format_renderer(self):
+        assert (
+            get_recommended_renderer_name("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16")
+            == "nemotron3_ultra"
+        )
+
+    def test_lightning_peft_suffix_uses_ultra_format_renderer(self):
+        assert (
+            get_recommended_renderer_name(
+                "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16:peft:262144"
+            )
+            == "nemotron3_ultra"
+        )
+
+    def test_lightning_attributes(self):
+        model_name = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+        attrs = get_model_attributes(model_name)
+        assert attrs.organization == "nvidia"
+        assert attrs.version_str == "3.5"
+        assert attrs.size_str == "30B-A3B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names(model_name) == [
+            "nemotron3_ultra",
+            "nemotron3_ultra_disable_thinking",
+            "nemotron3_ultra_preserve_thinking",
+        ]
+
     def test_ultra_uses_nemotron3_ultra_renderer(self):
         assert (
             get_recommended_renderer_name("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16")
