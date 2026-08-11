@@ -762,7 +762,7 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     )
                 )
 
-        prefix_str = self._produced_turn_prefix_str(message, ctx)
+        prefix_str = self._generation_suffix_in_header(message, ctx)
         if prefix_str and header_str.startswith(prefix_str):
             rest = header_str[len(prefix_str) :]
             if rest:
@@ -779,7 +779,7 @@ class Qwen3VLRenderer(Qwen3Renderer):
         )
         return RenderedMessage(header=header, output=output_chunks_encoded)
 
-    def _produced_turn_prefix_str(self, message: Message, ctx: RenderContext) -> str:
+    def _generation_suffix_in_header(self, message: Message, ctx: RenderContext) -> str:
         """How much of this message's header the generation prompt already wrote.
 
         Empty when the prompt stops before the header does, which is the usual case.
