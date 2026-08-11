@@ -49,6 +49,7 @@ from tinker_cookbook.renderers import (
 from tinker_cookbook.renderers.base import (
     ContentPart,
     ImagePart,
+    Renderer,
     ensure_list,
     ensure_text,
     format_content_as_string,
@@ -986,6 +987,61 @@ _RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET = {"deepseekv3_thinking"}
 # Renderers whose supervised target keeps a header the generation prompt does not end with, so
 # observation != generation_prompt however the boundary moves.
 _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"nemotron3"}
+
+
+@pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
+def test_every_example_of_a_split_conversation_starts_where_it_was_sampled(
+    model_name: str, renderer_name: str, conversation_fn
+):
+    """A renderer without the extension property gets one example per trained message.
+
+    Such a renderer writes an assistant message one way as history and another as the turn
+    being produced, so a single sequence cannot show every turn the context it was sampled
+    from -- which is what `build_supervised_examples` is for. It used to raise for every
+    renderer but two, leaving callers with a multi-message turn no correct option at all.
+    """
+    skip_if_deepseek_tokenizer_bug(model_name)
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    if renderer.has_extension_property:
+        pytest.skip(f"{renderer_name} extends, so one example already shows every turn")
+    if type(renderer).build_supervised_examples is not Renderer.build_supervised_examples:
+        pytest.skip(f"{renderer_name} splits its own way; this covers the default split")
+
+    messages = conversation_fn()
+    has_thinking_content = any(has_thinking(m["content"]) for m in messages)
+    if has_thinking_content and renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support ThinkingPart content")
+    if has_thinking_content and renderer_name in _RENDERERS_WITH_THINKING_STRIPPING:
+        pytest.skip(f"{renderer_name} strips thinking, so a produced turn cannot round-trip")
+    if _conversation_has_tools(messages) and renderer_name in _RENDERERS_WITHOUT_TOOL_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support tool calling")
+    if renderer_name in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(f"{renderer_name} has different headers for supervised vs generation")
+
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+    assistants = [idx for idx, m in enumerate(messages) if m["role"] == "assistant"]
+    assert len(examples) == len(assistants)
+
+    for idx, (model_input, weights) in zip(assistants, examples):
+        tokens = model_input.to_ints()
+        trained = [w > 0 for w in weights.tolist()]
+        assert True in trained, f"example for message {idx} trains nothing"
+        observation = tokens[: trained.index(True)]
+        assert observation == renderer.build_generation_prompt(messages[:idx]).to_ints(), (
+            f"example for message {idx} does not start where that turn was sampled"
+        )
+
+
+# Renderers whose generation prompt ends in a prefill, so the observation/action boundary is
+# something a renderer can get wrong without changing a single token.
+_RENDERERS_WITH_A_GENERATION_PREFILL = [
+    ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+    ("moonshotai/Kimi-K2.5", "kimi_k25"),
+]
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
