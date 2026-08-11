@@ -25,6 +25,7 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     detect_unterminated_tool_block,
     ensure_text,
+    has_thinking,
     parse_response_for_stop_token,
     parse_think_blocks,
 )
@@ -482,20 +483,33 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         # Add </think> to header for historical assistant messages when stripping thinking.
         # This matches the base class's should_strip_thinking logic - only historical messages
         # (not the last one) get </think> added. The last message is the supervised target and
-        # should preserve its format (including any ThinkingPart).
+        # should preserve its format (including any ThinkingPart) - but a target without one
+        # has no format to preserve, and HF adds </think> there too. Empty content means the
+        # generation prompt's own header, which keeps the open <think>.
         follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
+        content = message.get("content", "")
+        is_assistant_turn = message["role"] == "assistant" and not follows_tool
         should_add_think_close = (
-            message["role"] == "assistant"
-            and not follows_tool
-            and self.strip_thinking_from_history
-            and not ctx.is_last
+            is_assistant_turn and self.strip_thinking_from_history and not ctx.is_last
         )
 
         if should_add_think_close:
             think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
             old_header_tokens = list(rendered.header.tokens) if rendered.header else []
             new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + think_close_tokens)
-            rendered = RenderedMessage(header=new_header, output=rendered.output)
+            return RenderedMessage(header=new_header, output=rendered.output)
+
+        if is_assistant_turn and ctx.is_last and content and not has_thinking(content):
+            empty_block = self.tokenizer.encode("<think></think>", add_special_tokens=False)
+            first, *rest = rendered.output
+            assert isinstance(first, tinker.types.EncodedTextChunk)
+            return RenderedMessage(
+                header=rendered.header,
+                output=[
+                    tinker.types.EncodedTextChunk(tokens=empty_block + list(first.tokens)),
+                    *rest,
+                ],
+            )
 
         return rendered
 
