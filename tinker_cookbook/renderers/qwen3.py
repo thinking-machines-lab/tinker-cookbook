@@ -587,12 +587,7 @@ class Qwen3InstructRenderer(Qwen3Renderer):
 
     @property
     def has_extension_property(self) -> bool:
-        """Qwen3 Instruct always satisfies extension - no thinking to strip from history."""
-        # NOTE: If callers include ThinkingPart in history, Qwen3Renderer may still strip it
-        # when strip_thinking_from_history=True, so extension can break.
-        # This is a rare case that'll only occur if we prompt the instruct model
-        # with a conversation from a different model.
-        return True
+        return not self.strip_thinking_from_history
 
 
 class Qwen3VLRenderer(Qwen3Renderer):
