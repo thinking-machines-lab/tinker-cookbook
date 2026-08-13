@@ -874,11 +874,7 @@ def has_thinking(content: Content) -> bool:
 
 
 def marker_token(tokenizer: Tokenizer, marker: str) -> int | None:
-    """The id of ``marker`` where the vocab spells it as one token, else None.
-
-    A format whose vocab has no single token for it -- llama3, role_colon -- yields None, and
-    no token id ever equals None, so it simply matches nothing.
-    """
+    """The token id for ``marker``, or None if this vocab has no single token for it."""
     ids = tokenizer.encode(marker, add_special_tokens=False)
     return ids[0] if len(ids) == 1 else None
 
@@ -1346,9 +1342,7 @@ class Renderer(ABC):
 
     tokenizer: Tokenizer
 
-    # How this format spells its reasoning markers. Nearly every template that has them agrees
-    # on these two; a format marking reasoning some other way -- gpt_oss and its channels --
-    # overrides them, and a vocab holding no single token for either never matches.
+    # How this format writes reasoning markers. Override them if a format uses different ones.
     think_open: str = "<think>"
     think_close: str = "</think>"
 
@@ -1383,10 +1377,10 @@ class Renderer(ABC):
 
     @functools.cached_property
     def _think_marker_tokens(self) -> tuple[int | None, int | None]:
-        """This format's markers as ids, resolved against the tokenizer once.
+        """``think_open`` and ``think_close`` as token ids.
 
-        A `cached_property` rather than `__init__` work because several renderers build without
-        calling `super().__init__()`; this resolves the first time something asks.
+        A cached_property rather than __init__ work: some renderers do not call
+        super().__init__(), so this resolves the first time it is used instead.
         """
         return (
             marker_token(self.tokenizer, self.think_open),
@@ -1394,20 +1388,18 @@ class Renderer(ABC):
         )
 
     def prompt_closes_the_think_block(self, prompt: list[int]) -> bool:
-        """Whether a generation prompt leaves the think block closed.
+        """Has this generation prompt already closed the think block?
 
-        A closed block is a statement about the tokens after it: whatever the model produces
-        from here is not reasoning. An open marker says the opposite, and a prompt spelling
-        neither says nothing::
+        An open marker means the model is about to reason. A closed one means it is not.
+        The last marker in the prompt is the one that counts::
 
-            qwen3                     ...<|im_start|>assistant\\n<think>\\n                  open
-            qwen3_disable_thinking    ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n  closed
-            deepseekv3                ...<|Assistant|></think>                            closed
-            role_colon                ...\\n\\nAssistant:                                   neither
+            qwen3                   ...assistant\\n<think>\\n                 open      -> False
+            qwen3_disable_thinking  ...assistant\\n<think>\\n\\n</think>\\n\\n  closed    -> True
+            deepseekv3              ...<|Assistant|></think>                closed    -> True
+            role_colon              ...\\n\\nAssistant:                       no marker -> False
 
-        The last marker decides, and reading ids rather than decoded text is what makes that
-        safe: message content is rendered before the generation suffix, so a conversation
-        quoting ``</think>`` at the model cannot talk this into the wrong answer.
+        This compares token ids, not text, so a user message that quotes "</think>" cannot
+        change the answer.
         """
         opened, closed = self._think_marker_tokens
         for token in reversed(prompt):
@@ -1914,12 +1906,23 @@ class Renderer(ABC):
         that prefill on whichever side its header logic puts it, so the model is trained to
         produce a token it is always given. Only the weights move; the tokens are untouched.
 
-        A render that does not begin with the prompt disagrees with it about more than where the
-        boundary falls: there is no sequence sampling can produce that trains this example. When
-        the prompt has closed the think block that is the conversation's doing -- it reasoned
-        where the prompt said it would not -- and this raises. Otherwise the weights are returned
-        unchanged, because a template that contradicts itself is not the caller's to fix: see
-        nemotron3, whose prompt opens a block its own document form writes closed.
+        If the render does not start with the prompt, the example is broken: it would train the
+        model on a sequence the model is never given. There are two reasons that happens, and
+        only one of them is fixable by whoever called us.
+
+        1. The prompt closed the think block, so this turn was told not to reason -- but it
+           reasoned anyway. Fix the conversation, so raise. For example, feeding a turn with
+           reasoning to ``qwen3_disable_thinking``::
+
+               prompt  ...assistant\\n<think>\\n\\n</think>\\n\\n
+               render  ...assistant\\n<think>\\n2+2 is 4\\n</think>\\n\\n4<|im_end|>
+
+           The render never had the empty block, so it does not start with the prompt.
+
+        2. The prompt left the block open, and the template disagrees with itself. nemotron3
+           does this (#860): its prompt ends ``<think>\\n`` but it writes ``<think></think>``
+           for a turn with no reasoning. Nobody calling us can fix that, so leave the weights
+           alone and stay quiet, as before.
         """
         boundary = self._first_trained_message_index(messages, train_on_what)
         if boundary is None:
@@ -1931,11 +1934,11 @@ class Renderer(ABC):
         if model_input.to_ints()[: len(prompt)] != prompt:
             if self.prompt_closes_the_think_block(prompt):
                 raise RendererError(
-                    f"{type(self).__name__} closes the think block in its generation prompt, so "
-                    "what follows cannot be reasoning -- but this turn's render does not begin "
-                    "with that prompt, which is what a turn carrying reasoning looks like here. "
-                    "Render it with the thinking variant of this renderer, or drop the reasoning "
-                    "from the turn."
+                    f"{type(self).__name__} has thinking turned off: its generation prompt "
+                    "closes the think block, which tells the model not to reason. This turn "
+                    "contains reasoning, so training on it would teach the model to reason "
+                    "anyway, after being told not to. Either use the thinking version of this "
+                    "renderer, or remove the reasoning from this turn."
                 )
             return weights
 

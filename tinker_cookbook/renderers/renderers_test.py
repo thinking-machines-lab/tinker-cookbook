@@ -985,9 +985,8 @@ _RENDERERS_WITHOUT_THINKING_SUPPORT = {"llama3", "role_colon"}
 # Renderers that don't support tool calling
 _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 
-# Renderers that cannot be handed a produced turn carrying reasoning, so the conversation must
-# have no ThinkingPart. `deepseekv3` and `kimi_k2` strip it out; the rest close the think block
-# in the generation prompt and refuse it -- see
+# These renderers cannot be given a turn that reasoned, so the conversation must have no
+# ThinkingPart. `deepseekv3` and `kimi_k2` drop the reasoning; the other three raise, per
 # `test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned`.
 _RENDERERS_WITH_THINKING_STRIPPING = {
     "qwen3_disable_thinking",
@@ -997,9 +996,8 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "kimi_k2",
 }
 
-# The renderers whose generation prompt closes the think block, one per family. Nothing declares
-# that -- `prompt_closes_the_think_block` reads it off the prompt -- so this list is the coverage
-# rather than the definition.
+# One renderer per family whose generation prompt closes the think block. No renderer declares
+# that; `prompt_closes_the_think_block` works it out. So this list is test coverage, not config.
 _REASONING_OFF_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
@@ -1010,14 +1008,11 @@ _REASONING_OFF_RENDERERS = [
 
 @pytest.mark.parametrize("model_name,renderer_name", _REASONING_OFF_RENDERERS)
 def test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned(model_name: str, renderer_name: str):
-    """A closed think block in the prompt and reasoning in the target cannot both hold.
+    """These renderers tell the model not to reason, so a turn that reasoned cannot be trained.
 
-    These renderers hand the model a closed `<think></think>`, so reasoning would have to
-    arrive after the marker saying there is none. Rendering it anyway trains a sequence
-    sampling cannot produce -- and silently, because both sides are the same renderer, so no
-    comparison against a second implementation sees it.
-
-    The same turn without reasoning renders, and observes the prompt it is sampled after.
+    Drop the reasoning and the same turn renders fine, with its observation equal to the
+    prompt. Nothing but this check catches it: one renderer produces both sides, so comparing
+    against a second implementation sees two copies of the same mistake.
     """
     renderer = get_renderer(renderer_name, get_tokenizer(model_name))
     reasoned = [
@@ -1517,9 +1512,10 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),
-    # Qwen3.5 disable thinking, on a reasoning-less conversation: the check trains each assistant
-    # turn in succession, and a reasoning-off renderer refuses one that reasoned. The old
-    # thinking conversation hid the failure below by suppressing the empty block everywhere.
+    # Qwen3.5 disable thinking, on a conversation with no reasoning: this check trains each
+    # assistant turn in turn, and a reasoning-off renderer refuses one that reasoned. The old
+    # thinking conversation hid the failure below, because every turn reasoned and so no turn
+    # ever got the empty block.
     pytest.param(
         "Qwen/Qwen3.6-35B-A3B",
         Qwen3_5DisableThinkingRenderer,
@@ -1527,10 +1523,10 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         get_basic_4turn_conversation,
         marks=pytest.mark.xfail(
             strict=True,
-            reason="`_assistant_header_suffix` gates the empty block on `idx > last_user_index`, "
-            "so an assistant turn carries it as the produced turn and not as history and the "
-            "sequence through it is not a prefix of the next prompt: has_extension_property "
-            "is claimed but not met",
+            reason="`_assistant_header_suffix` decides the empty block by position "
+            "(`idx > last_user_index`), so one assistant turn gets it as the turn being "
+            "produced and not as history. The sequence through that turn is then not a prefix "
+            "of the next prompt, so has_extension_property=True does not hold.",
         ),
     ),
     # DeepSeek non-thinking with basic multi-turn

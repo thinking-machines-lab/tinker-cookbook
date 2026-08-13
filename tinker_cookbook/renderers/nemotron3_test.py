@@ -176,10 +176,10 @@ def get_multiturn_thinking_conversation() -> list[Message]:
 
 
 def get_multiturn_thinking_history_conversation() -> list[Message]:
-    """Multi-turn whose history reasoned and whose produced turn did not.
+    """History that reasoned, and a final turn that did not.
 
-    What a reasoning-off renderer can be given: history to preserve, and a produced turn that
-    agrees with a prompt closing the think block.
+    What a reasoning-off renderer can be given: it refuses a final turn that reasoned, and
+    this still leaves history for `strip_thinking_from_history=False` to preserve.
     """
     return [
         *get_multiturn_thinking_conversation()[:-1],
@@ -1319,7 +1319,7 @@ def _assert_mode_preserve_matches_hf(
     """Renderer (built with strip_thinking_from_history=False) matches HF with
     truncate_history_thinking=False plus the mode flags in ``hf_kwargs``.
 
-    The reasoning-off renderers pass a conversation whose produced turn did not reason.
+    The reasoning-off renderers pass a conversation whose final turn did not reason.
     """
     sup_msgs = conversation_fn()
     cookbook_sup = renderer.build_supervised_example(sup_msgs)[0].to_ints()
