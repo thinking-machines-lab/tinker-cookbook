@@ -1030,7 +1030,7 @@ def test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned(model_name: str, 
         },
     ]
 
-    with pytest.raises(RendererError, match="disables thinking"):
+    with pytest.raises(RendererError, match="closes the think block"):
         renderer.build_supervised_example(cast(list[Message], reasoned))
 
     plain = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
@@ -1516,15 +1516,9 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),
-    # Qwen3.5 disable thinking with strip_thinking_from_history=False (preserves thinking).
-    # A reasoning-less conversation, because the check trains each assistant turn in succession
-    # and a reasoning-off renderer refuses a produced turn that reasoned -- so no conversation
-    # carrying reasoning reaches the property here. Which leaves the claim unmet: with nothing
-    # to preserve, `_assistant_header_suffix` gates the empty block on `idx > last_user_index`,
-    # so one assistant turn carries it as the turn being produced and not as history, and the
-    # sequence through it is no longer a prefix of the next prompt. The old thinking
-    # conversation hid this -- every turn reasoned, so `has_think` suppressed the block
-    # everywhere and extension held by never exercising it.
+    # Qwen3.5 disable thinking, on a reasoning-less conversation: the check trains each assistant
+    # turn in succession, and a reasoning-off renderer refuses one that reasoned. The old
+    # thinking conversation hid the failure below by suppressing the empty block everywhere.
     pytest.param(
         "Qwen/Qwen3.6-35B-A3B",
         Qwen3_5DisableThinkingRenderer,
@@ -1532,8 +1526,10 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         get_basic_4turn_conversation,
         marks=pytest.mark.xfail(
             strict=True,
-            reason="positional empty-block rule renders a turn one way as the produced turn "
-            "and another as history, so has_extension_property=True is not met",
+            reason="`_assistant_header_suffix` gates the empty block on `idx > last_user_index`, "
+            "so an assistant turn carries it as the produced turn and not as history and the "
+            "sequence through it is not a prefix of the next prompt: has_extension_property "
+            "is claimed but not met",
         ),
     ),
     # DeepSeek non-thinking with basic multi-turn

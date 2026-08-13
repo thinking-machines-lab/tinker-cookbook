@@ -178,10 +178,8 @@ def get_multiturn_thinking_conversation() -> list[Message]:
 def get_multiturn_thinking_history_conversation() -> list[Message]:
     """Multi-turn whose history reasoned and whose produced turn did not.
 
-    What a reasoning-off renderer can be given: `strip_thinking_from_history=False` still has
-    history to preserve, while the turn being trained agrees with a prompt that closes the
-    think block. A produced turn that reasoned is refused instead -- there is no sequence that
-    trains reasoning after being told not to reason.
+    What a reasoning-off renderer can be given: history to preserve, and a produced turn that
+    agrees with a prompt closing the think block.
     """
     return [
         *get_multiturn_thinking_conversation()[:4],
@@ -1315,15 +1313,14 @@ def test_preserve_thinking_registered_in_model_info():
 # disable / low-effort / medium-effort modes, which have no named preserve variant.
 
 
-def _assert_mode_preserve_matches_hf(tokenizer, renderer, conversation_fn=None, **hf_kwargs):
+def _assert_mode_preserve_matches_hf(
+    tokenizer, renderer, conversation_fn=get_multiturn_thinking_conversation, **hf_kwargs
+):
     """Renderer (built with strip_thinking_from_history=False) matches HF with
     truncate_history_thinking=False plus the mode flags in ``hf_kwargs``.
 
-    ``conversation_fn`` names the conversation because the reasoning-off renderers need one
-    whose produced turn did not reason -- see
-    ``get_multiturn_thinking_history_conversation``.
+    The reasoning-off renderers pass a conversation whose produced turn did not reason.
     """
-    conversation_fn = conversation_fn or get_multiturn_thinking_conversation
     sup_msgs = conversation_fn()
     cookbook_sup = renderer.build_supervised_example(sup_msgs)[0].to_ints()
     hf_sup = _hf_supervised_tokens(
