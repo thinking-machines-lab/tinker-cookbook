@@ -872,6 +872,32 @@ def has_thinking(content: Content) -> bool:
     return "<think>" in content
 
 
+_CLOSED_THINK_BLOCK = re.compile(r"</think>\s*$")
+
+# Enough to cover the longest closing marker a generation prompt ends with -- Qwen3's
+# `<think>\n\n</think>\n\n` is six -- without decoding a whole conversation to look at its tail.
+_MARKER_TOKENS = 16
+
+
+def prompt_closes_the_think_block(tokenizer: Tokenizer, prompt: list[int]) -> bool:
+    """Whether a generation prompt ends having already closed the think block.
+
+    A closed block is a statement about the tokens after it: whatever the model produces from
+    here is not reasoning. An open ``<think>`` says the opposite, and a prompt mentioning
+    neither says nothing. Read off the prompt rather than declared per renderer, so a format
+    that spells the marker the usual way is covered the first time it appears::
+
+        qwen3                     ...<|im_start|>assistant\\n<think>\\n           open
+        qwen3_disable_thinking    ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n   closed
+        deepseekv3                ...<|Assistant|></think>                     closed
+        role_colon                ...\\n\\nAssistant:                            neither
+
+    Formats that mark reasoning some other way -- gpt_oss and its channels -- read as neither,
+    which is the same silence they had before anything asked.
+    """
+    return bool(_CLOSED_THINK_BLOCK.search(tokenizer.decode(prompt[-_MARKER_TOKENS:])))
+
+
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
     """Filter out ThinkingPart elements from a content part list.
 
@@ -1334,26 +1360,6 @@ class Renderer(ABC):
     """
 
     tokenizer: Tokenizer
-
-    disables_thinking: bool = False
-    """Whether this renderer's generation prompt closes the think block.
-
-    A closed block is a statement about the tokens after it, so for these renderers a render
-    that does not begin with its own generation prompt is the conversation's fault rather than
-    the template's, and ``_train_after_the_generation_prompt`` raises rather than reweighting.
-    ``qwen3_disable_thinking`` on the same question, answered two ways::
-
-        prompt  ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n
-        render  ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n4<|im_end|>
-                                         the turn did not reason: the prompt is a prefix
-
-        prompt  ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n
-        render  ...<|im_start|>assistant\\n<think>\\n2+2 is 4\\n</think>\\n\\n4<|im_end|>
-                                         it reasoned: nothing here is what sampling is given
-
-    Not every renderer named ``disable_thinking``: DeepSeek's strips reasoning out of the
-    content, so its render already agrees.
-    """
 
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
     # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
@@ -1882,9 +1888,11 @@ class Renderer(ABC):
         produce a token it is always given. Only the weights move; the tokens are untouched.
 
         A render that does not begin with the prompt disagrees with it about more than where the
-        boundary falls: there is no sequence sampling can produce that trains this example. A
-        `disables_thinking` renderer says so; anywhere else the weights are returned unchanged,
-        because a template that contradicts itself is not the caller's to fix.
+        boundary falls: there is no sequence sampling can produce that trains this example. When
+        the prompt has closed the think block that is the conversation's doing -- it reasoned
+        where the prompt said it would not -- and this raises. Otherwise the weights are returned
+        unchanged, because a template that contradicts itself is not the caller's to fix: see
+        nemotron3, whose prompt opens a block its own document form writes closed.
         """
         boundary = self._first_trained_message_index(messages, train_on_what)
         if boundary is None:
@@ -1894,7 +1902,7 @@ class Renderer(ABC):
 
         prompt = self.build_generation_prompt(messages[:boundary]).to_ints()
         if model_input.to_ints()[: len(prompt)] != prompt:
-            if self.disables_thinking:
+            if prompt_closes_the_think_block(self.tokenizer, prompt):
                 raise RendererError(
                     f"{type(self).__name__} closes the think block in its generation prompt, so "
                     "what follows cannot be reasoning -- but this turn's render does not begin "

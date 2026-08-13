@@ -997,8 +997,9 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "kimi_k2",
 }
 
-# One per class that sets `disables_thinking`: kimi_k25's covers `kimi_k26_disable_thinking` and
-# nemotron3's covers `nemotron3_ultra_disable_thinking`, which subclass them.
+# The renderers whose generation prompt closes the think block, one per family. Nothing declares
+# that -- `prompt_closes_the_think_block` reads it off the prompt -- so this list is the coverage
+# rather than the definition.
 _REASONING_OFF_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
