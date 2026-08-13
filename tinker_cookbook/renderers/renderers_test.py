@@ -985,7 +985,10 @@ _RENDERERS_WITHOUT_THINKING_SUPPORT = {"llama3", "role_colon"}
 # Renderers that don't support tool calling
 _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 
-# Renderers that strip thinking in non-thinking mode (conversation must not have ThinkingPart)
+# Renderers that cannot be handed a produced turn carrying reasoning, so the conversation must
+# have no ThinkingPart. `deepseekv3` and `kimi_k2` strip it out; the rest close the think block
+# in the generation prompt and refuse it -- see
+# `test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned`.
 _RENDERERS_WITH_THINKING_STRIPPING = {
     "qwen3_disable_thinking",
     "qwen3_5_disable_thinking",
@@ -993,6 +996,50 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "deepseekv3",
     "kimi_k2",
 }
+
+# One per class that sets `disables_thinking`: kimi_k25's covers `kimi_k26_disable_thinking` and
+# nemotron3's covers `nemotron3_ultra_disable_thinking`, which subclass them.
+_REASONING_OFF_RENDERERS = [
+    ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("moonshotai/Kimi-K2.5", "kimi_k25_disable_thinking"),
+    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
+]
+
+
+@pytest.mark.parametrize("model_name,renderer_name", _REASONING_OFF_RENDERERS)
+def test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned(model_name: str, renderer_name: str):
+    """A closed think block in the prompt and reasoning in the target cannot both hold.
+
+    These renderers hand the model a closed `<think></think>`, so reasoning would have to
+    arrive after the marker saying there is none. Rendering it anyway trains a sequence
+    sampling cannot produce -- and silently, because both sides are the same renderer, so no
+    comparison against a second implementation sees it.
+
+    The same turn without reasoning renders, and observes the prompt it is sampled after.
+    """
+    renderer = get_renderer(renderer_name, get_tokenizer(model_name))
+    reasoned = [
+        {"role": "user", "content": "q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="r"),
+                TextPart(type="text", text="a"),
+            ],
+        },
+    ]
+
+    with pytest.raises(RendererError, match="disables thinking"):
+        renderer.build_supervised_example(cast(list[Message], reasoned))
+
+    plain = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    model_input, weights = renderer.build_supervised_example(cast(list[Message], plain))
+    observation = model_input.to_ints()[: [w > 0 for w in weights.tolist()].index(True)]
+    assert (
+        observation == renderer.build_generation_prompt(cast(list[Message], plain[:-1])).to_ints()
+    )
+
 
 # Renderers whose supervised target is rendered the way sampling produces it rather than the
 # way the template renders history. HF writes a finished turn as history -- deepseek as a bare
@@ -1469,12 +1516,25 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),
-    # Qwen3.5 disable thinking with strip_thinking_from_history=False (preserves thinking)
-    (
+    # Qwen3.5 disable thinking with strip_thinking_from_history=False (preserves thinking).
+    # A reasoning-less conversation, because the check trains each assistant turn in succession
+    # and a reasoning-off renderer refuses a produced turn that reasoned -- so no conversation
+    # carrying reasoning reaches the property here. Which leaves the claim unmet: with nothing
+    # to preserve, `_assistant_header_suffix` gates the empty block on `idx > last_user_index`,
+    # so one assistant turn carries it as the turn being produced and not as history, and the
+    # sequence through it is no longer a prefix of the next prompt. The old thinking
+    # conversation hid this -- every turn reasoned, so `has_think` suppressed the block
+    # everywhere and extension held by never exercising it.
+    pytest.param(
         "Qwen/Qwen3.6-35B-A3B",
         Qwen3_5DisableThinkingRenderer,
         {"strip_thinking_from_history": False},
-        get_multiturn_thinking_conversation,
+        get_basic_4turn_conversation,
+        marks=pytest.mark.xfail(
+            strict=True,
+            reason="positional empty-block rule renders a turn one way as the produced turn "
+            "and another as history, so has_extension_property=True is not met",
+        ),
     ),
     # DeepSeek non-thinking with basic multi-turn
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_basic_4turn_conversation),

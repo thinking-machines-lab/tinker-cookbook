@@ -1335,6 +1335,17 @@ class Renderer(ABC):
 
     tokenizer: Tokenizer
 
+    disables_thinking: bool = False
+    """Whether this renderer's generation prompt asserts the turn did not reason.
+
+    A closed ``<think></think>`` in the prompt is a statement about the tokens that follow
+    it, so a turn that reasoned cannot be trained after one. Set this and the assembly
+    refuses that pairing rather than training a sequence sampling never produces.
+
+    Not set by every renderer whose name says ``disable_thinking``: the DeepSeek one strips
+    reasoning out of the content instead, so its render already agrees with its prompt.
+    """
+
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
     # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
     _renderer_name: str | None = None
@@ -1819,6 +1830,9 @@ class Renderer(ABC):
                 last_user_index=last_user_idx,
                 in_last_assistant_turn=in_last_assistant_turn,
             )
+            output_has_weight = self._output_is_trained(message, ctx, train_on_what)
+            self._refuse_reasoning_the_prompt_disables(message, ctx, output_has_weight)
+
             rendered_message = self.render_message(message, ctx)
             header_part = rendered_message.header
             output_parts = rendered_message.output
@@ -1827,8 +1841,6 @@ class Renderer(ABC):
             header_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
             if header_part:
                 model_input_chunks_weights += [(header_part, header_weight)]
-
-            output_has_weight = self._output_is_trained(message, ctx, train_on_what)
 
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
@@ -1875,6 +1887,38 @@ class Renderer(ABC):
             return weights
 
         return torch.cat([torch.zeros(len(prompt)), weights[len(prompt) :]])
+
+    def _refuse_reasoning_the_prompt_disables(
+        self, message: Message, ctx: RenderContext, is_trained: bool
+    ) -> None:
+        """Refuse to train reasoning under a prompt that says the turn did not reason.
+
+        `disables_thinking` renderers close the think block in the generation prompt, so the
+        reasoning would have to arrive before a marker the model has already been handed.
+        There is no sequence that does that: the example trains one thing and sampling starts
+        from another, and `_train_after_the_generation_prompt` cannot even find its boundary.
+
+        The produced turn, and only when it carries loss. An earlier assistant turn is history
+        -- `strip_thinking_from_history` decides whether its reasoning survives the render, and
+        the prompt reflects whichever it did -- and a turn nothing is trained on is context
+        rather than a target. `build_supervised_examples` splits a conversation into one example
+        per trained turn, so each turn is checked as the produced turn of its own example.
+        """
+        if not (
+            self.disables_thinking
+            and is_trained
+            and ctx.is_last
+            and message["role"] == "assistant"
+        ):
+            return
+        content = message.get("content")
+        if content and has_thinking(content):
+            raise RendererError(
+                f"{type(self).__name__} disables thinking, so its generation prompt closes the "
+                "think block -- but this turn carries reasoning, which would train the model to "
+                "produce reasoning after being told not to. Render it with the thinking variant "
+                "of this renderer, or drop the reasoning from the turn."
+            )
 
     def _output_is_trained(
         self, message: Message, ctx: RenderContext, train_on_what: TrainOnWhat

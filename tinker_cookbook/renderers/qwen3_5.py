@@ -320,6 +320,8 @@ class Qwen3_5DisableThinkingRenderer(Qwen3_5Renderer):
     of <think>\\n, signaling to the model to respond directly without reasoning.
     """
 
+    disables_thinking = True
+
     def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
         maybe_newline = "\n" if ctx.idx > 0 else ""
         return f"{maybe_newline}<|im_start|>{role}\n<think>\n\n</think>\n\n"

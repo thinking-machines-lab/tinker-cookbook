@@ -170,6 +170,8 @@ class KimiK25DisableThinkingRenderer(KimiK25Renderer):
         <|im_assistant|>assistant<|im_middle|><think></think>
     """
 
+    disables_thinking = True
+
     def build_generation_prompt(
         self, messages: list[Message], role: Role = "assistant", prefill: str | None = None
     ) -> tinker.ModelInput:
