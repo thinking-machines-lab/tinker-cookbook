@@ -5,6 +5,7 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
     python -m tinker_cookbook.supervised.viz_sft_dataset dataset_path=Tulu3Builder renderer_name=role_colon
 """
 
+import functools
 import io
 import json
 import logging
@@ -872,30 +873,14 @@ def has_thinking(content: Content) -> bool:
     return "<think>" in content
 
 
-_CLOSED_THINK_BLOCK = re.compile(r"</think>\s*$")
+def marker_token(tokenizer: Tokenizer, marker: str) -> int | None:
+    """The id of ``marker`` where the vocab spells it as one token, else None.
 
-# Enough to cover the longest closing marker a generation prompt ends with -- Qwen3's
-# `<think>\n\n</think>\n\n` is six -- without decoding a whole conversation to look at its tail.
-_MARKER_TOKENS = 16
-
-
-def prompt_closes_the_think_block(tokenizer: Tokenizer, prompt: list[int]) -> bool:
-    """Whether a generation prompt ends having already closed the think block.
-
-    A closed block is a statement about the tokens after it: whatever the model produces from
-    here is not reasoning. An open ``<think>`` says the opposite, and a prompt mentioning
-    neither says nothing. Read off the prompt rather than declared per renderer, so a format
-    that spells the marker the usual way is covered the first time it appears::
-
-        qwen3                     ...<|im_start|>assistant\\n<think>\\n           open
-        qwen3_disable_thinking    ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n   closed
-        deepseekv3                ...<|Assistant|></think>                     closed
-        role_colon                ...\\n\\nAssistant:                            neither
-
-    Formats that mark reasoning some other way -- gpt_oss and its channels -- read as neither,
-    which is the same silence they had before anything asked.
+    A format whose vocab has no single token for it -- llama3, role_colon -- yields None, and
+    no token id ever equals None, so it simply matches nothing.
     """
-    return bool(_CLOSED_THINK_BLOCK.search(tokenizer.decode(prompt[-_MARKER_TOKENS:])))
+    ids = tokenizer.encode(marker, add_special_tokens=False)
+    return ids[0] if len(ids) == 1 else None
 
 
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
@@ -1361,6 +1346,12 @@ class Renderer(ABC):
 
     tokenizer: Tokenizer
 
+    # How this format spells its reasoning markers. Nearly every template that has them agrees
+    # on these two; a format marking reasoning some other way -- gpt_oss and its channels --
+    # overrides them, and a vocab holding no single token for either never matches.
+    think_open: str = "<think>"
+    think_close: str = "</think>"
+
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
     # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
     _renderer_name: str | None = None
@@ -1389,6 +1380,42 @@ class Renderer(ABC):
             _unpickle_renderer,
             (renderer_name, model_name, has_image_processor),
         )
+
+    @functools.cached_property
+    def _think_marker_tokens(self) -> tuple[int | None, int | None]:
+        """This format's markers as ids, resolved against the tokenizer once.
+
+        A `cached_property` rather than `__init__` work because several renderers build without
+        calling `super().__init__()`; this resolves the first time something asks.
+        """
+        return (
+            marker_token(self.tokenizer, self.think_open),
+            marker_token(self.tokenizer, self.think_close),
+        )
+
+    def prompt_closes_the_think_block(self, prompt: list[int]) -> bool:
+        """Whether a generation prompt leaves the think block closed.
+
+        A closed block is a statement about the tokens after it: whatever the model produces
+        from here is not reasoning. An open marker says the opposite, and a prompt spelling
+        neither says nothing::
+
+            qwen3                     ...<|im_start|>assistant\\n<think>\\n                  open
+            qwen3_disable_thinking    ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n  closed
+            deepseekv3                ...<|Assistant|></think>                            closed
+            role_colon                ...\\n\\nAssistant:                                   neither
+
+        The last marker decides, and reading ids rather than decoded text is what makes that
+        safe: message content is rendered before the generation suffix, so a conversation
+        quoting ``</think>`` at the model cannot talk this into the wrong answer.
+        """
+        opened, closed = self._think_marker_tokens
+        for token in reversed(prompt):
+            if token == closed:
+                return True
+            if token == opened:
+                return False
+        return False
 
     @property
     def has_extension_property(self) -> bool:
@@ -1902,7 +1929,7 @@ class Renderer(ABC):
 
         prompt = self.build_generation_prompt(messages[:boundary]).to_ints()
         if model_input.to_ints()[: len(prompt)] != prompt:
-            if prompt_closes_the_think_block(self.tokenizer, prompt):
+            if self.prompt_closes_the_think_block(prompt):
                 raise RendererError(
                     f"{type(self).__name__} closes the think block in its generation prompt, so "
                     "what follows cannot be reasoning -- but this turn's render does not begin "
