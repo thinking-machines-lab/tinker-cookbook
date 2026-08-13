@@ -510,6 +510,8 @@ class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
     <think></think> (no trailing newlines) instead of <think>\\n.
     """
 
+    disables_thinking = True
+
     def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
         """Return generation suffix tokens with ``<think></think>`` to disable thinking.
 

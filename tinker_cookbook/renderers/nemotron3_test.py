@@ -175,6 +175,18 @@ def get_multiturn_thinking_conversation() -> list[Message]:
     ]
 
 
+def get_multiturn_thinking_history_conversation() -> list[Message]:
+    """History that reasoned, and a final turn that did not.
+
+    What a reasoning-off renderer can be given: it refuses a final turn that reasoned, and
+    this still leaves history for `strip_thinking_from_history=False` to preserve.
+    """
+    return [
+        *get_multiturn_thinking_conversation()[:-1],
+        Message(role="assistant", content="Second answer."),
+    ]
+
+
 def get_tool_spec() -> ToolSpec:
     return ToolSpec(
         name="get_weather",
@@ -1301,10 +1313,15 @@ def test_preserve_thinking_registered_in_model_info():
 # disable / low-effort / medium-effort modes, which have no named preserve variant.
 
 
-def _assert_mode_preserve_matches_hf(tokenizer, renderer, **hf_kwargs):
+def _assert_mode_preserve_matches_hf(
+    tokenizer, renderer, conversation_fn=get_multiturn_thinking_conversation, **hf_kwargs
+):
     """Renderer (built with strip_thinking_from_history=False) matches HF with
-    truncate_history_thinking=False plus the mode flags in ``hf_kwargs``."""
-    sup_msgs = get_multiturn_thinking_conversation()
+    truncate_history_thinking=False plus the mode flags in ``hf_kwargs``.
+
+    The reasoning-off renderers pass a conversation whose final turn did not reason.
+    """
+    sup_msgs = conversation_fn()
     cookbook_sup = renderer.build_supervised_example(sup_msgs)[0].to_ints()
     hf_sup = _hf_supervised_tokens(
         tokenizer,
@@ -1316,7 +1333,7 @@ def _assert_mode_preserve_matches_hf(tokenizer, renderer, **hf_kwargs):
         f"supervised: {tokenizer.decode(cookbook_sup)}\nHF: {tokenizer.decode(hf_sup)}"
     )
 
-    gen_msgs = get_multiturn_thinking_conversation()[:4]
+    gen_msgs = conversation_fn()[:-1]
     cookbook_gen = renderer.build_generation_prompt(gen_msgs).to_ints()
     hf_gen = _hf_generation_tokens(
         tokenizer,
@@ -1334,7 +1351,12 @@ def test_disable_thinking_preserve_matches_hf(nemotron_tokenizer):
     renderer = Nemotron3DisableThinkingRenderer(
         nemotron_tokenizer, strip_thinking_from_history=False
     )
-    _assert_mode_preserve_matches_hf(nemotron_tokenizer, renderer, enable_thinking=False)
+    _assert_mode_preserve_matches_hf(
+        nemotron_tokenizer,
+        renderer,
+        conversation_fn=get_multiturn_thinking_history_conversation,
+        enable_thinking=False,
+    )
 
 
 def test_low_thinking_preserve_matches_hf(nemotron_super_tokenizer):
@@ -1358,4 +1380,9 @@ def test_ultra_disable_thinking_preserve_matches_hf(nemotron_ultra_tokenizer):
     renderer = Nemotron3UltraDisableThinkingRenderer(
         nemotron_ultra_tokenizer, strip_thinking_from_history=False
     )
-    _assert_mode_preserve_matches_hf(nemotron_ultra_tokenizer, renderer, enable_thinking=False)
+    _assert_mode_preserve_matches_hf(
+        nemotron_ultra_tokenizer,
+        renderer,
+        conversation_fn=get_multiturn_thinking_history_conversation,
+        enable_thinking=False,
+    )
