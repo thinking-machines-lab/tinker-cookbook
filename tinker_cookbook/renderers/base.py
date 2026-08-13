@@ -1905,10 +1905,7 @@ class Renderer(ABC):
         per trained turn, so each turn is checked as the produced turn of its own example.
         """
         if not (
-            self.disables_thinking
-            and is_trained
-            and ctx.is_last
-            and message["role"] == "assistant"
+            self.disables_thinking and is_trained and ctx.is_last and message["role"] == "assistant"
         ):
             return
         content = message.get("content")
