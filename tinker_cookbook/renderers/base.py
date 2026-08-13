@@ -5,7 +5,6 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
     python -m tinker_cookbook.supervised.viz_sft_dataset dataset_path=Tulu3Builder renderer_name=role_colon
 """
 
-import functools
 import io
 import json
 import logging
@@ -873,12 +872,6 @@ def has_thinking(content: Content) -> bool:
     return "<think>" in content
 
 
-def marker_token(tokenizer: Tokenizer, marker: str) -> int | None:
-    """The token id for ``marker``, or None if this vocab has no single token for it."""
-    ids = tokenizer.encode(marker, add_special_tokens=False)
-    return ids[0] if len(ids) == 1 else None
-
-
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
     """Filter out ThinkingPart elements from a content part list.
 
@@ -1342,9 +1335,24 @@ class Renderer(ABC):
 
     tokenizer: Tokenizer
 
-    # How this format writes reasoning markers. Override them if a format uses different ones.
-    think_open: str = "<think>"
-    think_close: str = "</think>"
+    disables_thinking: bool = False
+    """Whether this renderer's generation prompt closes the think block.
+
+    Set it on any renderer that tells the model not to reason, which it does by handing over
+    an already-closed block::
+
+        qwen3                   ...assistant\\n<think>\\n                 open, so False
+        qwen3_disable_thinking  ...assistant\\n<think>\\n\\n</think>\\n\\n  closed, so True
+
+    Declared rather than worked out from the prompt, because it is a fact about the renderer:
+    ``Qwen3DisableThinkingRenderer`` disables thinking whichever tokenizer it is given, and the
+    markers are not a single token in every vocabulary. ``_train_after_the_generation_prompt``
+    reads it, and ``test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow``
+    fails if a renderer needs it and does not set it.
+
+    Not every renderer named ``disable_thinking``: DeepSeek's strips reasoning out of the
+    content instead, so its render already agrees with its prompt.
+    """
 
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
     # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
@@ -1374,40 +1382,6 @@ class Renderer(ABC):
             _unpickle_renderer,
             (renderer_name, model_name, has_image_processor),
         )
-
-    @functools.cached_property
-    def _think_marker_tokens(self) -> tuple[int | None, int | None]:
-        """``think_open`` and ``think_close`` as token ids.
-
-        A cached_property rather than __init__ work: some renderers do not call
-        super().__init__(), so this resolves the first time it is used instead.
-        """
-        return (
-            marker_token(self.tokenizer, self.think_open),
-            marker_token(self.tokenizer, self.think_close),
-        )
-
-    def prompt_closes_the_think_block(self, prompt: list[int]) -> bool:
-        """Has this generation prompt already closed the think block?
-
-        An open marker means the model is about to reason. A closed one means it is not.
-        The last marker in the prompt is the one that counts::
-
-            qwen3                   ...assistant\\n<think>\\n                 open      -> False
-            qwen3_disable_thinking  ...assistant\\n<think>\\n\\n</think>\\n\\n  closed    -> True
-            deepseekv3              ...<|Assistant|></think>                closed    -> True
-            role_colon              ...\\n\\nAssistant:                       no marker -> False
-
-        This compares token ids, not text, so a user message that quotes "</think>" cannot
-        change the answer.
-        """
-        opened, closed = self._think_marker_tokens
-        for token in reversed(prompt):
-            if token == closed:
-                return True
-            if token == opened:
-                return False
-        return False
 
     @property
     def has_extension_property(self) -> bool:
@@ -1910,8 +1884,8 @@ class Renderer(ABC):
         model on a sequence the model is never given. There are two reasons that happens, and
         only one of them is fixable by whoever called us.
 
-        1. The prompt closed the think block, so this turn was told not to reason -- but it
-           reasoned anyway. For example, feeding a turn with reasoning to
+        1. The renderer sets ``disables_thinking``, so this turn was told not to reason -- but
+           it reasoned anyway. For example, feeding a turn with reasoning to
            ``qwen3_disable_thinking``::
 
                prompt  ...assistant\\n<think>\\n\\n</think>\\n\\n
@@ -1926,9 +1900,9 @@ class Renderer(ABC):
            silently. The conversation and the renderer disagree, and only the caller knows
            which one is wrong, so we say so instead of guessing.
 
-        2. The prompt left the block open, and the template disagrees with itself. nemotron3
-           does this (#860): its prompt ends ``<think>\\n`` but it writes ``<think></think>``
-           for a turn with no reasoning.
+        2. The renderer does not disable thinking, so the template disagrees with itself.
+           nemotron3 does this (#860): its prompt ends ``<think>\\n`` but it writes
+           ``<think></think>`` for a turn with no reasoning.
 
            We stay quiet, as before. Raising would reject training a thinking renderer on data
            with no reasoning, which is a normal thing to do, and the caller cannot fix someone
@@ -1942,7 +1916,7 @@ class Renderer(ABC):
 
         prompt = self.build_generation_prompt(messages[:boundary]).to_ints()
         if model_input.to_ints()[: len(prompt)] != prompt:
-            if self.prompt_closes_the_think_block(prompt):
+            if self.disables_thinking:
                 raise RendererError(
                     f"{type(self).__name__} has thinking turned off: its generation prompt "
                     "closes the think block, which tells the model not to reason. This turn "

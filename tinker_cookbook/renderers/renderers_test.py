@@ -996,8 +996,9 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
     "kimi_k2",
 }
 
-# One renderer per family whose generation prompt closes the think block. No renderer declares
-# that; `prompt_closes_the_think_block` works it out. So this list is test coverage, not config.
+# One renderer per class that sets `disables_thinking`. kimi_k25's covers
+# `kimi_k26_disable_thinking` and nemotron3's covers `nemotron3_ultra_disable_thinking`, which
+# subclass them.
 _REASONING_OFF_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
@@ -1034,6 +1035,47 @@ def test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned(model_name: str, 
     observation = model_input.to_ints()[: [w > 0 for w in weights.tolist()].index(True)]
     assert (
         observation == renderer.build_generation_prompt(cast(list[Message], plain[:-1])).to_ints()
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name,renderer_name",
+    sorted(set(_CONSISTENCY_RENDERERS) | set(_REASONING_OFF_RENDERERS)),
+)
+def test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow(
+    model_name: str, renderer_name: str
+):
+    """Whatever a renderer does with reasoning, it must not train it after the wrong prompt.
+
+    Refusing is fine, rendering it is fine, and dropping it is fine. What is not fine is an
+    example whose tokens do not start with the prompt its turn is sampled after, because that
+    trains the model on a sequence it is never given.
+
+    This is the check that catches a reasoning-off renderer added without `disables_thinking`:
+    it would render the reasoning, the example would not start with the generation prompt, and
+    nothing else here would notice.
+    """
+    renderer = get_renderer(renderer_name, get_tokenizer(model_name))
+    reasoned = [
+        {"role": "user", "content": "q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="r"),
+                TextPart(type="text", text="a"),
+            ],
+        },
+    ]
+
+    try:
+        model_input, _ = renderer.build_supervised_example(cast(list[Message], reasoned))
+    except RendererError:
+        return  # declining to render it is one of the acceptable answers
+
+    prompt = renderer.build_generation_prompt(cast(list[Message], reasoned[:-1])).to_ints()
+    assert model_input.to_ints()[: len(prompt)] == prompt, (
+        f"{renderer_name} trains a turn that reasoned after a prompt it cannot follow. If this "
+        "renderer tells the model not to reason, set disables_thinking = True on it."
     )
 
 

@@ -534,6 +534,8 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
+    disables_thinking = True
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """Refuse a produced turn in a conversation with no user message.
 
