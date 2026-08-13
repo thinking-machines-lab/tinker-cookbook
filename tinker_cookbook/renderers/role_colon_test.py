@@ -1,4 +1,4 @@
-"""Tests for RoleColonRenderer.parse_response.
+"""Tests for RoleColon rendering and parsing.
 
 Regression tests for issue #685: base models that terminate single-turn
 responses with EOS (no "\\n\\nUser:" delimiter) must report ``ParseTermination.EOS``
@@ -8,7 +8,7 @@ failed_parse_reward=0 and never grades the answer.
 
 import pytest
 
-from tinker_cookbook.renderers.base import ParseTermination
+from tinker_cookbook.renderers.base import Message, ParseTermination, TrainOnWhat
 from tinker_cookbook.renderers.role_colon import RoleColonRenderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -91,6 +91,36 @@ def test_parse_response_multiple_user_delimiters_is_malformed(renderer: RoleColo
 
     assert termination == ParseTermination.MALFORMED
     assert message["content"] == "Answer."
+
+
+def test_supervised_trains_the_full_stop_on_intermediate_turns(renderer: RoleColonRenderer):
+    messages: list[Message] = [
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "q2"},
+        {"role": "assistant", "content": "a2"},
+    ]
+
+    model_input, weights = renderer.build_supervised_example(
+        messages, TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+    trained = [
+        token
+        for token, weight in zip(model_input.to_ints(), weights.tolist(), strict=True)
+        if weight > 0
+    ]
+
+    assert renderer.tokenizer.decode(trained) == " a1\n\nUser: a2\n\nUser:"
+
+    last_input, last_weights = renderer.build_supervised_example(
+        messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE
+    )
+    last_trained = [
+        token
+        for token, weight in zip(last_input.to_ints(), last_weights.tolist(), strict=True)
+        if weight > 0
+    ]
+    assert renderer.tokenizer.decode(last_trained) == " a2\n\nUser:"
 
 
 @pytest.mark.parametrize(
