@@ -1253,8 +1253,9 @@ class RenderedMessage:
 
             Only RoleColonRenderer uses this. Its stop sequence is "\\\\n\\\\nUser:", where "\\\\n\\\\n"
             ends the output but "User:" would duplicate the next message's header. To avoid
-            duplication, "User:" is stored here and only appended for the last message in
-            supervised training. The name "stop_overlap" reflects that these tokens are the
+            duplication, "User:" is stored here. In supervised training, the matching next
+            header receives the preceding output's weight; when there is no next header, the
+            overlap is appended. The name "stop_overlap" reflects that these tokens are the
             overlap between the stop sequence and the next message's header.
     """
 
@@ -1812,6 +1813,7 @@ class Renderer(ABC):
         )
 
         turn_start = self._last_assistant_turn_start_index(messages[:-1])
+        pending_stop_overlap: tuple[tinker.types.EncodedTextChunk, bool] | None = None
 
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:
@@ -1840,6 +1842,11 @@ class Renderer(ABC):
             stop_overlap_part = rendered_message.stop_overlap
 
             header_weight = int(train_on_what == TrainOnWhat.ALL_TOKENS)
+            if pending_stop_overlap is not None:
+                overlap, overlap_has_weight = pending_stop_overlap
+                if header_part and header_part.tokens == overlap.tokens:
+                    header_weight = max(header_weight, int(overlap_has_weight))
+                pending_stop_overlap = None
             if header_part:
                 model_input_chunks_weights += [(header_part, header_weight)]
 
@@ -1849,10 +1856,12 @@ class Renderer(ABC):
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
             ]
 
-            # stop_overlap completes the stop sequence for formats like RoleColon (e.g., "User:")
-            # Only included for the last message.
             if is_last_message and stop_overlap_part:
                 model_input_chunks_weights += [(stop_overlap_part, int(output_has_weight))]
+            elif stop_overlap_part:
+                # The next message already renders these tokens as its header. Give that header
+                # the preceding output's weight instead of duplicating the stop sequence.
+                pending_stop_overlap = (stop_overlap_part, output_has_weight)
 
         weights_data = [w for chunk, w in model_input_chunks_weights for _ in range(chunk.length)]
         weights_tensor = torch.tensor(weights_data)
