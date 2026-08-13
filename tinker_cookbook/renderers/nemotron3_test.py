@@ -182,7 +182,7 @@ def get_multiturn_thinking_history_conversation() -> list[Message]:
     agrees with a prompt closing the think block.
     """
     return [
-        *get_multiturn_thinking_conversation()[:4],
+        *get_multiturn_thinking_conversation()[:-1],
         Message(role="assistant", content="Second answer."),
     ]
 
@@ -1333,7 +1333,7 @@ def _assert_mode_preserve_matches_hf(
         f"supervised: {tokenizer.decode(cookbook_sup)}\nHF: {tokenizer.decode(hf_sup)}"
     )
 
-    gen_msgs = conversation_fn()[:4]
+    gen_msgs = conversation_fn()[:-1]
     cookbook_gen = renderer.build_generation_prompt(gen_msgs).to_ints()
     hf_gen = _hf_generation_tokens(
         tokenizer,
