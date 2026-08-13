@@ -1338,10 +1338,21 @@ class Renderer(ABC):
     disables_thinking: bool = False
     """Whether this renderer's generation prompt closes the think block.
 
-    A closed ``<think></think>`` is a statement about the tokens after it, so a render that
-    disagrees with the prompt is the conversation's fault rather than the template's -- see
-    ``_train_after_the_generation_prompt``. Not every renderer named ``disable_thinking``:
-    DeepSeek's strips reasoning out of the content, so its render already agrees.
+    A closed block is a statement about the tokens after it, so for these renderers a render
+    that does not begin with its own generation prompt is the conversation's fault rather than
+    the template's, and ``_train_after_the_generation_prompt`` raises rather than reweighting.
+    ``qwen3_disable_thinking`` on the same question, answered two ways::
+
+        prompt  ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n
+        render  ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n4<|im_end|>
+                                         the turn did not reason: the prompt is a prefix
+
+        prompt  ...<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n
+        render  ...<|im_start|>assistant\\n<think>\\n2+2 is 4\\n</think>\\n\\n4<|im_end|>
+                                         it reasoned: nothing here is what sampling is given
+
+    Not every renderer named ``disable_thinking``: DeepSeek's strips reasoning out of the
+    content, so its render already agrees.
     """
 
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
