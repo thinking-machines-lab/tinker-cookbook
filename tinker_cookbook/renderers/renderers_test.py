@@ -1011,9 +1011,7 @@ _REASONING_OFF_RENDERERS = [
 def test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned(model_name: str, renderer_name: str):
     """These renderers tell the model not to reason, so a turn that reasoned cannot be trained.
 
-    Drop the reasoning and the same turn renders fine, with its observation equal to the
-    prompt. Nothing but this check catches it: one renderer produces both sides, so comparing
-    against a second implementation sees two copies of the same mistake.
+    Without the reasoning the same turn renders fine, and its observation equals the prompt.
     """
     renderer = get_renderer(renderer_name, get_tokenizer(model_name))
     reasoned = [
@@ -1045,15 +1043,14 @@ def test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned(model_name: str, 
 def test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow(
     model_name: str, renderer_name: str
 ):
-    """Whatever a renderer does with reasoning, it must not train it after the wrong prompt.
+    """A turn that reasoned is refused, or it is trained after the prompt it is sampled from.
 
-    Refusing is fine, rendering it is fine, and dropping it is fine. What is not fine is an
-    example whose tokens do not start with the prompt its turn is sampled after, because that
-    trains the model on a sequence it is never given.
+    Refusing, rendering and dropping the reasoning are all fine. Training an example that does
+    not start with its own generation prompt is not, because the model is never given that
+    sequence.
 
-    This is the check that catches a reasoning-off renderer added without `disables_thinking`:
-    it would render the reasoning, the example would not start with the generation prompt, and
-    nothing else here would notice.
+    Catches a reasoning-off renderer added without `disables_thinking`: it would render the
+    reasoning, and nothing else here would notice.
     """
     renderer = get_renderer(renderer_name, get_tokenizer(model_name))
     reasoned = [

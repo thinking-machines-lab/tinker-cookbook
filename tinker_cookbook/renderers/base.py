@@ -1338,20 +1338,16 @@ class Renderer(ABC):
     disables_thinking: bool = False
     """Whether this renderer's generation prompt closes the think block.
 
-    Set it on any renderer that tells the model not to reason, which it does by handing over
-    an already-closed block::
+    A closed block tells the model not to reason::
 
         qwen3                   ...assistant\\n<think>\\n                 open, so False
         qwen3_disable_thinking  ...assistant\\n<think>\\n\\n</think>\\n\\n  closed, so True
 
-    Declared rather than worked out from the prompt, because it is a fact about the renderer:
-    ``Qwen3DisableThinkingRenderer`` disables thinking whichever tokenizer it is given, and the
-    markers are not a single token in every vocabulary. ``_train_after_the_generation_prompt``
-    reads it, and ``test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow``
-    fails if a renderer needs it and does not set it.
+    Set it on any renderer that does that. Forgetting is caught by
+    ``test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow``.
 
-    Not every renderer named ``disable_thinking``: DeepSeek's strips reasoning out of the
-    content instead, so its render already agrees with its prompt.
+    DeepSeek's non-thinking renderer does not set it and does not need to: it strips reasoning
+    out of the content, so its render already matches its prompt.
     """
 
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
@@ -1881,32 +1877,22 @@ class Renderer(ABC):
         produce a token it is always given. Only the weights move; the tokens are untouched.
 
         If the render does not start with the prompt, the example is broken: it would train the
-        model on a sequence the model is never given. There are two reasons that happens, and
-        only one of them is fixable by whoever called us.
+        model on a sequence the model is never given. Two things cause that.
 
-        1. The renderer sets ``disables_thinking``, so this turn was told not to reason -- but
-           it reasoned anyway. For example, feeding a turn with reasoning to
-           ``qwen3_disable_thinking``::
+        1. A ``disables_thinking`` renderer was given a turn that reasoned. It was told not to
+           reason, so the empty block the prompt ends on is missing from the render::
 
                prompt  ...assistant\\n<think>\\n\\n</think>\\n\\n
                render  ...assistant\\n<think>\\n2+2 is 4\\n</think>\\n\\n4<|im_end|>
 
-           The render never had the empty block, so it does not start with the prompt.
+           The caller can fix this, by using the thinking renderer or dropping the reasoning,
+           so raise and let them choose.
 
-           We raise. The alternative is to drop the reasoning and train the rest, which is what
-           ``deepseekv3`` does -- and why it never gets here. That is fine for history, which is
-           what ``strip_thinking_from_history`` already does, but this is the turn being
-           trained: dropping its reasoning changes what the model is being taught, and does it
-           silently. The conversation and the renderer disagree, and only the caller knows
-           which one is wrong, so we say so instead of guessing.
-
-        2. The renderer does not disable thinking, so the template disagrees with itself.
-           nemotron3 does this (#860): its prompt ends ``<think>\\n`` but it writes
-           ``<think></think>`` for a turn with no reasoning.
-
-           We stay quiet, as before. Raising would reject training a thinking renderer on data
-           with no reasoning, which is a normal thing to do, and the caller cannot fix someone
-           else's chat template anyway.
+        2. Any other renderer: its own template disagrees with itself. nemotron3 does this
+           (#860) -- its prompt ends ``<think>\\n`` but it writes ``<think></think>`` for a turn
+           with no reasoning. Nobody calling us can fix someone else's chat template, and
+           raising would reject training a thinking renderer on ordinary data with no
+           reasoning, so return the weights unchanged as before.
         """
         boundary = self._first_trained_message_index(messages, train_on_what)
         if boundary is None:
