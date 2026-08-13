@@ -1911,18 +1911,28 @@ class Renderer(ABC):
         only one of them is fixable by whoever called us.
 
         1. The prompt closed the think block, so this turn was told not to reason -- but it
-           reasoned anyway. Fix the conversation, so raise. For example, feeding a turn with
-           reasoning to ``qwen3_disable_thinking``::
+           reasoned anyway. For example, feeding a turn with reasoning to
+           ``qwen3_disable_thinking``::
 
                prompt  ...assistant\\n<think>\\n\\n</think>\\n\\n
                render  ...assistant\\n<think>\\n2+2 is 4\\n</think>\\n\\n4<|im_end|>
 
            The render never had the empty block, so it does not start with the prompt.
 
+           We raise. The alternative is to drop the reasoning and train the rest, which is what
+           ``deepseekv3`` does -- and why it never gets here. That is fine for history, which is
+           what ``strip_thinking_from_history`` already does, but this is the turn being
+           trained: dropping its reasoning changes what the model is being taught, and does it
+           silently. The conversation and the renderer disagree, and only the caller knows
+           which one is wrong, so we say so instead of guessing.
+
         2. The prompt left the block open, and the template disagrees with itself. nemotron3
            does this (#860): its prompt ends ``<think>\\n`` but it writes ``<think></think>``
-           for a turn with no reasoning. Nobody calling us can fix that, so leave the weights
-           alone and stay quiet, as before.
+           for a turn with no reasoning.
+
+           We stay quiet, as before. Raising would reject training a thinking renderer on data
+           with no reasoning, which is a normal thing to do, and the caller cannot fix someone
+           else's chat template anyway.
         """
         boundary = self._first_trained_message_index(messages, train_on_what)
         if boundary is None:
