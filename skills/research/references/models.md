@@ -9,7 +9,7 @@ Full listing of available models with types, architecture, and sizes.
 | `thinkingmachines/Inkling` | Hybrid + Audio + Vision | MoE | Large |
 | `thinkingmachines/Inkling-Small` | Hybrid + Audio + Vision | MoE | Medium |
 
-These models render through `tml-renderers` (the `inkling` extra) and require an explicit
+These models render through `tml-renderers` (a standard Cookbook dependency) and require an explicit
 thinking-effort value at sampling and training time. Use the `inkling` skill for the details.
 
 ## Qwen family

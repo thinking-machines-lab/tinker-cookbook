@@ -29,7 +29,7 @@ prompt/conversation builders, supervised datum construction, the WAV cache).
 
 ## Requirements
 
-These recipes render Inkling through `tml_renderers` (the `inkling` extra).
+These recipes render Inkling through `tml_renderers`, included in the default installation.
 Grading needs `jiwer`, and the ASR recipes decode Hugging Face audio into a
 local WAV cache via `soundfile` (the `audio` extra); install both:
 
