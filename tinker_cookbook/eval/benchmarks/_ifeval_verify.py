@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 def _relation_check(count: int, relation: str, target: int) -> bool:
-    checks = {"at least": count >= target, "at most": count <= target, "exactly": count == target}
+    # "at least" and "less than" are the only two relations google/IFEval uses;
+    # "at most" and "exactly" are here for datasets that use them.
+    checks = {
+        "at least": count >= target,
+        "less than": count < target,
+        "at most": count <= target,
+        "exactly": count == target,
+    }
     return checks.get(relation, True)
 
 
