@@ -62,9 +62,7 @@ class TestEnglishCapital:
         )
 
     def test_mixed_case_fails(self):
-        assert not verify_instruction(
-            "change_case:english_capital", "THIS IS MOSTLY caps", {}
-        )
+        assert not verify_instruction("change_case:english_capital", "THIS IS MOSTLY caps", {})
 
 
 class TestUnhandledInstructionId:
