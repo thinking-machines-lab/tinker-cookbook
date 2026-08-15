@@ -307,6 +307,103 @@ class TestHMMTGrading:
         assert not _check_math_equal("42", "")
 
 
+class TestIFEvalRelationCheck:
+    """Test the comparison relations used by IFEval's counting constraints.
+
+    ``google/IFEval`` only ever uses two relations, "at least" and "less than",
+    so both must be graded; "at most" and "exactly" are supported for datasets
+    that use them.
+    """
+
+    def test_at_least(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import _relation_check
+
+        assert _relation_check(5, "at least", 3)
+        assert _relation_check(3, "at least", 3)
+        assert not _relation_check(2, "at least", 3)
+
+    def test_less_than(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import _relation_check
+
+        assert _relation_check(2, "less than", 3)
+        assert not _relation_check(3, "less than", 3)
+        assert not _relation_check(5, "less than", 3)
+
+    def test_at_most_and_exactly(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import _relation_check
+
+        assert _relation_check(3, "at most", 3)
+        assert not _relation_check(4, "at most", 3)
+        assert _relation_check(3, "exactly", 3)
+        assert not _relation_check(2, "exactly", 3)
+
+    def test_unrecognized_relation_passes(self):
+        """An unknown relation still passes, matching the rest of this verifier.
+
+        Instruction types it can't check are treated leniently, and the kwargs
+        come from third-party datasets, so an unexpected value shouldn't turn
+        into a silent zero.
+        """
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import _relation_check
+
+        assert _relation_check(5, "more than", 3)
+        assert _relation_check(1, "", 3)
+
+    def test_number_words_less_than(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
+
+        kwargs = {"relation": "less than", "num_words": 5}
+        assert verify_instruction("length_constraints:number_words", "one two three", kwargs)
+        assert not verify_instruction(
+            "length_constraints:number_words", "one two three four five six", kwargs
+        )
+
+    def test_number_sentences_less_than(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
+
+        kwargs = {"relation": "less than", "num_sentences": 3}
+        assert verify_instruction("length_constraints:number_sentences", "One. Two.", kwargs)
+        assert not verify_instruction(
+            "length_constraints:number_sentences", "One. Two. Three. Four.", kwargs
+        )
+
+    def test_keyword_frequency_less_than(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
+
+        kwargs = {"keyword": "batch", "relation": "less than", "frequency": 3}
+        assert verify_instruction("keywords:frequency", "batch batch", kwargs)
+        assert not verify_instruction("keywords:frequency", "batch batch batch", kwargs)
+
+    def test_letter_frequency_less_than(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
+
+        kwargs = {"letter": "z", "let_relation": "less than", "let_frequency": 2}
+        assert verify_instruction("keywords:letter_frequency", "zebra", kwargs)
+        assert not verify_instruction("keywords:letter_frequency", "zebra zoo", kwargs)
+
+    def test_capital_word_frequency_less_than(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
+
+        kwargs = {"capital_relation": "less than", "capital_frequency": 2}
+        assert verify_instruction("change_case:capital_word_frequency", "One small step", kwargs)
+        assert not verify_instruction(
+            "change_case:capital_word_frequency", "One Small Step", kwargs
+        )
+
+    def test_verify_all_instructions_less_than(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        # Shaped like a real google/IFEval row: the response blows past the word
+        # limit, so the prompt must not be scored as correct.
+        fraction, results = verify_all_instructions(
+            "word " * 50,
+            ["length_constraints:number_words"],
+            [{"relation": "less than", "num_words": 10}],
+        )
+        assert fraction == 0.0
+        assert results["length_constraints:number_words"] is False
+
+
 class TestMCQExtraction:
     """Test answer extraction functions from MCQ benchmarks."""
 
