@@ -212,8 +212,9 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
 
         # --- change_case ---
         elif iid == "change_case:english_capital":
-            words = response.split()
-            return all(w[0].isupper() for w in words if w and w[0].isalpha())
+            # Reference: instructions.py CapitalLettersEnglishChecker, value.isupper().
+            # First-letter-per-word checking accepted title case as "all capital letters".
+            return response.isupper()
 
         elif iid == "change_case:english_lowercase":
             alpha = [c for c in response if c.isalpha()]
@@ -311,9 +312,19 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
             separators = ["***", "---", "===", "Response 1", "Response 2"]
             return any(sep in response for sep in separators)
 
+        elif iid == "combination:repeat_prompt":
+            # Reference: instructions.py RepeatPromptThenAnswer.check_following.
+            prompt_to_repeat = kwargs.get("prompt_to_repeat", "")
+            if not prompt_to_repeat:
+                return False
+            return response.strip().lower().startswith(prompt_to_repeat.strip().lower())
+
         else:
-            logger.debug(f"Unhandled instruction type: {instruction_id}")
-            return True
+            # Fail closed, matching ifbench.py's unknown-id handling. Returning True
+            # here silently paid full credit for any constraint this chain does not
+            # implement, invisibly at default log levels.
+            logger.warning(f"Unhandled instruction type: {instruction_id}")
+            return False
 
     except Exception as e:
         logger.warning(f"Error verifying instruction {instruction_id}: {e}")
