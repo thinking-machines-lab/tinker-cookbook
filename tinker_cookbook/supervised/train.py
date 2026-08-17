@@ -64,6 +64,9 @@ class Config:
             Default ``"linear"`` decay.
         num_epochs (int): Number of passes over the dataset. Default ``1``.
         lora_rank (int): LoRA rank for the adapter. Default ``32``.
+        lora_init_seed (int | None): Random seed for LoRA adapter
+            initialization. ``None`` (default) lets the SDK pick a random
+            seed. Set this for reproducible runs across the same config.
         base_url (str | None): Override the Tinker service URL.
         evaluator_builders (list[EvaluatorBuilder]): Factories for evaluators
             run every ``eval_every`` steps.
@@ -123,6 +126,10 @@ class Config:
 
     # Model parameters
     lora_rank: int = 32
+    # Random seed for LoRA initialization. None means random per the SDK default
+    # (`tinker.ServiceClient.create_lora_training_client_async(seed=None)`).
+    # Set this for reproducible runs across seeds.
+    lora_init_seed: int | None = None
 
     # Infrastructure parameters
     base_url: str | None = None
@@ -353,6 +360,7 @@ async def main(config: Config):
         training_client = await service_client.create_lora_training_client_async(
             base_model=config.model_name,
             rank=config.lora_rank,
+            seed=config.lora_init_seed,
             user_metadata=user_metadata,
         )
 
