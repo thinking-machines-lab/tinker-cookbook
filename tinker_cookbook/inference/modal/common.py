@@ -25,6 +25,7 @@ class ModelConfig(NamedTuple):
     gpu: str
     tp: int
     memory_mb: int = 65536
+    prepare_gpu: str | None = None
 
 
 MODEL_REGISTRY: dict[str, ModelConfig] = {
@@ -41,6 +42,7 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
             gpu="H100:8",
             tp=8,
             memory_mb=131072,
+            prepare_gpu="H100:1",
         ),
     )
 }

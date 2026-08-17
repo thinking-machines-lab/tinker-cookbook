@@ -75,6 +75,11 @@ def prepare_h100_8(*, tinker_path: str, base_model: str, name: str) -> str:
     return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
 
 
+@app.function(gpu="H100", memory=131072, **_PREPARE_COMMON)
+def prepare_h100_128g(*, tinker_path: str, base_model: str, name: str) -> str:
+    return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
+
+
 @app.function(gpu="H100:8", memory=131072, **_PREPARE_COMMON)
 def prepare_h100_8_128g(*, tinker_path: str, base_model: str, name: str) -> str:
     return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
@@ -85,6 +90,7 @@ _PREPARE_FNS: dict[tuple[str, int], modal.Function] = {
     ("H100:2", 65536): prepare_h100_2,
     ("H100:4", 65536): prepare_h100_4,
     ("H100:8", 65536): prepare_h100_8,
+    ("H100:1", 131072): prepare_h100_128g,
     ("H100:8", 131072): prepare_h100_8_128g,
 }
 
@@ -92,12 +98,13 @@ _PREPARE_FNS: dict[tuple[str, int], modal.Function] = {
 @app.local_entrypoint()
 def main(tinker_path: str, base_model: str, name: str) -> None:
     config = model_config(base_model)
+    gpu = config.prepare_gpu or config.gpu
     try:
-        fn = _PREPARE_FNS[(config.gpu, config.memory_mb)]
+        fn = _PREPARE_FNS[(gpu, config.memory_mb)]
     except KeyError:
         known = ", ".join(f"{gpu}/{mem}MB" for gpu, mem in sorted(_PREPARE_FNS))
         raise KeyError(
-            f"No prepare function for gpu={config.gpu!r} memory_mb={config.memory_mb}. Known: {known}"
+            f"No prepare function for gpu={gpu!r} memory_mb={config.memory_mb}. Known: {known}"
         ) from None
     output_path = fn.remote(tinker_path=tinker_path, base_model=base_model, name=name)
     print(f"\nArtifact on the tinker-artifacts Volume: {output_path}")
