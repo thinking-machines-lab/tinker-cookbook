@@ -17,7 +17,6 @@ from .common import (
     ARTIFACTS_PATH,
     HF_CACHE_PATH,
     MINUTES,
-    MODEL_REGISTRY,
     app,
     artifact_dir,
     artifacts,
@@ -35,7 +34,13 @@ secret = modal.Secret.from_dict(
     }
 )
 
-_PREPARE_FNS: dict[tuple[str, int], modal.Function] = {}
+_PREPARE_COMMON = {
+    "image": prepare_image,
+    "volumes": {ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
+    "secrets": [secret],
+    "cpu": 8.0,
+    "timeout": 60 * MINUTES,
+}
 
 
 def _merge_checkpoint(*, tinker_path: str, base_model: str, name: str) -> str:
@@ -50,38 +55,51 @@ def _merge_checkpoint(*, tinker_path: str, base_model: str, name: str) -> str:
     return output_path
 
 
-def _prepare_fn(gpu: str, memory_mb: int) -> modal.Function:
-    key = (gpu, memory_mb)
-    if key in _PREPARE_FNS:
-        return _PREPARE_FNS[key]
-
-    @app.function(
-        image=prepare_image,
-        volumes={ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
-        secrets=[secret],
-        gpu=gpu,
-        cpu=8.0,
-        memory=memory_mb,
-        timeout=60 * MINUTES,
-    )
-    def prepare_variant(*, tinker_path: str, base_model: str, name: str) -> str:
-        return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
-
-    _PREPARE_FNS[key] = prepare_variant
-    return prepare_variant
+@app.function(gpu="H100", memory=65536, **_PREPARE_COMMON)
+def prepare(*, tinker_path: str, base_model: str, name: str) -> str:
+    return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
 
 
-for cfg in MODEL_REGISTRY.values():
-    _prepare_fn(cfg.gpu, cfg.memory_mb)
-prepare = _prepare_fn("H100", 65536)
+@app.function(gpu="H100:2", memory=65536, **_PREPARE_COMMON)
+def prepare_h100_2(*, tinker_path: str, base_model: str, name: str) -> str:
+    return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
+
+
+@app.function(gpu="H100:4", memory=65536, **_PREPARE_COMMON)
+def prepare_h100_4(*, tinker_path: str, base_model: str, name: str) -> str:
+    return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
+
+
+@app.function(gpu="H100:8", memory=65536, **_PREPARE_COMMON)
+def prepare_h100_8(*, tinker_path: str, base_model: str, name: str) -> str:
+    return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
+
+
+@app.function(gpu="H100:8", memory=131072, **_PREPARE_COMMON)
+def prepare_h100_8_128g(*, tinker_path: str, base_model: str, name: str) -> str:
+    return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
+
+
+_PREPARE_FNS: dict[tuple[str, int], modal.Function] = {
+    ("H100:1", 65536): prepare,
+    ("H100:2", 65536): prepare_h100_2,
+    ("H100:4", 65536): prepare_h100_4,
+    ("H100:8", 65536): prepare_h100_8,
+    ("H100:8", 131072): prepare_h100_8_128g,
+}
 
 
 @app.local_entrypoint()
 def main(tinker_path: str, base_model: str, name: str) -> None:
     config = model_config(base_model)
-    output_path = _prepare_fn(config.gpu, config.memory_mb).remote(
-        tinker_path=tinker_path, base_model=base_model, name=name
-    )
+    try:
+        fn = _PREPARE_FNS[(config.gpu, config.memory_mb)]
+    except KeyError:
+        known = ", ".join(f"{gpu}/{mem}MB" for gpu, mem in sorted(_PREPARE_FNS))
+        raise KeyError(
+            f"No prepare function for gpu={config.gpu!r} memory_mb={config.memory_mb}. Known: {known}"
+        ) from None
+    output_path = fn.remote(tinker_path=tinker_path, base_model=base_model, name=name)
     print(f"\nArtifact on the tinker-artifacts Volume: {output_path}")
     print(
         f"Serve it:\n  FINETUNE={name} MODEL={base_model} modal deploy -m tinker_cookbook.inference.modal.serve"
