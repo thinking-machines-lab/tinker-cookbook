@@ -87,6 +87,7 @@ _COOKBOOK_GIT = (
 
 prepare_image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("git")
     .pip_install(f"tinker-cookbook[modal] @ {_COOKBOOK_GIT}", "huggingface_hub[hf_transfer]")
     .run_commands("pip install --upgrade 'transformers>=5.14.0'")
     .env(
