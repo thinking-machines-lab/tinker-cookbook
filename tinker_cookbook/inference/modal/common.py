@@ -24,6 +24,8 @@ class ModelConfig(NamedTuple):
     base_model: str
     gpu: str
     tp: int
+    memory_mb: int = 65536
+    prepare_gpu: str | None = None
 
 
 MODEL_REGISTRY: dict[str, ModelConfig] = {
@@ -35,6 +37,13 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
         ModelConfig("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", gpu="H100:2", tp=2),
         ModelConfig("nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", gpu="H100:4", tp=4),
         ModelConfig("Qwen/Qwen3-235B-A22B-Instruct-2507", gpu="H100:8", tp=8),
+        ModelConfig(
+            "thinkingmachines/Inkling-Small",
+            gpu="H100:8",
+            tp=8,
+            memory_mb=131072,
+            prepare_gpu="H100:1",
+        ),
     )
 }
 
@@ -72,10 +81,23 @@ def sglang_command(*, model_path: str, served_name: str, tp: int, port: int) -> 
     )
 
 
+_COOKBOOK_GIT = (
+    "git+https://github.com/kunal-patil-glean/tinker-cookbook@add-inkling-small-modal"
+)
+
 prepare_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("tinker-cookbook[modal]", "huggingface_hub[hf_transfer]")
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1", "HF_HUB_CACHE": HF_CACHE_PATH})
+    .apt_install("git")
+    .pip_install(f"tinker-cookbook[modal] @ {_COOKBOOK_GIT}", "huggingface_hub[hf_transfer]")
+    .run_commands("pip install --upgrade 'transformers>=5.14.0'")
+    .env(
+        {
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+            "HF_HUB_CACHE": HF_CACHE_PATH,
+            "HF_TRUST_REMOTE_CODE": "1",
+            "HF_XET_HIGH_PERFORMANCE": "1",
+        }
+    )
 )
 
 SGLANG_TAG = "lmsysorg/sglang:nightly-dev-cu13-20260629-b9b86065"
