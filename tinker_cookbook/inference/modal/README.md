@@ -71,6 +71,7 @@ Merge + serve verified end to end against the Tinker sampling client:
 | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 | Mamba hybrid |
 | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 | Mamba hybrid |
 | Qwen/Qwen3-235B-A22B-Instruct-2507 | MoE |
+| thinkingmachines/Inkling-Small | MoE + audio + vision |
 
 ## Adding a model
 

@@ -21,6 +21,7 @@ from .common import (
     artifact_dir,
     artifacts,
     hf_cache,
+    model_config,
     prepare_image,
 )
 
@@ -57,7 +58,10 @@ def prepare(*, tinker_path: str, base_model: str, name: str) -> str:
 
 @app.local_entrypoint()
 def main(tinker_path: str, base_model: str, name: str) -> None:
-    output_path = prepare.remote(tinker_path=tinker_path, base_model=base_model, name=name)
+    config = model_config(base_model)
+    output_path = prepare.with_options(gpu=config.gpu, memory=config.memory_mb).remote(
+        tinker_path=tinker_path, base_model=base_model, name=name
+    )
     print(f"\nArtifact on the tinker-artifacts Volume: {output_path}")
     print(
         f"Serve it:\n  FINETUNE={name} MODEL={base_model} modal deploy -m tinker_cookbook.inference.modal.serve"

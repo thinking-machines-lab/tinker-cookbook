@@ -24,6 +24,7 @@ class ModelConfig(NamedTuple):
     base_model: str
     gpu: str
     tp: int
+    memory_mb: int = 65536
 
 
 MODEL_REGISTRY: dict[str, ModelConfig] = {
@@ -35,6 +36,12 @@ MODEL_REGISTRY: dict[str, ModelConfig] = {
         ModelConfig("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", gpu="H100:2", tp=2),
         ModelConfig("nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16", gpu="H100:4", tp=4),
         ModelConfig("Qwen/Qwen3-235B-A22B-Instruct-2507", gpu="H100:8", tp=8),
+        ModelConfig(
+            "thinkingmachines/Inkling-Small",
+            gpu="H100:8",
+            tp=8,
+            memory_mb=131072,
+        ),
     )
 }
 
