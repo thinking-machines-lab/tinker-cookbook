@@ -81,11 +81,8 @@ def sglang_command(*, model_path: str, served_name: str, tp: int, port: int) -> 
 
 prepare_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install(
-        "tinker-cookbook[modal]",
-        "huggingface_hub[hf_transfer]",
-        "transformers>=5.14.0",
-    )
+    .pip_install("tinker-cookbook[modal]", "huggingface_hub[hf_transfer]")
+    .run_commands("pip install --upgrade 'transformers>=5.14.0'")
     .env(
         {
             "HF_HUB_ENABLE_HF_TRANSFER": "1",
