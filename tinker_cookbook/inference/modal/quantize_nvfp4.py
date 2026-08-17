@@ -44,7 +44,7 @@ quantize_image = (
     )
     .run_commands(
         "git clone --depth 1 https://github.com/NVIDIA/Model-Optimizer.git /opt/Model-Optimizer",
-        "pip install -e '/opt/Model-Optimizer'",
+        "pip install -e '/opt/Model-Optimizer[hf]'",
         "pip install --upgrade 'transformers>=5.14.0'",
     )
     .env(
