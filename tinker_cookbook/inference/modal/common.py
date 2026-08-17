@@ -81,9 +81,13 @@ def sglang_command(*, model_path: str, served_name: str, tp: int, port: int) -> 
     )
 
 
+_COOKBOOK_GIT = (
+    "git+https://github.com/kunal-patil-glean/tinker-cookbook@add-inkling-small-modal"
+)
+
 prepare_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("tinker-cookbook[modal]", "huggingface_hub[hf_transfer]")
+    .pip_install(f"tinker-cookbook[modal] @ {_COOKBOOK_GIT}", "huggingface_hub[hf_transfer]")
     .run_commands("pip install --upgrade 'transformers>=5.14.0'")
     .env(
         {
