@@ -37,15 +37,15 @@ quantize_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(
-        "nvidia-modelopt[hf]",
         "huggingface_hub[hf_transfer]",
         "accelerate",
         "safetensors",
         "torch",
     )
     .run_commands(
-        "pip install --upgrade 'transformers>=5.14.0'",
         "git clone --depth 1 https://github.com/NVIDIA/Model-Optimizer.git /opt/Model-Optimizer",
+        "pip install -e '/opt/Model-Optimizer'",
+        "pip install --upgrade 'transformers>=5.14.0'",
     )
     .env(
         {
