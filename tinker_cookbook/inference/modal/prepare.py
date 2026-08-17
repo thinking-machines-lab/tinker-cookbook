@@ -17,6 +17,7 @@ from .common import (
     ARTIFACTS_PATH,
     HF_CACHE_PATH,
     MINUTES,
+    MODEL_REGISTRY,
     app,
     artifact_dir,
     artifacts,
@@ -34,17 +35,10 @@ secret = modal.Secret.from_dict(
     }
 )
 
+_PREPARE_FNS: dict[tuple[str, int], modal.Function] = {}
 
-@app.function(
-    image=prepare_image,
-    volumes={ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
-    secrets=[secret],
-    gpu="H100",  # merge runs the dequant/requant math on GPU
-    cpu=8.0,
-    memory=65536,
-    timeout=60 * MINUTES,
-)
-def prepare(*, tinker_path: str, base_model: str, name: str) -> str:
+
+def _merge_checkpoint(*, tinker_path: str, base_model: str, name: str) -> str:
     from tinker_cookbook import weights
 
     output_path = artifact_dir(name)
@@ -56,10 +50,36 @@ def prepare(*, tinker_path: str, base_model: str, name: str) -> str:
     return output_path
 
 
+def _prepare_fn(gpu: str, memory_mb: int) -> modal.Function:
+    key = (gpu, memory_mb)
+    if key in _PREPARE_FNS:
+        return _PREPARE_FNS[key]
+
+    @app.function(
+        image=prepare_image,
+        volumes={ARTIFACTS_PATH: artifacts, HF_CACHE_PATH: hf_cache},
+        secrets=[secret],
+        gpu=gpu,
+        cpu=8.0,
+        memory=memory_mb,
+        timeout=60 * MINUTES,
+    )
+    def prepare_variant(*, tinker_path: str, base_model: str, name: str) -> str:
+        return _merge_checkpoint(tinker_path=tinker_path, base_model=base_model, name=name)
+
+    _PREPARE_FNS[key] = prepare_variant
+    return prepare_variant
+
+
+for cfg in MODEL_REGISTRY.values():
+    _prepare_fn(cfg.gpu, cfg.memory_mb)
+prepare = _prepare_fn("H100", 65536)
+
+
 @app.local_entrypoint()
 def main(tinker_path: str, base_model: str, name: str) -> None:
     config = model_config(base_model)
-    output_path = prepare.with_options(gpu=config.gpu, memory=config.memory_mb).remote(
+    output_path = _prepare_fn(config.gpu, config.memory_mb).remote(
         tinker_path=tinker_path, base_model=base_model, name=name
     )
     print(f"\nArtifact on the tinker-artifacts Volume: {output_path}")
