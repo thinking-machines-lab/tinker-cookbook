@@ -12,6 +12,7 @@ pip install "tinker-cookbook[modal]"
 modal setup
 export TINKER_API_KEY=tml-...   # required, used to download the checkpoint
 export HF_TOKEN=hf-...          # optional, only for gated base models
+export HF_TRUST_REMOTE_CODE=1   # required for Inkling and other custom HF architectures
 ```
 
 `prepare`/`serve` read these from your local environment at deploy time; no

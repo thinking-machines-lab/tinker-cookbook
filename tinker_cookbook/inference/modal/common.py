@@ -82,7 +82,13 @@ def sglang_command(*, model_path: str, served_name: str, tp: int, port: int) -> 
 prepare_image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("tinker-cookbook[modal]", "huggingface_hub[hf_transfer]")
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1", "HF_HUB_CACHE": HF_CACHE_PATH})
+    .env(
+        {
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+            "HF_HUB_CACHE": HF_CACHE_PATH,
+            "HF_TRUST_REMOTE_CODE": "1",
+        }
+    )
 )
 
 SGLANG_TAG = "lmsysorg/sglang:nightly-dev-cu13-20260629-b9b86065"
