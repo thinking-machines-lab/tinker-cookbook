@@ -103,8 +103,11 @@ class _TrainingExample:
 
 
 class _Parser:
+    def __init__(self) -> None:
+        self.parsed_tokens: list[list[int]] = []
+
     def parse_tokens(self, tokens: list[int]) -> list[_ParsedMessage]:
-        del tokens
+        self.parsed_tokens.append(tokens)
         return [_ParsedMessage(_Text("answer")), _ParsedMessage(_ModelEndSampling())]
 
     def parse_token(self, token: int) -> list[_ParseUpdate]:
@@ -130,10 +133,13 @@ class _Renderer:
         self.tokenizer = _Tokenizer()
         self.rendered: object = None
         self.sft_input: object = None
+        self.parsers: list[_Parser] = []
 
     def render_for_completion(self, messages: object) -> tuple[list[object], _Parser]:
         self.rendered = messages
-        return [object()], _Parser()
+        parser = _Parser()
+        self.parsers.append(parser)
+        return [object()], parser
 
     def render_for_sft(self, messages: object) -> list[object]:
         self.sft_input = messages
@@ -142,9 +148,6 @@ class _Renderer:
     def render_message(self, message: object) -> tuple[list[object], list[object]]:
         assert isinstance(message, _OpenAIMessage)
         return cast(list[object], [1, 2]), cast(list[object], [3, 4])
-
-    def response_parser(self) -> _Parser:
-        return _Parser()
 
     def stop(self) -> list[int]:
         return [42]
@@ -209,6 +212,8 @@ def test_adapter_takes_only_the_public_renderer(
     ] == [{"role": "user", "content": "hello"}]
     assert parsed == Message(role="assistant", content="answer")
     assert termination == ParseTermination.STOP_SEQUENCE
+    assert len(public_renderer.parsers) == 1
+    assert public_renderer.parsers[0].parsed_tokens == [[7, 42]]
     assert adapter.get_stop_sequences() == [42]
 
 
