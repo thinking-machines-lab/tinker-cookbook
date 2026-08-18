@@ -8,6 +8,7 @@ import pytest
 import tinker
 
 import tinker_cookbook.renderers as renderers
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers import tml, tml_v0
 from tinker_cookbook.renderers.base import (
     Message,
@@ -141,7 +142,13 @@ class _Renderer:
         self.parsers.append(parser)
         return [object()], parser
 
-    def render_for_sft(self, messages: object) -> list[object]:
+    def render_for_sft(
+        self,
+        messages: object,
+        *,
+        split_non_extension_history: bool = True,
+    ) -> list[object]:
+        del split_non_extension_history
         self.sft_input = messages
         return [_TrainingExample()]
 
@@ -243,6 +250,24 @@ def test_adapter_rejects_context_free_message_rendering(
         )
 
 
+def test_adapter_translates_public_render_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_public_modules(monkeypatch)
+
+    def fail(messages: object, **kwargs: object) -> None:
+        del messages, kwargs
+        raise ValueError("bad messages")
+
+    completion_renderer = _Renderer()
+    monkeypatch.setattr(completion_renderer, "render_for_completion", fail)
+    with pytest.raises(RendererError, match="bad messages"):
+        tml.TmlRendererAdapter(completion_renderer).build_generation_prompt([])
+
+    sft_renderer = _Renderer()
+    monkeypatch.setattr(sft_renderer, "render_for_sft", fail)
+    with pytest.raises(RendererError, match="bad messages"):
+        tml.TmlRendererAdapter(sft_renderer).build_supervised_examples([])
+
+
 def test_adapter_translates_public_streaming_updates(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_public_modules(monkeypatch)
     adapter = tml.TmlRendererAdapter(_Renderer())
@@ -275,35 +300,25 @@ def test_adapter_enforces_single_pending_completion(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize(
-    ("renderer_name", "module_name"),
+    ("renderer_name", "generation_suffix"),
     [
-        ("qwen3", "tml_renderers.qwen3"),
-        ("qwen3_disable_thinking", "tml_renderers.qwen3_disable_thinking"),
-        ("qwen3_instruct", "tml_renderers.qwen3_instruct"),
+        ("qwen3", "<|im_start|>assistant\n"),
+        (
+            "qwen3_disable_thinking",
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
+        ),
+        ("qwen3_instruct", "<|im_start|>assistant\n"),
     ],
 )
-def test_qwen3_builtins_wrap_public_renderers(
-    monkeypatch: pytest.MonkeyPatch,
+def test_qwen3_builtins_use_public_renderer_behavior(
     renderer_name: str,
-    module_name: str,
+    generation_suffix: str,
 ) -> None:
-    imported: list[str] = []
-
-    def load(name: str) -> SimpleNamespace:
-        imported.append(name)
-        return SimpleNamespace(Renderer=_Renderer)
-
-    monkeypatch.setattr(
-        renderers,
-        "import_module",
-        load,
-    )
-
-    adapter = renderers.get_renderer(
-        renderer_name,
-        cast(Tokenizer, SimpleNamespace(name_or_path="Qwen/Qwen3-8B")),
-    )
+    caller_tokenizer = SimpleNamespace(name_or_path="Qwen/Qwen3-8B")
+    adapter = renderers.get_renderer(renderer_name, cast(Tokenizer, caller_tokenizer))
+    prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
 
     assert isinstance(adapter, tml.TmlRendererAdapter)
-    assert isinstance(adapter._tml_renderer, _Renderer)
-    assert imported == [module_name]
+    assert adapter.tokenizer is not caller_tokenizer
+    assert adapter.tokenizer.decode(prompt.to_ints()).endswith(generation_suffix)
+    adapter.parse_response([])

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import tinker
 import torch
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
     Message,
     MessageDelta,
@@ -56,7 +57,7 @@ class TmlRendererAdapter(Renderer):
 
     @property
     def has_extension_property(self) -> bool:
-        return False
+        return bool(getattr(self._tml_renderer, "has_extension_property", False))
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         del message, ctx
@@ -81,9 +82,12 @@ class TmlRendererAdapter(Renderer):
             raise NotImplementedError("TML renderers only support assistant generation")
         if self._pending_parser is not None:
             raise RuntimeError("parse the pending completion before rendering another prompt")
-        spans, self._pending_parser = self._tml_renderer.render_for_completion(
-            _messages_to_render_input(messages)
-        )
+        try:
+            spans, self._pending_parser = self._tml_renderer.render_for_completion(
+                _messages_to_render_input(messages)
+            )
+        except ValueError as error:
+            raise RendererError(str(error)) from error
         model_input = import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans)
         if not prefill:
             return model_input
@@ -107,7 +111,11 @@ class TmlRendererAdapter(Renderer):
             TmlRenderInput,
             _cookbook_messages_to_sft_input(messages, train_on_what),
         )
-        for example in self._tml_renderer.render_for_sft(render_input):
+        try:
+            examples = self._tml_renderer.render_for_sft(render_input)
+        except ValueError as error:
+            raise RendererError(str(error)) from error
+        for example in examples:
             model_input, weights = bridge.training_example_to_tinker_model_input_and_weights(
                 example
             )
@@ -119,12 +127,26 @@ class TmlRendererAdapter(Renderer):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        examples = self.build_supervised_examples(messages, train_on_what)
+        bridge = import_module("tml_renderers.tinker")
+        render_input = cast(
+            TmlRenderInput,
+            _cookbook_messages_to_sft_input(messages, train_on_what),
+        )
+        try:
+            examples = self._tml_renderer.render_for_sft(
+                render_input,
+                split_non_extension_history=False,
+            )
+        except ValueError as error:
+            raise RendererError(str(error)) from error
         if len(examples) != 1:
             raise NotImplementedError(
                 "TML renderer produced multiple SFT examples; use build_supervised_examples"
             )
-        return examples[0]
+        model_input, weights = bridge.training_example_to_tinker_model_input_and_weights(
+            examples[0]
+        )
+        return model_input, torch.tensor(weights, dtype=torch.float32)
 
     def get_stop_sequences(self) -> list[int]:
         return self._tml_renderer.stop()
