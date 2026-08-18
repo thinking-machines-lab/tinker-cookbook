@@ -9,12 +9,10 @@ These tests verify that renderers correctly handle:
 """
 
 import pytest
-import tinker
 
 from tinker_cookbook.renderers import (
     Message,
     ParseTermination,
-    RenderContext,
     get_renderer,
     get_text_content,
 )
@@ -38,32 +36,14 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
     ],
 )
 def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
-    """Test that Qwen3 renders tool responses with user role and tool_response tags.
-
-    Per the Qwen3 chat template, tool messages should render as
-    <|im_start|>user with content wrapped in <tool_response> tags.
-    """
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
     tool_message: Message = {"role": "tool", "content": '{"weather": "sunny", "high": 72}'}
 
-    ctx = RenderContext(idx=0, is_last=False, prev_message=None)
-    rendered = renderer.render_message(tool_message, ctx)
-    header = rendered.header
-    assert header is not None, "Expected header in rendered message"
-    output = rendered.output
-    assert len(output) > 0, "Expected output in rendered message"
+    output_str = tokenizer.decode(renderer.build_generation_prompt([tool_message]).to_ints())
 
-    header_str = tokenizer.decode(list(header.tokens))
-    # output[0] is an EncodedTextChunk for text-only messages
-    output_chunk = output[0]
-    assert isinstance(output_chunk, tinker.EncodedTextChunk), "Expected EncodedTextChunk"
-    output_str = tokenizer.decode(list(output_chunk.tokens))
-
-    # Tool messages should be rendered as "user" role
-    assert "<|im_start|>user" in header_str
-    # Content should be wrapped in tool_response tags
+    assert "<|im_start|>user" in output_str
     assert "<tool_response>" in output_str
     assert "</tool_response>" in output_str
     assert '"weather": "sunny"' in output_str
@@ -106,6 +86,7 @@ weather in NYC
 </tool_call><|im_end|>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    renderer.build_generation_prompt([])
     message, success = renderer.parse_response(response_tokens)
 
     assert success.is_clean
@@ -160,6 +141,7 @@ LA
 </tool_call><|im_end|>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    renderer.build_generation_prompt([])
     message, success = renderer.parse_response(response_tokens)
 
     assert success.is_clean
@@ -228,47 +210,40 @@ def test_deepseek_parse_tool_call():
 # =============================================================================
 
 
-def test_qwen3_parse_invalid_tool_call_json():
-    """The graduated parser reports invalid tool JSON as structurally malformed."""
-    model_name = "Qwen/Qwen3-8B"
-    tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer("qwen3", tokenizer)
-
-    # Invalid JSON in tool call
-    response_text = """<tool_call>
+@pytest.mark.parametrize(
+    "response_text,raw_fragments",
+    [
+        (
+            """<tool_call>
 {invalid json here}
-</tool_call><|im_end|>"""
-
-    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    message, success = renderer.parse_response(response_tokens)
-
-    assert success == ParseTermination.MALFORMED
-    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
-    assert "<tool_call>" in get_text_content(message)
-
-
-def test_qwen3_mixed_valid_invalid_tool_calls():
-    """Any invalid call makes the graduated parser's whole response malformed."""
-    model_name = "Qwen/Qwen3-8B"
-    tokenizer = get_tokenizer(model_name)
-    renderer = get_renderer("qwen3", tokenizer)
-
-    # First tool call is valid, second has invalid JSON
-    response_text = """I'll try both.
+</tool_call><|im_end|>""",
+            ("<tool_call>",),
+        ),
+        (
+            """I'll try both.
 <tool_call>
 {"name": "search", "arguments": {"query": "weather"}}
 </tool_call>
 <tool_call>
 {bad json here}
-</tool_call><|im_end|>"""
+</tool_call><|im_end|>""",
+            ("search", "{bad json here}"),
+        ),
+    ],
+)
+def test_qwen3_parse_invalid_tool_call_json(response_text: str, raw_fragments: tuple[str, ...]):
+    model_name = "Qwen/Qwen3-8B"
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("qwen3", tokenizer)
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    renderer.build_generation_prompt([])
     message, success = renderer.parse_response(response_tokens)
 
     assert success == ParseTermination.MALFORMED
     assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
-    assert "search" in get_text_content(message)
-    assert "{bad json here}" in get_text_content(message)
+    for fragment in raw_fragments:
+        assert fragment in get_text_content(message)
 
 
 @skip_deepseek_tokenizer_bug
