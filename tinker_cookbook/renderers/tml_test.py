@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 import tinker
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers import tml, tml_v0
 from tinker_cookbook.renderers.base import (
     Message,
@@ -139,7 +140,13 @@ class _Renderer:
         self.parsers.append(parser)
         return [object()], parser
 
-    def render_for_sft(self, messages: object) -> list[object]:
+    def render_for_sft(
+        self,
+        messages: object,
+        *,
+        split_non_extension_history: bool = True,
+    ) -> list[object]:
+        del split_non_extension_history
         self.sft_input = messages
         return [_TrainingExample()]
 
@@ -239,6 +246,24 @@ def test_adapter_rejects_context_free_message_rendering(
             Message(role="tool", content="result"),
             RenderContext(idx=0, is_last=False, prev_message=None),
         )
+
+
+def test_adapter_translates_public_render_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_public_modules(monkeypatch)
+
+    def fail(messages: object, **kwargs: object) -> None:
+        del messages, kwargs
+        raise ValueError("bad messages")
+
+    completion_renderer = _Renderer()
+    monkeypatch.setattr(completion_renderer, "render_for_completion", fail)
+    with pytest.raises(RendererError, match="bad messages"):
+        tml.TmlRendererAdapter(completion_renderer).build_generation_prompt([])
+
+    sft_renderer = _Renderer()
+    monkeypatch.setattr(sft_renderer, "render_for_sft", fail)
+    with pytest.raises(RendererError, match="bad messages"):
+        tml.TmlRendererAdapter(sft_renderer).build_supervised_examples([])
 
 
 def test_adapter_translates_public_streaming_updates(monkeypatch: pytest.MonkeyPatch) -> None:
