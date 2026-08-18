@@ -29,6 +29,7 @@ from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingCli
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
+    successful_rollout_indices,
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import discounted_future_sum_vectorized
@@ -336,11 +337,14 @@ async def do_sync_training(
                         for i, builder in enumerate(env_group_builders_P)
                     ],
                 )
-            trajectory_groups_P = [
-                trajectory_group
-                for trajectory_group in trajectory_groups_P
-                if trajectory_group is not None
-            ]
+            # Drop the groups that failed to roll out, and filter the builders and
+            # dataset indices by the same indices. Both run parallel to the batch and
+            # are looked up downstream by the group index stamped onto each datum, so
+            # dropping groups alone would pick another problem's teacher client.
+            keep_P = successful_rollout_indices(trajectory_groups_P)
+            trajectory_groups_P = [cast(TrajectoryGroup, trajectory_groups_P[i]) for i in keep_P]
+            env_group_builders_P = [env_group_builders_P[i] for i in keep_P]
+            dataset_indices_P = [dataset_indices_P[i] for i in keep_P]
 
             # Train step
             sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
