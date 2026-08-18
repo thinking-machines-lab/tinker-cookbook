@@ -63,7 +63,7 @@ class TestDropFailedRollouts:
         )
 
         assert len(groups) == 2
-        assert [b.tag for b in builders] == ["b", "c"]
+        assert [b.logging_tags() for b in builders] == [["b"], ["c"]]
         assert questions == ["qb", "qc"]
         assert goldens == ["gb", "gc"]
 
@@ -76,7 +76,7 @@ class TestDropFailedRollouts:
         )
 
         assert groups == raw
-        assert [b.tag for b in builders] == ["a", "b"]
+        assert [b.logging_tags() for b in builders] == [["a"], ["b"]]
         assert questions == ["qa", "qb"]
         assert goldens == ["ga", "gb"]
 
