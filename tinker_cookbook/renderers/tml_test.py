@@ -147,10 +147,6 @@ class _Renderer:
         self.sft_input = messages
         return [_TrainingExample()]
 
-    def render_message(self, message: object) -> tuple[list[object], list[object]]:
-        assert isinstance(message, _OpenAIMessage)
-        return cast(list[object], [1, 2]), cast(list[object], [3, 4])
-
     def stop(self) -> list[int]:
         return [42]
 
@@ -236,22 +232,17 @@ def test_adapter_uses_public_sft_examples(monkeypatch: pytest.MonkeyPatch) -> No
     assert len(cast(Sequence[object], public_renderer.sft_input)) == 2
 
 
-def test_adapter_derives_legacy_message_parts_from_public_render(
+def test_adapter_rejects_context_free_message_rendering(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_public_modules(monkeypatch)
     adapter = tml.TmlRendererAdapter(_Renderer())
 
-    rendered = adapter.render_message(
-        Message(role="tool", content="result"),
-        RenderContext(idx=0, is_last=False, prev_message=None),
-    )
-
-    assert rendered.header is not None
-    assert list(rendered.header.tokens) == [1, 2]
-    assert len(rendered.output) == 1
-    assert isinstance(rendered.output[0], tinker.EncodedTextChunk)
-    assert list(rendered.output[0].tokens) == [3, 4]
+    with pytest.raises(NotImplementedError, match="complete conversations"):
+        adapter.render_message(
+            Message(role="tool", content="result"),
+            RenderContext(idx=0, is_last=False, prev_message=None),
+        )
 
 
 def test_adapter_normalizes_cookbook_audio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -277,6 +268,7 @@ def test_adapter_normalizes_cookbook_audio(monkeypatch: pytest.MonkeyPatch) -> N
 def test_adapter_translates_public_streaming_updates(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_public_modules(monkeypatch)
     adapter = tml.TmlRendererAdapter(_Renderer())
+    adapter.build_generation_prompt([Message(role="user", content="hello")])
 
     events = list(adapter.parse_response_streaming([7, 42]))
 
@@ -284,6 +276,29 @@ def test_adapter_translates_public_streaming_updates(monkeypatch: pytest.MonkeyP
     assert events[1] == StreamingThinkingDelta(thinking="work", content_index=0)
     assert events[2] == StreamingTextDelta(text="answer", content_index=1)
     assert events[3] == Message(role="assistant", content="answer")
+
+
+def test_adapter_enforces_single_pending_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_public_modules(monkeypatch)
+    adapter = tml.TmlRendererAdapter(_Renderer())
+    messages = [Message(role="user", content="hello")]
+
+    adapter.build_generation_prompt(messages)
+    with pytest.raises(RuntimeError, match="parse the pending completion"):
+        adapter.build_generation_prompt(messages)
+    with pytest.raises(RuntimeError, match="unparsed completion"):
+        pickle.dumps(adapter)
+
+    adapter.parse_response([42])
+    adapter.build_generation_prompt(messages)
+
+
+def test_adapter_rejects_parsing_without_a_render(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_public_modules(monkeypatch)
+    adapter = tml.TmlRendererAdapter(_Renderer())
+
+    with pytest.raises(RuntimeError, match="render a completion prompt"):
+        adapter.parse_response([42])
 
 
 def test_adapter_pickles_the_renderer_object() -> None:
