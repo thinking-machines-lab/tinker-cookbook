@@ -11,7 +11,13 @@ These tests verify that renderers correctly handle:
 import pytest
 import tinker
 
-from tinker_cookbook.renderers import Message, RenderContext, get_renderer, get_text_content
+from tinker_cookbook.renderers import (
+    Message,
+    ParseTermination,
+    RenderContext,
+    get_renderer,
+    get_text_content,
+)
 from tinker_cookbook.renderers.testing_utils import skip_deepseek_tokenizer_bug
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -223,7 +229,7 @@ def test_deepseek_parse_tool_call():
 
 
 def test_qwen3_parse_invalid_tool_call_json():
-    """Test that invalid JSON in tool call is captured as unparsed_tool_calls."""
+    """The graduated parser reports invalid tool JSON as structurally malformed."""
     model_name = "Qwen/Qwen3-8B"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("qwen3", tokenizer)
@@ -236,21 +242,13 @@ def test_qwen3_parse_invalid_tool_call_json():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    # Parse succeeds, but tool call is captured as unparsed
-    assert success.is_clean
+    assert success == ParseTermination.MALFORMED
     assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
-    assert "unparsed_tool_calls" in message
-    assert len(message["unparsed_tool_calls"]) == 1
-    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
-    # Raw text should contain the original tool call
-    assert "<tool_call>" in message["unparsed_tool_calls"][0].raw_text
+    assert "<tool_call>" in get_text_content(message)
 
 
 def test_qwen3_mixed_valid_invalid_tool_calls():
-    """Test parsing when some tool calls are valid and some are invalid.
-
-    Valid tool calls should be parsed, invalid ones captured in unparsed_tool_calls.
-    """
+    """Any invalid call makes the graduated parser's whole response malformed."""
     model_name = "Qwen/Qwen3-8B"
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer("qwen3", tokenizer)
@@ -267,15 +265,10 @@ def test_qwen3_mixed_valid_invalid_tool_calls():
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, success = renderer.parse_response(response_tokens)
 
-    assert success.is_clean
-    # Valid tool call should be parsed
-    assert "tool_calls" in message
-    assert len(message["tool_calls"]) == 1
-    assert message["tool_calls"][0].function.name == "search"
-    # Invalid tool call should be in unparsed_tool_calls
-    assert "unparsed_tool_calls" in message
-    assert len(message["unparsed_tool_calls"]) == 1
-    assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+    assert success == ParseTermination.MALFORMED
+    assert "tool_calls" not in message or len(message.get("tool_calls", [])) == 0
+    assert "search" in get_text_content(message)
+    assert "{bad json here}" in get_text_content(message)
 
 
 @skip_deepseek_tokenizer_bug

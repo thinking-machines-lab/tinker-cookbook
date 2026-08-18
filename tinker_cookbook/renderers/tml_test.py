@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 import tinker
 
+import tinker_cookbook.renderers as renderers
 from tinker_cookbook.renderers import tml, tml_v0
 from tinker_cookbook.renderers.base import (
     AudioPart,
@@ -18,6 +19,7 @@ from tinker_cookbook.renderers.base import (
     StreamingTextDelta,
     StreamingThinkingDelta,
 )
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 class _Tokenizer:
@@ -284,3 +286,19 @@ def test_adapter_pickles_the_renderer_object() -> None:
 
     assert isinstance(restored, tml.TmlRendererAdapter)
     assert isinstance(restored._tml_renderer, _Renderer)
+
+
+def test_qwen3_builtin_wraps_the_public_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        renderers,
+        "import_module",
+        lambda name: SimpleNamespace(Renderer=_Renderer),
+    )
+
+    adapter = renderers.get_renderer(
+        "qwen3",
+        cast(Tokenizer, SimpleNamespace(name_or_path="Qwen/Qwen3-8B")),
+    )
+
+    assert isinstance(adapter, tml.TmlRendererAdapter)
+    assert isinstance(adapter._tml_renderer, _Renderer)
