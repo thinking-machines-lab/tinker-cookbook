@@ -34,6 +34,7 @@ from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 if TYPE_CHECKING:
+    from tml_renderers import Parser as PublicParser  # pyright: ignore[reportMissingImports]
     from tml_renderers import Renderer as PublicRenderer  # pyright: ignore[reportMissingImports]
     from tml_renderers import chat as tml_chat  # pyright: ignore[reportMissingImports]
 
@@ -49,6 +50,7 @@ class TmlRendererAdapter(Renderer):
 
     def __init__(self, renderer: PublicRenderer):
         self._tml_renderer = renderer
+        self._pending_parser: PublicParser | None = None
         # Cookbook's base class exposes ``tokenizer`` to legacy callers. It is the wrapped
         # renderer's tokenizer, not a second tokenizer supplied by Cookbook.
         super().__init__(cast(Tokenizer, renderer.tokenizer))
@@ -78,10 +80,17 @@ class TmlRendererAdapter(Renderer):
         return RenderedMessage(header=header_input.chunks[0], output=output_input.chunks)
 
     def _render_completion_input(self, messages: list[Message]) -> tinker.ModelInput:
-        spans, _parser = self._tml_renderer.render_for_completion(
+        spans, self._pending_parser = self._tml_renderer.render_for_completion(
             self._preserve_tool_parameter_order(_messages_to_render_input(messages), messages)
         )
         return import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans)
+
+    def _take_parser(self) -> PublicParser:
+        parser = self._pending_parser
+        self._pending_parser = None
+        if parser is None:
+            _spans, parser = self._tml_renderer.render_for_completion([])
+        return parser
 
     @staticmethod
     def _preserve_tool_parameter_order(
@@ -213,7 +222,7 @@ class TmlRendererAdapter(Renderer):
     def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         chat = import_module("tml_renderers.chat")
         try:
-            parsed = self._tml_renderer.response_parser().parse_tokens(response)
+            parsed = self._take_parser().parse_tokens(response)
         except ValueError:
             return (
                 Message(role="assistant", content=self._decode_or_empty(response)),
@@ -235,7 +244,7 @@ class TmlRendererAdapter(Renderer):
 
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
         chat = import_module("tml_renderers.chat")
-        parser = self._tml_renderer.response_parser()
+        parser = self._take_parser()
         try:
             updates = [update for token in response for update in parser.parse_token(token)]
             updates.extend(parser.flush_updates())
