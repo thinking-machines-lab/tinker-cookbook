@@ -56,6 +56,8 @@ class TmlRendererAdapter(Renderer):
         super().__init__(cast(Tokenizer, renderer.tokenizer))
 
     def __reduce__(self) -> tuple[type[TmlRendererAdapter], tuple[PublicRenderer]]:
+        if self._pending_parser is not None:
+            raise RuntimeError("cannot pickle a TML renderer adapter with an unparsed completion")
         return type(self), (self._tml_renderer,)
 
     @property
@@ -63,25 +65,16 @@ class TmlRendererAdapter(Renderer):
         return False
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        """Provide Cookbook's legacy single-message view from the public renderer."""
-        del ctx
-        [converted] = cast(
-            list[object],
-            self._preserve_tool_parameter_order(_messages_to_render_input([message]), [message]),
+        del message, ctx
+        raise NotImplementedError(
+            "TML renderer adapters render complete conversations, not context-free messages"
         )
-        header_spans, output_spans = self._tml_renderer.render_message(converted)
-        bridge = import_module("tml_renderers.tinker")
-        header_input = bridge.token_spans_to_tinker_model_input(header_spans)
-        output_input = bridge.token_spans_to_tinker_model_input(output_spans)
-        if len(header_input.chunks) != 1 or not isinstance(
-            header_input.chunks[0], tinker.EncodedTextChunk
-        ):
-            raise ValueError("renderer message header must be one encoded-text chunk")
-        return RenderedMessage(header=header_input.chunks[0], output=output_input.chunks)
 
     def _render_completion_input(self, messages: list[Message]) -> tinker.ModelInput:
+        if self._pending_parser is not None:
+            raise RuntimeError("parse the pending completion before rendering another prompt")
         spans, self._pending_parser = self._tml_renderer.render_for_completion(
-            self._preserve_tool_parameter_order(_messages_to_render_input(messages), messages)
+            _messages_to_render_input(messages)
         )
         return import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans)
 
@@ -89,56 +82,8 @@ class TmlRendererAdapter(Renderer):
         parser = self._pending_parser
         self._pending_parser = None
         if parser is None:
-            _spans, parser = self._tml_renderer.render_for_completion([])
+            raise RuntimeError("render a completion prompt before parsing its response")
         return parser
-
-    @staticmethod
-    def _preserve_tool_parameter_order(
-        render_input: TmlRenderInput,
-        cookbook_messages: list[Message],
-    ) -> TmlRenderInput:
-        """Restore schema key order lost by the canonical public chat conversion."""
-        chat = import_module("tml_renderers.chat")
-        declaration_type = getattr(chat, "ToolDeclareJson", ())
-        raw_declarations = [
-            json.loads(message["content"])
-            for message in cookbook_messages
-            if message["role"] == "tool_declare" and isinstance(message["content"], str)
-        ]
-
-        if not isinstance(render_input, list):
-            return render_input
-        restored: list[object] = []
-        declaration_index = 0
-        for message in render_input:
-            contents = message.content if hasattr(message, "content") else None
-            content_list = contents if isinstance(contents, list) else [contents]
-            new_contents: list[object] = []
-            for content in content_list:
-                if content is None or not isinstance(content, declaration_type):
-                    new_contents.append(content)
-                    continue
-                raw_specs = raw_declarations[declaration_index]
-                declaration_index += 1
-                specs = [
-                    spec.copy(
-                        parameters=json.dumps(
-                            raw["function"].get("parameters", {}),
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )
-                    )
-                    for spec, raw in zip(content.tool_specs, raw_specs, strict=True)
-                ]
-                new_contents.append(content.copy(tool_specs=specs))
-            if isinstance(contents, list):
-                message.content = new_contents
-                restored.append(message)
-            elif contents is not None:
-                restored.append(message.copy(content=new_contents[0]))
-            else:
-                restored.append(message)
-        return cast(TmlRenderInput, restored)
 
     @staticmethod
     def _validate_generation_options(role: Role, prefill: str | None) -> None:
@@ -175,7 +120,6 @@ class TmlRendererAdapter(Renderer):
             TmlRenderInput,
             _cookbook_messages_to_sft_input(messages, train_on_what),
         )
-        render_input = self._preserve_tool_parameter_order(render_input, messages)
         for example in self._tml_renderer.render_for_sft(render_input):
             model_input, weights = bridge.training_example_to_tinker_model_input_and_weights(
                 example
