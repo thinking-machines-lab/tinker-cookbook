@@ -49,10 +49,10 @@ class TmlRendererAdapter(Renderer):
         self._pending_parser: PublicParser | None = None
         super().__init__(cast(Tokenizer, renderer.tokenizer))
 
-    def __reduce__(self) -> tuple[type[TmlRendererAdapter], tuple[PublicRenderer]]:
+    def __reduce__(self) -> tuple:
         if self._pending_parser is not None:
             raise RuntimeError("cannot pickle a TML renderer adapter with an unparsed completion")
-        return type(self), (self._tml_renderer,)
+        return super().__reduce__()
 
     @property
     def has_extension_property(self) -> bool:
@@ -63,14 +63,6 @@ class TmlRendererAdapter(Renderer):
         raise NotImplementedError(
             "TML renderer adapters render complete conversations, not context-free messages"
         )
-
-    def _render_completion_input(self, messages: list[Message]) -> tinker.ModelInput:
-        if self._pending_parser is not None:
-            raise RuntimeError("parse the pending completion before rendering another prompt")
-        spans, self._pending_parser = self._tml_renderer.render_for_completion(
-            _messages_to_render_input(messages)
-        )
-        return import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans)
 
     def _take_parser(self) -> PublicParser:
         parser = self._pending_parser
@@ -87,7 +79,12 @@ class TmlRendererAdapter(Renderer):
     ) -> tinker.ModelInput:
         if role != "assistant":
             raise NotImplementedError("TML renderers only support assistant generation")
-        model_input = self._render_completion_input(messages)
+        if self._pending_parser is not None:
+            raise RuntimeError("parse the pending completion before rendering another prompt")
+        spans, self._pending_parser = self._tml_renderer.render_for_completion(
+            _messages_to_render_input(messages)
+        )
+        model_input = import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans)
         if not prefill:
             return model_input
         return tinker.ModelInput(
