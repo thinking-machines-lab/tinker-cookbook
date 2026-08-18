@@ -9,7 +9,7 @@ import tinker
 
 import tinker_cookbook.renderers as renderers
 from tinker_cookbook.exceptions import RendererError
-from tinker_cookbook.renderers import tml, tml_v0
+from tinker_cookbook.renderers import tml, tml_conversions, tml_v0
 from tinker_cookbook.renderers.base import (
     Message,
     ParseTermination,
@@ -193,6 +193,7 @@ def _patch_public_modules(monkeypatch: pytest.MonkeyPatch) -> None:
         return _chat_module() if name == "tml_renderers.chat" else _TinkerBridge
 
     monkeypatch.setattr(tml, "import_module", load)
+    monkeypatch.setattr(tml_conversions, "import_module", load)
     monkeypatch.setattr(tml_v0, "import_module", load)
 
 
