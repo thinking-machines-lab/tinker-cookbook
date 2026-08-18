@@ -33,7 +33,7 @@ from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
-    remove_constant_reward_groups,
+    nonconstant_reward_group_indices,
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import (
@@ -1819,7 +1819,13 @@ async def do_sync_training(
                 )
 
                 if config.remove_constant_reward_groups:
-                    trajectory_groups_P = remove_constant_reward_groups(trajectory_groups_P)
+                    # Filter the builders by the same indices. They run parallel to
+                    # the trajectory groups and are zipped against them downstream to
+                    # tag metrics, so dropping groups alone shifts every tag onto a
+                    # later problem's rollouts.
+                    keep_P = nonconstant_reward_group_indices(trajectory_groups_P)
+                    trajectory_groups_P = [trajectory_groups_P[i] for i in keep_P]
+                    env_group_builders_P = [env_group_builders_P[i] for i in keep_P]
 
                 # Train step
                 sampling_client, train_step_metrics = await do_train_step_and_get_sampling_client(
