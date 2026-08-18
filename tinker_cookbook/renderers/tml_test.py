@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pickle
 from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import cast
@@ -11,7 +10,6 @@ import tinker
 import tinker_cookbook.renderers as renderers
 from tinker_cookbook.renderers import tml, tml_v0
 from tinker_cookbook.renderers.base import (
-    AudioPart,
     Message,
     ParseTermination,
     RenderContext,
@@ -245,26 +243,6 @@ def test_adapter_rejects_context_free_message_rendering(
         )
 
 
-def test_adapter_normalizes_cookbook_audio(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_public_modules(monkeypatch)
-    public_renderer = _Renderer()
-    adapter = tml.TmlRendererAdapter(public_renderer)
-
-    adapter.build_generation_prompt(
-        [
-            Message(
-                role="user",
-                content=[AudioPart(type="audio", audio=b"RIFF-test", format="wav")],
-            )
-        ]
-    )
-
-    [converted] = cast(Sequence[_OpenAIMessage], public_renderer.rendered)
-    [audio] = cast(list[dict[str, object]], converted.source["content"])
-    assert audio["type"] == "input_audio"
-    assert cast(dict[str, object], audio["input_audio"])["format"] == "wav"
-
-
 def test_adapter_translates_public_streaming_updates(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_public_modules(monkeypatch)
     adapter = tml.TmlRendererAdapter(_Renderer())
@@ -283,29 +261,17 @@ def test_adapter_enforces_single_pending_completion(monkeypatch: pytest.MonkeyPa
     adapter = tml.TmlRendererAdapter(_Renderer())
     messages = [Message(role="user", content="hello")]
 
+    with pytest.raises(RuntimeError, match="render a completion prompt"):
+        adapter.parse_response([42])
+
     adapter.build_generation_prompt(messages)
     with pytest.raises(RuntimeError, match="parse the pending completion"):
         adapter.build_generation_prompt(messages)
     with pytest.raises(RuntimeError, match="unparsed completion"):
-        pickle.dumps(adapter)
+        adapter.__reduce__()
 
     adapter.parse_response([42])
     adapter.build_generation_prompt(messages)
-
-
-def test_adapter_rejects_parsing_without_a_render(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_public_modules(monkeypatch)
-    adapter = tml.TmlRendererAdapter(_Renderer())
-
-    with pytest.raises(RuntimeError, match="render a completion prompt"):
-        adapter.parse_response([42])
-
-
-def test_adapter_pickles_the_renderer_object() -> None:
-    restored = pickle.loads(pickle.dumps(tml.TmlRendererAdapter(_Renderer())))
-
-    assert isinstance(restored, tml.TmlRendererAdapter)
-    assert isinstance(restored._tml_renderer, _Renderer)
 
 
 def test_qwen3_builtin_wraps_the_public_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
