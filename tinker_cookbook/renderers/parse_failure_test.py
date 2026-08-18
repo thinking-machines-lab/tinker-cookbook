@@ -9,13 +9,14 @@ Covers:
    closed in a response that still terminates cleanly on the renderer's stop
    token. Without detection this silently degrades to plain text; with it,
    the response carries an ``unparsed_tool_calls`` entry (a recoverable
-   CONTENT failure). ``role_colon`` and ``llama3`` have no tool-block syntax
-   and are deliberately not covered.
+   CONTENT failure). Public Qwen renderers instead reject the malformed block
+   structurally. ``role_colon`` and ``llama3`` have no tool-block syntax and
+   are deliberately not covered.
 """
 
 import pytest
 
-from tinker_cookbook.renderers import Message, get_renderer
+from tinker_cookbook.renderers import Message, get_renderer, get_text_content
 from tinker_cookbook.renderers.base import (
     PARSE_FAILURE_DETAIL_MAX_CHARS,
     UNTERMINATED_TOOL_BLOCK_ERROR,
@@ -160,8 +161,8 @@ def _assert_unterminated_content_failure(message: Message, termination: ParseTer
         ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
     ],
 )
-def test_qwen3_unterminated_tool_block(model_name: str, renderer_name: str):
-    """<tool_call> opened, never closed, clean <|im_end|> stop."""
+def test_qwen3_unterminated_tool_block_is_structural(model_name: str, renderer_name: str):
+    """The public Qwen parser reports an unterminated tool block as malformed."""
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 
@@ -169,10 +170,15 @@ def test_qwen3_unterminated_tool_block(model_name: str, renderer_name: str):
 <tool_call>
 {"name": "search", "arguments": {"query": "weather<|im_end|>"""
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens)
 
-    _assert_unterminated_content_failure(message, termination)
+    assert termination == ParseTermination.MALFORMED
+    assert "<tool_call>" in get_text_content(message)
     assert "tool_calls" not in message
+    result = classify_parse_failure(message, termination)
+    assert result is not None
+    assert result[0] == ParseFailureKind.STRUCTURAL
 
 
 @pytest.mark.parametrize(
