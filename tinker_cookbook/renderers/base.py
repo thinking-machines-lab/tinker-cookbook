@@ -697,6 +697,14 @@ class RenderContext:
     prev_message: Message | None = None
     """The previous message in the conversation, if any."""
 
+    next_message: Message | None = None
+    """The next message in the conversation, if any.
+
+    Used by renderers whose templates look ahead — e.g. Qwen3.5-family tool-response
+    grouping closes the shared user block only after the final consecutive tool
+    message. None for the last message or when a message is rendered standalone.
+    """
+
     last_user_index: int = -1
     """Index of the last user message in the conversation. -1 if no user messages.
 
@@ -1669,6 +1677,7 @@ class Renderer(ABC):
                 idx=idx,
                 is_last=(idx == len(messages) - 1),
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
                 last_user_index=last_user_idx,
                 in_last_assistant_turn=idx >= turn_start,
             )
@@ -1831,6 +1840,7 @@ class Renderer(ABC):
                 idx=idx,
                 is_last=is_last_message,
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
                 last_user_index=last_user_idx,
                 in_last_assistant_turn=in_last_assistant_turn,
             )
