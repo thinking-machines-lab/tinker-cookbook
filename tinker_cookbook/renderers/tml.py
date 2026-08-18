@@ -1,5 +1,3 @@
-"""Cookbook compatibility for renderers from the public ``tml_renderers`` package."""
-
 from __future__ import annotations
 
 import json
@@ -40,19 +38,11 @@ if TYPE_CHECKING:
 
 
 class TmlRendererAdapter(Renderer):
-    """Expose one self-contained ``tml_renderers`` renderer through Cookbook's API.
-
-    The wrapped renderer owns tokenization, rendering, parsing, and SFT masks. This class owns
-    only the conversion between Cookbook/OpenAI messages and Tinker transport objects.
-    """
-
     supports_streaming = True
 
     def __init__(self, renderer: PublicRenderer):
         self._tml_renderer = renderer
         self._pending_parser: PublicParser | None = None
-        # Cookbook's base class exposes ``tokenizer`` to legacy callers. It is the wrapped
-        # renderer's tokenizer, not a second tokenizer supplied by Cookbook.
         super().__init__(cast(Tokenizer, renderer.tokenizer))
 
     def __reduce__(self) -> tuple[type[TmlRendererAdapter], tuple[PublicRenderer]]:
@@ -85,18 +75,14 @@ class TmlRendererAdapter(Renderer):
             raise RuntimeError("render a completion prompt before parsing its response")
         return parser
 
-    @staticmethod
-    def _validate_generation_options(role: Role, prefill: str | None) -> None:
-        if role != "assistant":
-            raise NotImplementedError("TML renderers only support assistant generation")
-
     def build_generation_prompt(
         self,
         messages: list[Message],
         role: Role = "assistant",
         prefill: str | None = None,
     ) -> tinker.ModelInput:
-        self._validate_generation_options(role, prefill)
+        if role != "assistant":
+            raise NotImplementedError("TML renderers only support assistant generation")
         model_input = self._render_completion_input(messages)
         if not prefill:
             return model_input
