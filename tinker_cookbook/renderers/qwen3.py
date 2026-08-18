@@ -283,14 +283,18 @@ class Qwen3Renderer(Renderer):
                 ]
             )
             output_content += ("\n" if has_text else "") + calls
-        output_content += "<|im_end|>"
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
         output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(output_content, add_special_tokens=False)
-            )
+                tokens=self.tokenizer.encode(
+                    output_content,
+                    add_special_tokens=False,
+                    split_special_tokens=True,
+                )
+            ),
+            tinker.types.EncodedTextChunk(tokens=[self._end_message_token]),
         ]
         return RenderedMessage(header=header, output=output)
 
