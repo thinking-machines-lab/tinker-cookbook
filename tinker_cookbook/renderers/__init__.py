@@ -159,7 +159,9 @@ def get_renderer(
             - ``"gpt_oss_high_reasoning"``: GPT-OSS with high reasoning
             - Custom renderers registered via ``register_renderer()``
         tokenizer (Tokenizer): The tokenizer to use.
-        image_processor (ImageProcessor | None): Required for VL renderers.
+        image_processor (ImageProcessor | None): Image processor for legacy VL renderers.
+            Public TML renderers, including Qwen3-VL, own their image tokenization and ignore
+            this compatibility argument.
         model_name (str | None): Model name for pickle metadata. If None,
             falls back to ``tokenizer.name_or_path``. Provide this explicitly
             when the tokenizer was loaded with a remapped name (e.g., Llama 3
@@ -180,8 +182,7 @@ def get_renderer(
         ])
 
     Raises:
-        RendererError: If the renderer name is unknown or if a VL renderer
-            is requested without an image_processor.
+        RendererError: If the renderer name is unknown.
     """
 
     def _stamp_pickle_metadata(renderer: Renderer) -> Renderer:
@@ -215,10 +216,6 @@ def get_renderer(
         Nemotron3UltraPreserveThinkingRenderer,
         Nemotron3UltraRenderer,
     )
-    from tinker_cookbook.renderers.qwen3 import (
-        Qwen3VLInstructRenderer,
-        Qwen3VLRenderer,
-    )
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
     from tinker_cookbook.renderers.tml import TmlRendererAdapter
@@ -232,9 +229,9 @@ def get_renderer(
     elif name == "qwen3":
         renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3").Renderer())
     elif name == "qwen3_vl":
-        renderer = Qwen3VLRenderer(tokenizer, image_processor)
+        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3_vl").Renderer())
     elif name == "qwen3_vl_instruct":
-        renderer = Qwen3VLInstructRenderer(tokenizer, image_processor)
+        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3_vl_instruct").Renderer())
     elif name == "qwen3_disable_thinking":
         renderer = TmlRendererAdapter(
             import_module("tml_renderers.qwen3_disable_thinking").Renderer()
