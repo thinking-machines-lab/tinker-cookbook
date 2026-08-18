@@ -32,9 +32,13 @@ from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 if TYPE_CHECKING:
-    from tml_renderers import Parser as PublicParser  # pyright: ignore[reportMissingImports]
-    from tml_renderers import Renderer as PublicRenderer  # pyright: ignore[reportMissingImports]
     from tml_renderers import chat as tml_chat  # pyright: ignore[reportMissingImports]
+    from tml_renderers.renderer import (  # pyright: ignore[reportMissingImports]
+        Parser as PublicParser,
+    )
+    from tml_renderers.renderer import (  # pyright: ignore[reportMissingImports]
+        Renderer as PublicRenderer,
+    )
 
 
 class TmlRendererAdapter(Renderer):
