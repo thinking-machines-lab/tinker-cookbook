@@ -1546,10 +1546,6 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     ("meta-llama/Llama-3.1-8B-Instruct", "llama3", {}, get_basic_4turn_conversation),
     # RoleColon with basic multi-turn (doesn't support tools)
     ("meta-llama/Llama-3.1-8B-Instruct", "role_colon", {}, get_basic_4turn_conversation),
-    # Qwen3 Instruct with basic multi-turn
-    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, get_basic_4turn_conversation),
-    # Qwen3 Instruct with tool calls
-    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, get_multiturn_tool_conversation),
     # Qwen3 with strip_thinking_from_history=False (preserves thinking)
     (
         "Qwen/Qwen3-8B",

@@ -6,7 +6,6 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 """
 
 from collections.abc import Callable
-from importlib import import_module
 from typing import Any
 
 from tinker_cookbook.exceptions import RendererError
@@ -227,17 +226,25 @@ def get_renderer(
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
     elif name == "qwen3":
-        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3").Renderer())
+        from tml_renderers import qwen3  # pyright: ignore[reportMissingImports]
+
+        renderer = TmlRendererAdapter(qwen3.Renderer())
     elif name == "qwen3_vl":
-        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3_vl").Renderer())
+        from tml_renderers import qwen3_vl  # pyright: ignore[reportMissingImports]
+
+        renderer = TmlRendererAdapter(qwen3_vl.Renderer())
     elif name == "qwen3_vl_instruct":
-        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3_vl_instruct").Renderer())
+        from tml_renderers import qwen3_vl_instruct  # pyright: ignore[reportMissingImports]
+
+        renderer = TmlRendererAdapter(qwen3_vl_instruct.Renderer())
     elif name == "qwen3_disable_thinking":
-        renderer = TmlRendererAdapter(
-            import_module("tml_renderers.qwen3_disable_thinking").Renderer()
-        )
+        from tml_renderers import qwen3_disable_thinking  # pyright: ignore[reportMissingImports]
+
+        renderer = TmlRendererAdapter(qwen3_disable_thinking.Renderer())
     elif name == "qwen3_instruct":
-        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3_instruct").Renderer())
+        from tml_renderers import qwen3_instruct  # pyright: ignore[reportMissingImports]
+
+        renderer = TmlRendererAdapter(qwen3_instruct.Renderer())
     elif name == "qwen3_5":
         renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_5_disable_thinking":

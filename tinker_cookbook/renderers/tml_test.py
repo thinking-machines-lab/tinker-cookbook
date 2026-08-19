@@ -145,13 +145,7 @@ class _Renderer:
         self.parsers.append(parser)
         return [object()], parser
 
-    def render_for_sft(
-        self,
-        messages: object,
-        *,
-        split_non_extension_history: bool = True,
-    ) -> list[object]:
-        del split_non_extension_history
+    def render_for_sft(self, messages: object) -> list[object]:
         self.sft_input = messages
         return [_TrainingExample()]
 
@@ -328,13 +322,8 @@ def test_qwen3_builtins_use_public_renderer_behavior(
     adapter.parse_response([])
 
 
-@pytest.mark.parametrize(
-    ("renderer_name", "has_extension_property"),
-    [("qwen3_vl", False), ("qwen3_vl_instruct", True)],
-)
-def test_qwen3_vl_builtins_use_public_renderer_for_images(
-    renderer_name: str, has_extension_property: bool
-) -> None:
+@pytest.mark.parametrize("renderer_name", ["qwen3_vl", "qwen3_vl_instruct"])
+def test_qwen3_vl_builtins_use_public_renderer_for_images(renderer_name: str) -> None:
     caller_tokenizer = SimpleNamespace(name_or_path="Qwen/Qwen3-8B")
     caller_image_processor = object()
     adapter = renderers.get_renderer(
@@ -360,7 +349,6 @@ def test_qwen3_vl_builtins_use_public_renderer_for_images(
 
     assert isinstance(adapter, tml.TmlRendererAdapter)
     assert adapter.tokenizer is not caller_tokenizer
-    assert adapter.has_extension_property is has_extension_property
     assert image_chunk.format == "jpeg"
     assert image_chunk.data.startswith(b"\xff\xd8")
     assert image_chunk.expected_tokens == 64

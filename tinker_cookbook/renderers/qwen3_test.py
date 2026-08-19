@@ -264,7 +264,11 @@ def test_qwen3_disable_thinking_4turn():
 
     messages = _get_basic_4turn()
 
-    model_input, _ = renderer.build_supervised_example(messages)
+    examples = renderer.build_supervised_examples(messages)
+    assert len(examples) == 2
+    model_input, _ = examples[-1]
+    with pytest.raises(NotImplementedError, match="use build_supervised_examples"):
+        renderer.build_supervised_example(messages)
     tinker_tokens = model_input.to_ints()
     tinker_decoded = tokenizer.decode(tinker_tokens)
 

@@ -55,10 +55,6 @@ class TmlRendererAdapter(Renderer):
             raise RuntimeError("cannot pickle a TML renderer adapter with an unparsed completion")
         return super().__reduce__()
 
-    @property
-    def has_extension_property(self) -> bool:
-        return bool(getattr(self._tml_renderer, "has_extension_property", False))
-
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         del message, ctx
         raise NotImplementedError(
@@ -127,26 +123,12 @@ class TmlRendererAdapter(Renderer):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        bridge = import_module("tml_renderers.tinker")
-        render_input = cast(
-            TmlRenderInput,
-            _cookbook_messages_to_sft_input(messages, train_on_what),
-        )
-        try:
-            examples = self._tml_renderer.render_for_sft(
-                render_input,
-                split_non_extension_history=False,
-            )
-        except ValueError as error:
-            raise RendererError(str(error)) from error
+        examples = self.build_supervised_examples(messages, train_on_what)
         if len(examples) != 1:
             raise NotImplementedError(
                 "TML renderer produced multiple SFT examples; use build_supervised_examples"
             )
-        model_input, weights = bridge.training_example_to_tinker_model_input_and_weights(
-            examples[0]
-        )
-        return model_input, torch.tensor(weights, dtype=torch.float32)
+        return examples[0]
 
     def get_stop_sequences(self) -> list[int]:
         return self._tml_renderer.stop()
