@@ -330,6 +330,7 @@ def test_build_generation_prompt_defaults_to_high_effort() -> None:
     renderer = _renderer()
 
     default_prompt = renderer.build_generation_prompt(_messages())
+    renderer.parse_response([])
     high_prompt = renderer.build_generation_prompt(_messages(), effort=0.9)
 
     assert default_prompt.to_ints() == high_prompt.to_ints()
@@ -555,6 +556,7 @@ def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
     model_input = tml_v0.import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(
         spans
     )
+    renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(model_input.to_ints())
 
     assert termination.is_clean
@@ -715,6 +717,7 @@ def test_extension_property_holds_multiturn() -> None:
 
     assert renderer.has_extension_property
     sequence_through_first_assistant = renderer.build_generation_prompt(messages[:3]).to_ints()
+    renderer.parse_response([])
     prompt_before_second_assistant = renderer.build_generation_prompt(messages[:4]).to_ints()
     assert (
         prompt_before_second_assistant[: len(sequence_through_first_assistant)]
