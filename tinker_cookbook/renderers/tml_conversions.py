@@ -1,13 +1,12 @@
-"""Shared conversion helpers for public ``tml_renderers`` adapters."""
-
 from __future__ import annotations
 
 import base64
 from collections.abc import Mapping, Sequence
-from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeGuard, cast
+from typing import Any, TypeAlias, TypeGuard, cast
 from urllib.parse import unquote, urlparse
+
+from tml_renderers import chat as tml_chat
 
 from tinker_cookbook.image_processing_utils import image_to_data_uri
 from tinker_cookbook.renderers.base import (
@@ -18,12 +17,8 @@ from tinker_cookbook.renderers.base import (
     TrainOnWhat,
 )
 
-if TYPE_CHECKING:
-    from tml_renderers import chat as tml_chat  # pyright: ignore[reportMissingImports]
-
-
 TmlRenderInput: TypeAlias = (
-    "Sequence[tml_chat.Message] | Sequence[tml_chat.OpenAIMessage] | tml_chat.MessageList"
+    Sequence[tml_chat.Message] | Sequence[tml_chat.OpenAIMessage] | tml_chat.MessageList
 )
 
 _AUDIO_FORMAT_BY_MIME = {
@@ -38,11 +33,12 @@ _SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "flac")
 
 
 def _is_tml_renderers_input(messages: object) -> TypeGuard[TmlRenderInput]:
-    chat = import_module("tml_renderers.chat")
-    if isinstance(messages, chat.MessageList):
+    if isinstance(messages, tml_chat.MessageList):
         return True
     if isinstance(messages, list):
-        return all(isinstance(message, chat.Message | chat.OpenAIMessage) for message in messages)
+        return all(
+            isinstance(message, tml_chat.Message | tml_chat.OpenAIMessage) for message in messages
+        )
     return False
 
 
@@ -93,7 +89,7 @@ def _read_local_audio(source: str, explicit_format: str | None) -> tuple[bytes, 
         path = Path(unquote(parsed.path)).expanduser()
     else:
         raise ValueError(
-            f"tml_v0 does not fetch remote audio URLs (scheme {parsed.scheme!r}); "
+            f"tml-renderers adapter does not fetch remote audio URLs (scheme {parsed.scheme!r}); "
             "provide encoded bytes, a local path, or a base64 data: URI"
         )
 
@@ -105,7 +101,6 @@ def _read_local_audio(source: str, explicit_format: str | None) -> tuple[bytes, 
 
 
 def _audio_part_to_openai(part: AudioPart) -> dict[str, Any]:
-    """Convert a cookbook ``AudioPart`` to OpenAI's inline ``input_audio`` shape."""
     source = part["audio"]
     explicit_format = part.get("format")
 
@@ -143,7 +138,6 @@ def _audio_part_to_openai(part: AudioPart) -> dict[str, Any]:
 
 
 def _normalize_cookbook_media(messages: Sequence[Message]) -> Sequence[Mapping[str, Any]]:
-    """Rewrite cookbook image/audio parts to OpenAI-compatible content parts."""
     if not isinstance(messages, list):
         return messages
 
@@ -179,8 +173,7 @@ def _normalize_cookbook_media(messages: Sequence[Message]) -> Sequence[Mapping[s
 def _messages_to_render_input(messages: Sequence[Message] | TmlRenderInput) -> TmlRenderInput:
     if _is_tml_renderers_input(messages):
         return messages
-    chat = import_module("tml_renderers.chat")
-    return chat.OpenAIMessage.from_oss_messages(
+    return tml_chat.OpenAIMessage.from_oss_messages(
         _normalize_cookbook_media(cast("Sequence[Message]", messages))
     )
 
@@ -198,7 +191,7 @@ def _assistant_target_indices(messages: Sequence[Message], train_on_what: TrainO
             if message["role"] == "assistant" and message.get("trainable", True)
         }
     raise NotImplementedError(
-        f"tml_v0 currently supports {TrainOnWhat.ALL_ASSISTANT_MESSAGES.value}, "
+        f"tml-renderers adapters support {TrainOnWhat.ALL_ASSISTANT_MESSAGES.value}, "
         f"{TrainOnWhat.LAST_ASSISTANT_MESSAGE.value}, and {TrainOnWhat.CUSTOMIZED.value}; "
         f"got {train_on_what.value!r}"
     )
@@ -207,23 +200,25 @@ def _assistant_target_indices(messages: Sequence[Message], train_on_what: TrainO
 def _cookbook_messages_to_sft_input(
     messages: Sequence[Message] | TmlRenderInput, train_on_what: TrainOnWhat
 ) -> TmlRenderInput:
-    chat = import_module("tml_renderers.chat")
     if train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES:
         return _messages_to_render_input(messages)
 
     if _is_tml_renderers_input(messages):
         raise NotImplementedError(
-            "tml_v0 only supports selective train_on_what modes for cookbook/OpenAI "
+            "tml-renderers adapters only support selective train_on_what modes for "
+            "cookbook/OpenAI "
             "message dictionaries. Pass train_on_what=ALL_ASSISTANT_MESSAGES when using "
             "native tml_renderers.chat.Message, OpenAIMessage, or MessageList inputs."
         )
     cookbook_messages = cast("Sequence[Message]", messages)
 
-    openai_messages = chat.OpenAIMessage.from_oss_messages(
+    openai_messages = tml_chat.OpenAIMessage.from_oss_messages(
         _normalize_cookbook_media(cookbook_messages)
     )
     target_indices = _assistant_target_indices(cookbook_messages, train_on_what)
-    zero_metadata = chat.MessageMetadata(training_metadata=chat.TrainingMetadata(0.0, False))
+    zero_metadata = tml_chat.MessageMetadata(
+        training_metadata=tml_chat.TrainingMetadata(0.0, False)
+    )
     flattened: list[tml_chat.Message] = []
     for idx, (cookbook_message, openai_message) in enumerate(
         zip(cookbook_messages, openai_messages, strict=True)
@@ -233,7 +228,7 @@ def _cookbook_messages_to_sft_input(
             rendered_messages = [
                 (
                     message.copy(message_metadata=zero_metadata)
-                    if message.author.kind == chat.AuthorKind.Model
+                    if message.author.kind == tml_chat.AuthorKind.Model
                     else message
                 )
                 for message in rendered_messages
@@ -243,11 +238,10 @@ def _cookbook_messages_to_sft_input(
 
 
 def _parsed_messages_to_cookbook(parsed: list[tml_chat.Message]) -> Message | None:
-    chat = import_module("tml_renderers.chat")
-    openai_messages = chat.OpenAIMessage.from_messages(parsed)
+    openai_messages = tml_chat.OpenAIMessage.from_messages(parsed)
     if not openai_messages:
         return None
-    openai_dicts = chat.OpenAIMessage.to_oss_messages(openai_messages)
+    openai_dicts = tml_chat.OpenAIMessage.to_oss_messages(openai_messages)
     message = dict(openai_dicts[-1])
     if tool_calls := message.get("tool_calls"):
         message["tool_calls"] = [

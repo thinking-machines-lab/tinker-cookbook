@@ -162,7 +162,6 @@ def _assert_unterminated_content_failure(message: Message, termination: ParseTer
     ],
 )
 def test_qwen3_unterminated_tool_block_is_structural(model_name: str, renderer_name: str):
-    """The public Qwen parser reports an unterminated tool block as malformed."""
     tokenizer = get_tokenizer(model_name)
     renderer = get_renderer(renderer_name, tokenizer)
 

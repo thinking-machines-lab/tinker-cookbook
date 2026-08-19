@@ -196,6 +196,14 @@ def get_renderer(
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
+    from tml_renderers import (
+        qwen3,
+        qwen3_disable_thinking,
+        qwen3_instruct,
+        qwen3_vl,
+        qwen3_vl_instruct,
+    )
+
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
@@ -226,24 +234,14 @@ def get_renderer(
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
     elif name == "qwen3":
-        from tml_renderers import qwen3  # pyright: ignore[reportMissingImports]
-
         renderer = TmlRendererAdapter(qwen3.Renderer())
     elif name == "qwen3_vl":
-        from tml_renderers import qwen3_vl  # pyright: ignore[reportMissingImports]
-
         renderer = TmlRendererAdapter(qwen3_vl.Renderer())
     elif name == "qwen3_vl_instruct":
-        from tml_renderers import qwen3_vl_instruct  # pyright: ignore[reportMissingImports]
-
         renderer = TmlRendererAdapter(qwen3_vl_instruct.Renderer())
     elif name == "qwen3_disable_thinking":
-        from tml_renderers import qwen3_disable_thinking  # pyright: ignore[reportMissingImports]
-
         renderer = TmlRendererAdapter(qwen3_disable_thinking.Renderer())
     elif name == "qwen3_instruct":
-        from tml_renderers import qwen3_instruct  # pyright: ignore[reportMissingImports]
-
         renderer = TmlRendererAdapter(qwen3_instruct.Renderer())
     elif name == "qwen3_5":
         renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
