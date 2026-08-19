@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from importlib import import_module
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import tinker
 import torch
+from tml_renderers import chat as tml_chat
+from tml_renderers.renderer import Parser as PublicParser
+from tml_renderers.renderer import Renderer as PublicRenderer
+from tml_renderers.tinker import (
+    token_spans_to_tinker_model_input,
+    training_example_to_tinker_model_input_and_weights,
+)
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers.base import (
@@ -31,15 +37,6 @@ from tinker_cookbook.renderers.tml_conversions import (
 )
 from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
 from tinker_cookbook.tokenizer_utils import Tokenizer
-
-if TYPE_CHECKING:
-    from tml_renderers import chat as tml_chat  # pyright: ignore[reportMissingImports]
-    from tml_renderers.renderer import (  # pyright: ignore[reportMissingImports]
-        Parser as PublicParser,
-    )
-    from tml_renderers.renderer import (  # pyright: ignore[reportMissingImports]
-        Renderer as PublicRenderer,
-    )
 
 
 class TmlRendererAdapter(Renderer):
@@ -88,7 +85,7 @@ class TmlRendererAdapter(Renderer):
             )
         except ValueError as error:
             raise RendererError(str(error)) from error
-        model_input = import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans)
+        model_input = token_spans_to_tinker_model_input(spans)
         if not prefill:
             return model_input
         return tinker.ModelInput(
@@ -105,8 +102,6 @@ class TmlRendererAdapter(Renderer):
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
-        bridge = import_module("tml_renderers.tinker")
-        rendered: list[tuple[tinker.ModelInput, torch.Tensor]] = []
         render_input = cast(
             TmlRenderInput,
             _cookbook_messages_to_sft_input(messages, train_on_what),
@@ -115,12 +110,13 @@ class TmlRendererAdapter(Renderer):
             examples = self._tml_renderer.render_for_sft(render_input)
         except ValueError as error:
             raise RendererError(str(error)) from error
-        for example in examples:
-            model_input, weights = bridge.training_example_to_tinker_model_input_and_weights(
-                example
-            )
-            rendered.append((model_input, torch.tensor(weights, dtype=torch.float32)))
-        return rendered
+        converted = (
+            training_example_to_tinker_model_input_and_weights(example) for example in examples
+        )
+        return [
+            (model_input, torch.tensor(weights, dtype=torch.float32))
+            for model_input, weights in converted
+        ]
 
     def build_supervised_example(
         self,
@@ -173,7 +169,6 @@ class TmlRendererAdapter(Renderer):
             return ""
 
     def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
-        chat = import_module("tml_renderers.chat")
         try:
             parsed = self._take_parser().parse_tokens(response)
         except ValueError:
@@ -182,21 +177,18 @@ class TmlRendererAdapter(Renderer):
                 ParseTermination.MALFORMED,
             )
         content = [
-            message for message in parsed if not isinstance(message.content, chat.ModelEndSampling)
+            message
+            for message in parsed
+            if not isinstance(message.content, tml_chat.ModelEndSampling)
         ]
         saw_stop = len(content) != len(parsed)
-        message = (
-            _parsed_messages_to_cookbook(cast("list[tml_chat.Message]", content))
-            if content
-            else None
-        )
+        message = _parsed_messages_to_cookbook(content) if content else None
         return (
             message or Message(role="assistant", content=self._decode_or_empty(response)),
             ParseTermination.STOP_SEQUENCE if saw_stop else ParseTermination.MALFORMED,
         )
 
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
-        chat = import_module("tml_renderers.chat")
         parser = self._take_parser()
         try:
             updates = [update for token in response for update in parser.parse_token(token)]
@@ -211,13 +203,13 @@ class TmlRendererAdapter(Renderer):
         content_index = -1
         for update in updates:
             event = update.update
-            if isinstance(event, chat.StreamingMessageHeader):
+            if isinstance(event, tml_chat.StreamingMessageHeader):
                 content_index += 1
                 if not emitted_header:
                     emitted_header = True
                     yield StreamingMessageHeader(role="assistant")
-            elif isinstance(event, chat.StreamingContent):
-                if isinstance(event.content, chat.Thinking):
+            elif isinstance(event, tml_chat.StreamingContent):
+                if isinstance(event.content, tml_chat.Thinking):
                     yield StreamingThinkingDelta(
                         thinking=event.content.text,
                         content_index=max(content_index, 0),
@@ -227,7 +219,7 @@ class TmlRendererAdapter(Renderer):
                         text=event.content.text,
                         content_index=max(content_index, 0),
                     )
-            elif not isinstance(event.content, chat.ModelEndSampling):
+            elif not isinstance(event.content, tml_chat.ModelEndSampling):
                 parsed.append(event)
 
         if not emitted_header:
