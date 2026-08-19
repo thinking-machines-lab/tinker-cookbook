@@ -3,10 +3,11 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, TypeAlias, TypeGuard, cast
+from typing import Any, TypeAlias, cast
 from urllib.parse import unquote, urlparse
 
 from tml_renderers import chat as tml_chat
+from tml_renderers.renderer import messages_from_input
 
 from tinker_cookbook.image_processing_utils import image_to_data_uri
 from tinker_cookbook.renderers.base import (
@@ -32,14 +33,11 @@ _AUDIO_FORMAT_BY_MIME = {
 _SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "flac")
 
 
-def _is_tml_renderers_input(messages: object) -> TypeGuard[TmlRenderInput]:
-    if isinstance(messages, tml_chat.MessageList):
-        return True
-    if isinstance(messages, list):
-        return all(
-            isinstance(message, tml_chat.Message | tml_chat.OpenAIMessage) for message in messages
-        )
-    return False
+def _native_messages(messages: object) -> list[tml_chat.Message] | None:
+    try:
+        return messages_from_input(messages)
+    except ValueError:
+        return None
 
 
 def _jsonable_cookbook_message(message: Message | Mapping[str, Any]) -> Mapping[str, Any]:
@@ -171,11 +169,12 @@ def _normalize_cookbook_media(messages: Sequence[Message]) -> Sequence[Mapping[s
 
 
 def _messages_to_render_input(messages: Sequence[Message] | TmlRenderInput) -> TmlRenderInput:
-    if _is_tml_renderers_input(messages):
-        return messages
-    return tml_chat.OpenAIMessage.from_oss_messages(
+    if (native := _native_messages(messages)) is not None:
+        return native
+    openai_messages = tml_chat.OpenAIMessage.from_oss_messages(
         _normalize_cookbook_media(cast("Sequence[Message]", messages))
     )
+    return messages_from_input(openai_messages)
 
 
 def _assistant_target_indices(messages: Sequence[Message], train_on_what: TrainOnWhat) -> set[int]:
@@ -203,7 +202,7 @@ def _cookbook_messages_to_sft_input(
     if train_on_what == TrainOnWhat.ALL_ASSISTANT_MESSAGES:
         return _messages_to_render_input(messages)
 
-    if _is_tml_renderers_input(messages):
+    if _native_messages(messages) is not None:
         raise NotImplementedError(
             "tml-renderers adapters only support selective train_on_what modes for "
             "cookbook/OpenAI "
@@ -234,7 +233,7 @@ def _cookbook_messages_to_sft_input(
                 for message in rendered_messages
             ]
         flattened.extend(rendered_messages)
-    return flattened
+    return messages_from_input(flattened)
 
 
 def _parsed_messages_to_cookbook(parsed: list[tml_chat.Message]) -> Message | None:
