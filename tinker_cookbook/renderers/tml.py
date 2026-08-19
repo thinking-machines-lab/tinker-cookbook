@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import cast
 
 import tinker
@@ -52,10 +52,6 @@ class TmlRendererAdapter(Renderer):
             raise RuntimeError("cannot pickle a TML renderer adapter with an unparsed completion")
         return super().__reduce__()
 
-    @property
-    def has_extension_property(self) -> bool:
-        return bool(getattr(self._tml_renderer, "has_extension_property", False))
-
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         del message, ctx
         raise NotImplementedError(
@@ -69,35 +65,47 @@ class TmlRendererAdapter(Renderer):
             raise RuntimeError("render a completion prompt before parsing its response")
         return parser
 
+    @staticmethod
+    def _validate_generation_options(role: Role, prefill: str | None) -> None:
+        if role != "assistant":
+            raise NotImplementedError("TML renderers only support assistant generation")
+        if prefill:
+            raise NotImplementedError("TML renderers do not support caller-provided prefill")
+
+    def _build_generation_prompt(
+        self,
+        messages: list[Message] | TmlRenderInput,
+        role: Role,
+        prefill: str | None,
+        render_for_completion: Callable[
+            [TmlRenderInput], tuple[list[tml_chat.TokenSpan], PublicParser]
+        ],
+    ) -> tinker.ModelInput:
+        self._validate_generation_options(role, prefill)
+        if self._pending_parser is not None:
+            raise RuntimeError("parse the pending completion before rendering another prompt")
+        try:
+            spans, self._pending_parser = render_for_completion(_messages_to_render_input(messages))
+        except ValueError as error:
+            raise RendererError(str(error)) from error
+        return token_spans_to_tinker_model_input(spans)
+
     def build_generation_prompt(
         self,
         messages: list[Message],
         role: Role = "assistant",
         prefill: str | None = None,
     ) -> tinker.ModelInput:
-        if role != "assistant":
-            raise NotImplementedError("TML renderers only support assistant generation")
-        if prefill:
-            raise NotImplementedError("TML renderers do not support caller-provided prefill")
-        if self._pending_parser is not None:
-            raise RuntimeError("parse the pending completion before rendering another prompt")
-        try:
-            spans, self._pending_parser = self._tml_renderer.render_for_completion(
-                _messages_to_render_input(messages)
-            )
-        except ValueError as error:
-            raise RendererError(str(error)) from error
-        return token_spans_to_tinker_model_input(spans)
-
-    def build_supervised_examples(
-        self,
-        messages: list[Message],
-        train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
-    ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
-        render_input = cast(
-            TmlRenderInput,
-            _cookbook_messages_to_sft_input(messages, train_on_what),
+        return self._build_generation_prompt(
+            messages,
+            role,
+            prefill,
+            self._tml_renderer.render_for_completion,
         )
+
+    def _build_supervised_examples(
+        self, render_input: TmlRenderInput
+    ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         try:
             examples = self._tml_renderer.render_for_sft(render_input)
         except ValueError as error:
@@ -110,31 +118,34 @@ class TmlRendererAdapter(Renderer):
             for model_input, weights in converted
         ]
 
+    def build_supervised_examples(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
+    ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
+        render_input = cast(
+            TmlRenderInput, _cookbook_messages_to_sft_input(messages, train_on_what)
+        )
+        return self._build_supervised_examples(render_input)
+
+    @staticmethod
+    def _single_supervised_example(
+        examples: list[tuple[tinker.ModelInput, torch.Tensor]],
+    ) -> tuple[tinker.ModelInput, torch.Tensor]:
+        if len(examples) != 1:
+            raise NotImplementedError(
+                "TML renderer produced multiple SFT examples; use build_supervised_examples"
+            )
+        return examples[0]
+
     def build_supervised_example(
         self,
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        bridge = import_module("tml_renderers.tinker")
-        render_input = cast(
-            TmlRenderInput,
-            _cookbook_messages_to_sft_input(messages, train_on_what),
+        return self._single_supervised_example(
+            self.build_supervised_examples(messages, train_on_what)
         )
-        try:
-            examples = self._tml_renderer.render_for_sft(
-                render_input,
-                split_non_extension_history=False,
-            )
-        except ValueError as error:
-            raise RendererError(str(error)) from error
-        if len(examples) != 1:
-            raise NotImplementedError(
-                "TML renderer produced multiple SFT examples; use build_supervised_examples"
-            )
-        model_input, weights = bridge.training_example_to_tinker_model_input_and_weights(
-            examples[0]
-        )
-        return model_input, torch.tensor(weights, dtype=torch.float32)
 
     def get_stop_sequences(self) -> list[int]:
         return self._tml_renderer.stop()
