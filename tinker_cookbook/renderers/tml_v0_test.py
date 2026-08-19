@@ -30,7 +30,22 @@ class _FakeTmlRenderersChat:
         User = "user"
 
     class MessageList:
-        pass
+        def __init__(self, messages=None):
+            self.messages = [] if messages is None else messages
+
+        @staticmethod
+        def from_messages(messages):
+            if isinstance(messages, _FakeTmlRenderersChat.MessageList):
+                return _FakeTmlRenderersChat.MessageList(list(messages.messages))
+            if all(isinstance(message, _FakeTmlRenderersChat.Message) for message in messages):
+                return _FakeTmlRenderersChat.MessageList(list(messages))
+            if all(
+                isinstance(message, _FakeTmlRenderersChat.OpenAIMessage) for message in messages
+            ):
+                return _FakeTmlRenderersChat.MessageList(
+                    [item for message in messages for item in message.to_messages()]
+                )
+            raise ValueError("unsupported message input")
 
     class MessageMetadata:
         def __init__(self, training_metadata=None):
@@ -144,7 +159,7 @@ def test_cookbook_dicts_are_converted_with_tool_calls_for_openai_message(
 
     rendered = cast(Any, tml_conversions._messages_to_render_input(messages))
 
-    assert all(isinstance(message, mock_tml_renderers_chat.OpenAIMessage) for message in rendered)
+    assert all(isinstance(message, mock_tml_renderers_chat.Message) for message in rendered)
     source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
     assert source_messages is not None
     assert source_messages[1]["tool_calls"][0]["id"] == "call_weather"
@@ -240,14 +255,14 @@ def test_cookbook_audio_remote_url_is_rejected() -> None:
 def test_native_tml_renderers_inputs_pass_through(
     mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
 ) -> None:
-    messages = [
-        mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User),
-        mock_tml_renderers_chat.OpenAIMessage("user"),
-    ]
-    message_list = mock_tml_renderers_chat.MessageList()
+    message = mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User)
+    messages = [message]
+    openai_messages = [mock_tml_renderers_chat.OpenAIMessage("user")]
+    message_list = mock_tml_renderers_chat.MessageList(messages)
 
-    assert tml_conversions._messages_to_render_input(cast(Any, messages)) is messages
-    assert tml_conversions._messages_to_render_input(cast(Any, message_list)) is message_list
+    assert tml_conversions._messages_to_render_input(cast(Any, messages)) == messages
+    assert len(tml_conversions._messages_to_render_input(cast(Any, openai_messages))) == 1
+    assert tml_conversions._messages_to_render_input(cast(Any, message_list)) == messages
 
 
 def test_selective_sft_masking_sets_zero_training_metadata(
