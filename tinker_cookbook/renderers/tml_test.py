@@ -97,8 +97,17 @@ class _Renderer:
             )
         ]
 
-    def stop(self) -> list[int]:
+    def stop(self) -> list[int] | list[str] | str | None:
         return [42]
+
+
+class _StopRenderer(_Renderer):
+    def __init__(self, stop: list[int] | list[str] | str | None):
+        super().__init__()
+        self._stop = stop
+
+    def stop(self) -> list[int] | list[str] | str | None:
+        return self._stop
 
 
 def test_adapter_takes_only_the_public_renderer() -> None:
@@ -120,6 +129,28 @@ def test_adapter_takes_only_the_public_renderer() -> None:
     assert len(public_renderer.parsers) == 1
     assert public_renderer.parsers[0].parsed_tokens == [[7, 42]]
     assert adapter.get_stop_sequences() == [42]
+
+
+@pytest.mark.parametrize(
+    ("stop", "expected"),
+    [
+        (None, []),
+        ("stop", ["stop"]),
+        (["first", "second"], ["first", "second"]),
+        ([1, 2], [1, 2]),
+    ],
+)
+def test_adapter_normalizes_public_stop_condition(
+    stop: list[int] | list[str] | str | None,
+    expected: list[int] | list[str],
+) -> None:
+    renderer = _StopRenderer(stop)
+
+    actual = tml.TmlRendererAdapter(cast(PublicRenderer, renderer)).get_stop_sequences()
+
+    assert actual == expected
+    if isinstance(stop, list):
+        assert actual is stop
 
 
 def test_adapter_rejects_caller_prefill() -> None:
