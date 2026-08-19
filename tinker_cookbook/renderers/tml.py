@@ -77,6 +77,8 @@ class TmlRendererAdapter(Renderer):
     ) -> tinker.ModelInput:
         if role != "assistant":
             raise NotImplementedError("TML renderers only support assistant generation")
+        if prefill:
+            raise NotImplementedError("TML renderers do not support caller-provided prefill")
         if self._pending_parser is not None:
             raise RuntimeError("parse the pending completion before rendering another prompt")
         try:
@@ -85,17 +87,7 @@ class TmlRendererAdapter(Renderer):
             )
         except ValueError as error:
             raise RendererError(str(error)) from error
-        model_input = token_spans_to_tinker_model_input(spans)
-        if not prefill:
-            return model_input
-        return tinker.ModelInput(
-            chunks=[
-                *model_input.chunks,
-                tinker.EncodedTextChunk(
-                    tokens=list(self._tml_renderer.tokenizer.encode_ordinary(prefill))
-                ),
-            ]
-        )
+        return token_spans_to_tinker_model_input(spans)
 
     def build_supervised_examples(
         self,
