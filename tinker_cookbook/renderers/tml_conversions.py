@@ -7,7 +7,6 @@ from typing import Any, TypeAlias, cast
 from urllib.parse import unquote, urlparse
 
 from tml_renderers import chat as tml_chat
-from tml_renderers.renderer import messages_from_input
 
 from tinker_cookbook.image_processing_utils import image_to_data_uri
 from tinker_cookbook.renderers.base import (
@@ -35,7 +34,7 @@ _SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "flac")
 
 def _native_messages(messages: object) -> list[tml_chat.Message] | None:
     try:
-        return messages_from_input(messages)
+        return tml_chat.MessageList.from_messages(cast("TmlRenderInput", messages)).messages
     except ValueError:
         return None
 
@@ -174,7 +173,7 @@ def _messages_to_render_input(messages: Sequence[Message] | TmlRenderInput) -> T
     openai_messages = tml_chat.OpenAIMessage.from_oss_messages(
         _normalize_cookbook_media(cast("Sequence[Message]", messages))
     )
-    return messages_from_input(openai_messages)
+    return tml_chat.MessageList.from_messages(openai_messages).messages
 
 
 def _assistant_target_indices(messages: Sequence[Message], train_on_what: TrainOnWhat) -> set[int]:
@@ -233,7 +232,7 @@ def _cookbook_messages_to_sft_input(
                 for message in rendered_messages
             ]
         flattened.extend(rendered_messages)
-    return messages_from_input(flattened)
+    return tml_chat.MessageList.from_messages(flattened).messages
 
 
 def _parsed_messages_to_cookbook(parsed: list[tml_chat.Message]) -> Message | None:
