@@ -147,8 +147,13 @@ class TmlRendererAdapter(Renderer):
             self.build_supervised_examples(messages, train_on_what)
         )
 
-    def get_stop_sequences(self) -> list[int]:
-        return self._tml_renderer.stop()
+    def get_stop_sequences(self) -> list[int] | list[str]:
+        stop = self._tml_renderer.stop()
+        if stop is None:
+            return []
+        if isinstance(stop, str):
+            return [stop]
+        return stop
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
