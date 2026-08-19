@@ -144,7 +144,13 @@ def test_adapter_uses_public_sft_examples() -> None:
 
     assert model_input.to_ints() == [4, 5]
     assert weights.tolist() == [0.0, 1.0]
-    assert len(cast(Sequence[object], public_renderer.sft_input)) == 2
+    sft_input = cast(Sequence[tml_chat.Message], public_renderer.sft_input)
+    assert [message.author.kind for message in sft_input] == [
+        tml_chat.AuthorKind.User,
+        tml_chat.AuthorKind.Model,
+        tml_chat.AuthorKind.Model,
+    ]
+    assert isinstance(sft_input[-1].content, tml_chat.ModelEndSampling)
 
 
 def test_adapter_rejects_context_free_message_rendering() -> None:
