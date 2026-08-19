@@ -107,21 +107,28 @@ def test_adapter_takes_only_the_public_renderer() -> None:
     public_renderer = _Renderer()
 
     adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
-    prompt = adapter.build_generation_prompt(
-        [Message(role="user", content="hello")], prefill="prefix"
-    )
+    prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
     parsed, termination = adapter.parse_response([7, 42])
 
     assert adapter.tokenizer is public_renderer.tokenizer
-    assert prompt.to_ints() == [1, 2, 3, 9]
+    assert prompt.to_ints() == [1, 2, 3]
     assert tml_chat.OpenAIMessage.to_oss_messages(
-        cast(Sequence[tml_chat.OpenAIMessage], public_renderer.rendered)
+        tml_chat.OpenAIMessage.from_messages(
+            cast(Sequence[tml_chat.Message], public_renderer.rendered)
+        )
     ) == [{"role": "user", "content": "hello"}]
     assert parsed == Message(role="assistant", content="answer")
     assert termination == ParseTermination.STOP_SEQUENCE
     assert len(public_renderer.parsers) == 1
     assert public_renderer.parsers[0].parsed_tokens == [[7, 42]]
     assert adapter.get_stop_sequences() == [42]
+
+
+def test_adapter_rejects_caller_prefill() -> None:
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+
+    with pytest.raises(NotImplementedError, match="caller-provided prefill"):
+        adapter.build_generation_prompt([Message(role="user", content="hello")], prefill="prefix")
 
 
 def test_adapter_uses_public_sft_examples() -> None:
