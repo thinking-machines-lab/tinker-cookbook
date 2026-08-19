@@ -77,8 +77,8 @@ def mock_tml_renderers_chat(monkeypatch: pytest.MonkeyPatch) -> type[_FakeTmlRen
     _FakeTmlRenderersChat.OpenAIMessage.source_messages = None
     monkeypatch.setattr(
         tml_conversions,
-        "import_module",
-        lambda module="tml_renderers": _FakeTmlRenderersChat,
+        "tml_chat",
+        _FakeTmlRenderersChat,
     )
     return _FakeTmlRenderersChat
 
