@@ -7,7 +7,6 @@ framing and unshifted SFT masks; cookbook owns final Datum construction through
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Sequence
 from importlib import import_module
@@ -18,21 +17,14 @@ import torch
 
 from tinker_cookbook.renderers.base import (
     Message,
-    ParseTermination,
-    RenderContext,
-    RenderedMessage,
-    Renderer,
     Role,
-    ToolSpec,
     TrainOnWhat,
 )
+from tinker_cookbook.renderers.tml import TmlRendererAdapter
 from tinker_cookbook.renderers.tml_conversions import (
     TmlRenderInput,
     _cookbook_messages_to_sft_input,
-    _messages_to_render_input,
-    _parsed_messages_to_cookbook,
 )
-from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
 from tinker_cookbook.tokenizer_utils import (
     SupportsTmlTokenizer,
     TmlTokenizer,
@@ -155,19 +147,20 @@ def _unwrap_tml_tokenizer(tokenizer: Tokenizer) -> TmlTokenizer:
     )
 
 
-class TmlV0Renderer(Renderer):
+class TmlV0Renderer(TmlRendererAdapter):
     """Renderer adapter for Inkling models."""
 
     supports_streaming = False
 
     def __init__(self, tokenizer: Tokenizer):
-        super().__init__(tokenizer)
         _validate_torch_version()
         ensure_tml_renderers_importable()
-        self._tml_tokenizer = _unwrap_tml_tokenizer(tokenizer)
-        self._tml_renderer: tml_v0.Renderer = import_module("tml_renderers.v0").Renderer(
-            self._tml_tokenizer
+        renderer = cast(
+            "tml_v0.Renderer",
+            import_module("tml_renderers.v0").Renderer(_unwrap_tml_tokenizer(tokenizer)),
         )
+        super().__init__(renderer)
+        self.tokenizer = tokenizer
 
     @property
     def has_extension_property(self) -> bool:
@@ -175,11 +168,6 @@ class TmlV0Renderer(Renderer):
         by position. Shorter prompts stay token-prefixes of longer ones.
         """
         return True
-
-    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        raise NotImplementedError(
-            "TmlV0Renderer renders whole conversations through tml_renderers.v0.Renderer"
-        )
 
     @staticmethod
     def _validate_generation_options(role: Role, prefill: str | None) -> None:
@@ -190,10 +178,6 @@ class TmlV0Renderer(Renderer):
                 "TMLv0 sampling does not accept partial assistant messages. "
                 "Pass complete messages and let the model start a new assistant response."
             )
-
-    @staticmethod
-    def _token_spans_to_model_input(spans: list[tml_chat.TokenSpan]) -> tinker.ModelInput:
-        return import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans)
 
     def build_generation_prompt(
         self,
@@ -208,24 +192,14 @@ class TmlV0Renderer(Renderer):
         high. Insertion of the system-level effort directive is delegated to
         ``tml-renderers``.
         """
-        self._validate_generation_options(role, prefill)
         _validate_effort(effort)
-        render_input = _messages_to_render_input(messages)
-        spans, _parser = self._tml_renderer.render_for_completion_with_effort(render_input, effort)
-        return self._token_spans_to_model_input(spans)
-
-    def _render_sft_examples(
-        self, render_input: TmlRenderInput
-    ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
-        tml_tinker = import_module("tml_renderers.tinker")
-        examples = self._tml_renderer.render_for_sft(render_input)
-        rendered: list[tuple[tinker.ModelInput, torch.Tensor]] = []
-        for example in examples:
-            model_input, weights = tml_tinker.training_example_to_tinker_model_input_and_weights(
-                example
-            )
-            rendered.append((model_input, torch.tensor(weights, dtype=torch.float32)))
-        return rendered
+        renderer = cast("tml_v0.Renderer", self._tml_renderer)
+        return self._build_generation_prompt(
+            messages,
+            role,
+            prefill,
+            lambda render_input: renderer.render_for_completion_with_effort(render_input, effort),
+        )
 
     def build_supervised_examples(
         self,
@@ -244,7 +218,7 @@ class TmlV0Renderer(Renderer):
         specific effort level.
         """
         render_input = _cookbook_messages_to_sft_input(messages, train_on_what)
-        return self._render_sft_examples(_prepare_sft_input(render_input, effort))
+        return self._build_supervised_examples(_prepare_sft_input(render_input, effort))
 
     def build_supervised_example(
         self,
@@ -252,73 +226,6 @@ class TmlV0Renderer(Renderer):
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
         effort: float = DEFAULT_EFFORT,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        examples = self.build_supervised_examples(messages, train_on_what, effort=effort)
-        return self._single_example(examples)
-
-    @staticmethod
-    def _single_example(
-        examples: list[tuple[tinker.ModelInput, torch.Tensor]],
-    ) -> tuple[tinker.ModelInput, torch.Tensor]:
-        if len(examples) != 1:
-            raise NotImplementedError(
-                "tml_v0 produced multiple SFT examples; use build_supervised_examples"
-            )
-        return examples[0]
-
-    def get_stop_sequences(self) -> list[int]:
-        return self._tml_renderer.stop()
-
-    def create_conversation_prefix_with_tools(
-        self, tools: list[ToolSpec], system_prompt: str = ""
-    ) -> list[Message]:
-        prefix: list[Message] = []
-        if system_prompt:
-            prefix.append(Message(role="system", content=system_prompt))
-        if tools:
-            prefix.append(
-                Message(
-                    role="tool_declare",
-                    content=json.dumps(
-                        tool_specs_to_openai_tools(tools),
-                        separators=(",", ":"),
-                    ),
-                )
-            )
-        return prefix
-
-    def _decode_or_empty(self, response: list[int]) -> str:
-        try:
-            decoded = self.tokenizer.decode(response)
-        except Exception:
-            return ""
-        return decoded if isinstance(decoded, str) else "".join(decoded)
-
-    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
-        # TMLv0 sampling emits its own message header, so parse the response as-is.
-        _spans, parser = self._tml_renderer.render_for_completion([])
-        parse_error = import_module("tml_renderers.v0").ParseError
-        try:
-            parsed = parser.parse_tokens(response)
-        except parse_error:
-            # The native parser raises ParseError (e.g. JsonIncomplete) when the
-            # tokens end mid-structure — typically a max_tokens truncation at an
-            # unlucky cut point. The cookbook renderer contract (see qwen3
-            # parse_response) is to RETURN a MALFORMED termination, never raise;
-            # fall back to the decoded raw text, matching the fallback below.
-            return (
-                Message(role="assistant", content=self._decode_or_empty(response)),
-                ParseTermination.MALFORMED,
-            )
-        chat = import_module("tml_renderers.chat")
-        content_messages = [
-            message for message in parsed if not isinstance(message.content, chat.ModelEndSampling)
-        ]
-        # A dropped ModelEndSampling is the expected stop signal; without it the response
-        # was truncated. Any unparseable content falls back to the decoded text.
-        saw_stop = len(content_messages) != len(parsed)
-        termination = ParseTermination.STOP_SEQUENCE if saw_stop else ParseTermination.MALFORMED
-
-        message = _parsed_messages_to_cookbook(content_messages) if content_messages else None
-        if message is None:
-            message = Message(role="assistant", content=self._decode_or_empty(response))
-        return message, termination
+        return self._single_supervised_example(
+            self.build_supervised_examples(messages, train_on_what, effort=effort)
+        )
