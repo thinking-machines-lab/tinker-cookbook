@@ -58,6 +58,10 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
     populated by the base build_generation_prompt/build_supervised_example.
     """
 
+    # The Qwen3.5-family templates wrap a run of consecutive tool responses in a
+    # single <|im_start|>user block (gated on loop.previtem/nextitem).
+    groups_consecutive_tool_responses = True
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         if isinstance(message["content"], str):
             message = {**message, "content": message["content"].strip()}
@@ -234,26 +238,52 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         self._postprocess_parsed_message(message)
         return message, termination
 
+    def _format_tool_call_argument(self, value: object) -> str:
+        """Serialize one tool-call argument value the way the template does.
+
+        The Qwen3.5 (and Nemotron) templates apply ``|tojson`` only to mappings
+        and sequences; scalars go through ``|string``, i.e. Python-style
+        ``True``/``None``. Qwen3.6 changed this to ``|tojson`` for everything
+        non-string (JSON ``true``/``null``) but reuses this renderer, so boolean
+        and null arguments diverge from the Qwen3.6 template; Qwen3.8 has its own
+        renderer and overrides this accordingly.
+        """
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        return str(value)
+
     def _format_tool_call_xml(self, tool_call: ToolCall) -> str:
         """Format a single tool call in Qwen3.5's XML parameter format."""
         args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
         lines = [f"<tool_call>\n<function={tool_call.function.name}>"]
         for param_name, param_value in args.items():
-            if isinstance(param_value, (dict, list)):
-                value_str = json.dumps(param_value)
-            else:
-                value_str = str(param_value)
+            value_str = self._format_tool_call_argument(param_value)
             lines.append(f"<parameter={param_name}>\n{value_str}\n</parameter>")
         lines.append("</function>\n</tool_call>")
         return "\n".join(lines)
 
     def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
-        """Format tool_calls using Qwen3.5's XML parameter format."""
+        """Format tool_calls using Qwen3.5's XML parameter format.
+
+        The template separates the first <tool_call> from the message content with
+        a blank line only when there is visible content (``{%- if content|trim %}``);
+        with no content the block starts immediately.
+        """
         assert "tool_calls" in message, "tool_calls are required to format tool calls"
+        content = message.get("content", "")
+        if isinstance(content, str):
+            has_visible_content = bool(content.strip())
+        else:
+            # Thinking parts are rendered separately by the template, so only text
+            # and image parts count as content for the separator.
+            has_visible_content = any(
+                (p["type"] == "text" and p["text"].strip()) or p["type"] == "image" for p in content
+            )
+        separator = "\n\n" if has_visible_content else ""
         return [
             TextPart(
                 type="text",
-                text="\n\n"
+                text=separator
                 + "\n".join(self._format_tool_call_xml(tc) for tc in message["tool_calls"]),
             )
         ]

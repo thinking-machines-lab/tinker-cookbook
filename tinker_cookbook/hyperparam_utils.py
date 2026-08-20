@@ -121,6 +121,8 @@ def _get_hidden_size(model_name: str) -> int:
         # Qwen3.6 (same architecture family as Qwen3.5, hidden_size under text_config)
         "Qwen/Qwen3.6-27B": 5120,
         "Qwen/Qwen3.6-35B-A3B": 2048,
+        # Qwen3.8 (27B config identical to Qwen3.6-27B; only the chat template changed)
+        "Qwen/Qwen3.8-27B": 5120,
         # OpenAI
         "openai/gpt-oss-120b": 2880,
         "openai/gpt-oss-20b": 2880,
@@ -186,6 +188,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "Qwen/Qwen3.5-9B-Base": {"mlp": 1_572_864, "attn": 1_130_496, "unembed": 252_416},
     "Qwen/Qwen3.6-27B": {"mlp": 4_325_376, "attn": 2_965_504, "unembed": 253_440},
     "Qwen/Qwen3.6-35B-A3B": {"mlp": 16_281_600, "attn": 1_013_760, "unembed": 250_368},
+    "Qwen/Qwen3.8-27B": {"mlp": 4_325_376, "attn": 2_965_504, "unembed": 253_440},
     "deepseek-ai/DeepSeek-V3.1": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
     "deepseek-ai/DeepSeek-V3.1-Base": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
     "meta-llama/Llama-3.1-70B": {"mlp": 8_847_360, "attn": 4_096_000, "unembed": 136_448},

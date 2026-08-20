@@ -19,7 +19,7 @@ Two build paths for trained LoRA adapters:
 | Model Family | Merge | Adapter | Quantized Checkpoint | Notes |
 |---|:---:|:---:|---|---|
 | **Qwen3 dense** (8B) | ✅ | ✅ | bf16 | Standard attention LoRA |
-| **Qwen3.5 / Qwen3.6 dense** (Qwen3.5: 4B, 9B, 9B-Base; Qwen3.6: 27B) | ✅ | ✅ | bf16 | Split QKV (`in_proj_q/k/v`); tied embeddings where applicable |
+| **Qwen3.5 / Qwen3.6 / Qwen3.8 dense** (Qwen3.5: 4B, 9B, 9B-Base; Qwen3.6: 27B; Qwen3.8: 27B) | ✅ | ✅ | bf16 | Split QKV (`in_proj_q/k/v`); tied embeddings where applicable |
 | **Qwen3.5 / Qwen3.6 MoE** (Qwen3.5: 35B-A3B-Base, 397B-A17B; Qwen3.6: 35B-A3B) | ✅ | ✅ | bf16 | Split QKV + fused experts; vLLM MoE LoRA experimental |
 | **GPT-OSS** (20B, 120B) | ✅ | ✅ | bf16 | `.attn` → `.self_attn` remap; interleaved expert layout |
 | **Kimi-K2.6** (~1T-A32B) | ✅ | ✅ | INT4 pack-quantized | VL model; `language_model.model.*` prefix; vLLM LoRA not yet supported |
@@ -40,7 +40,7 @@ Use `hyperparam_utils.get_lr(model_name)` when available. LoRA training typicall
 
 | Model Family | LoRA LR | Full FT LR | Notes |
 |---|---|---|---|
-| **Qwen3 / Qwen3.5 / Qwen3.6** | `get_lr(model_name)` | `get_lr(model_name, is_lora=False)` | Calibrated; scales with hidden size |
+| **Qwen3 / Qwen3.5 / Qwen3.6 / Qwen3.8** | `get_lr(model_name)` | `get_lr(model_name, is_lora=False)` | Calibrated; scales with hidden size |
 | **Kimi-K2.6** | ~5e-4 | ~5e-5 | Not yet calibrated in `get_lr`; start with 5e-4 for LoRA |
 | **DeepSeek V3.1** | ~5e-4 | ~5e-5 | Not yet calibrated; similar architecture to Kimi |
 | **GPT-OSS** | ~5e-4 | ~5e-5 | Not yet calibrated |

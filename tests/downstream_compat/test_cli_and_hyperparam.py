@@ -207,6 +207,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 2_965_504,
         (False, False, True): 253_440,
     },
+    "Qwen/Qwen3.8-27B": {
+        (True, True, True): 7_544_320,
+        (True, True, False): 7_290_880,
+        (True, False, True): 4_578_816,
+        (True, False, False): 4_325_376,
+        (False, True, True): 3_218_944,
+        (False, True, False): 2_965_504,
+        (False, False, True): 253_440,
+    },
     "Qwen/Qwen3.6-35B-A3B": {
         (True, True, True): 17_545_728,
         (True, True, False): 17_295_360,
