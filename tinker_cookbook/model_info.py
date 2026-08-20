@@ -22,6 +22,12 @@ _QWEN3_INSTRUCT = ("qwen3_instruct",)
 _QWEN3_VL = ("qwen3_vl",)
 _QWEN3_VL_INSTRUCT = ("qwen3_vl_instruct",)
 _QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking")
+_QWEN3_8 = (
+    "qwen3_8_xhigh_reasoning",
+    "qwen3_8_disable_thinking",
+    "qwen3_8_medium_reasoning",
+    "qwen3_8_low_reasoning",
+)
 _DEEPSEEKV3 = ("deepseekv3", "deepseekv3_thinking")
 _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
@@ -128,6 +134,10 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
         # so renderer/merge/export code paths are shared.
         "Qwen3.6-27B": ModelAttributes(org, "3.6", "27B", True, _QWEN3_5, is_vl=True),
         "Qwen3.6-35B-A3B": ModelAttributes(org, "3.6", "35B-A3B", True, _QWEN3_5, is_vl=True),
+        # Qwen3.8 keeps Qwen3.5/3.6's tokenizer, special tokens, and preprocessor, but
+        # its chat template adds reasoning-effort instructions and preserves thinking
+        # in history by default, so it gets its own qwen3_8 renderer family.
+        "Qwen3.8-27B": ModelAttributes(org, "3.8", "27B", True, _QWEN3_8, is_vl=True),
     }
 
 

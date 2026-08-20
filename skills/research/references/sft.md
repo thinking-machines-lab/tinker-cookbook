@@ -16,6 +16,10 @@
 | `qwen3_vl_instruct` | Qwen3 VL Instruct | Vision, no thinking |
 | `qwen3_5` | Qwen3.5/Qwen3.6 VL | Thinking enabled |
 | `qwen3_5_disable_thinking` | Qwen3.5/Qwen3.6 VL | Thinking disabled |
+| `qwen3_8_xhigh_reasoning` | Qwen3.8 VL | Thinking enabled, reasoning effort xhigh (default) |
+| `qwen3_8_medium_reasoning` | Qwen3.8 VL | Thinking enabled, reasoning effort medium |
+| `qwen3_8_low_reasoning` | Qwen3.8 VL | Thinking enabled, reasoning effort low |
+| `qwen3_8_disable_thinking` | Qwen3.8 VL | Thinking disabled |
 | `deepseekv3` | DeepSeek V3 | Defaults to non-thinking |
 | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
 | `kimi_k2` | Kimi K2 | Thinking format |
