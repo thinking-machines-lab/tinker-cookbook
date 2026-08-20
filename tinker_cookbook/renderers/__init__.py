@@ -135,6 +135,10 @@ def get_renderer(
             - ``"qwen3_instruct"``: Qwen3 instruct 2507 (no thinking)
             - ``"qwen3_5"``: Qwen3.5 VL with thinking
             - ``"qwen3_5_disable_thinking"``: Qwen3.5 VL with thinking disabled
+            - ``"qwen3_8_xhigh_reasoning"``: Qwen3.8 with thinking (reasoning effort xhigh, the HF default)
+            - ``"qwen3_8_medium_reasoning"``: Qwen3.8 with thinking, reasoning effort medium
+            - ``"qwen3_8_low_reasoning"``: Qwen3.8 with thinking, reasoning effort low
+            - ``"qwen3_8_disable_thinking"``: Qwen3.8 with thinking disabled
             - ``"deepseekv3"``: DeepSeek V3 (defaults to non-thinking mode)
             - ``"deepseekv3_disable_thinking"``: DeepSeek V3 non-thinking (alias)
             - ``"deepseekv3_thinking"``: DeepSeek V3 thinking mode
@@ -222,6 +226,7 @@ def get_renderer(
         Qwen3VLRenderer,
     )
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
+    from tinker_cookbook.renderers.qwen3_8 import Qwen3_8DisableThinkingRenderer, Qwen3_8Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
     from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
@@ -244,6 +249,18 @@ def get_renderer(
         renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_5_disable_thinking":
         renderer = Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "qwen3_8_xhigh_reasoning":
+        renderer = Qwen3_8Renderer(tokenizer, image_processor=image_processor)
+    elif name == "qwen3_8_medium_reasoning":
+        renderer = Qwen3_8Renderer(
+            tokenizer, image_processor=image_processor, reasoning_effort="medium"
+        )
+    elif name == "qwen3_8_low_reasoning":
+        renderer = Qwen3_8Renderer(
+            tokenizer, image_processor=image_processor, reasoning_effort="low"
+        )
+    elif name == "qwen3_8_disable_thinking":
+        renderer = Qwen3_8DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "deepseekv3":
         # Default to non-thinking mode (matches HF template default behavior)
         renderer = DeepSeekV3DisableThinkingRenderer(tokenizer)

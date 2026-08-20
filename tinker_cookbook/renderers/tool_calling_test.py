@@ -11,8 +11,17 @@ These tests verify that renderers correctly handle:
 import pytest
 import tinker
 
-from tinker_cookbook.renderers import Message, RenderContext, get_renderer, get_text_content
-from tinker_cookbook.renderers.testing_utils import skip_deepseek_tokenizer_bug
+from tinker_cookbook.renderers import (
+    Message,
+    RenderContext,
+    ToolCall,
+    get_renderer,
+    get_text_content,
+)
+from tinker_cookbook.renderers.testing_utils import (
+    extract_token_ids,
+    skip_deepseek_tokenizer_bug,
+)
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 # =============================================================================
@@ -27,6 +36,8 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
         ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -75,6 +86,8 @@ def test_qwen3_tool_response_rendering(model_name: str, renderer_name: str):
         ("Qwen/Qwen3-30B-A3B-Instruct-2507", "qwen3_instruct"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ],
@@ -89,7 +102,7 @@ def test_qwen3_parse_single_tool_call(model_name: str, renderer_name: str):
 <tool_call>
 {"name": "search", "arguments": {"query": "weather in NYC"}}
 </tool_call><|im_end|>"""
-    if renderer_name.startswith("qwen3_5") or renderer_name.startswith("nemotron3"):
+    if renderer_name.startswith(("qwen3_5", "qwen3_8", "nemotron3")):
         response_text = """I'll search for that information.
 <tool_call>
 <function=search>
@@ -117,6 +130,7 @@ weather in NYC
     [
         ("Qwen/Qwen3-8B", "qwen3"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ],
 )
@@ -136,7 +150,7 @@ def test_qwen3_parse_multiple_tool_calls(model_name: str, renderer_name: str):
 <tool_call>
 {"name": "get_weather", "arguments": {"location": "LA"}}
 </tool_call><|im_end|>"""
-    if renderer_name in ("qwen3_5", "nemotron3"):
+    if renderer_name in ("qwen3_5", "qwen3_8_xhigh_reasoning", "nemotron3"):
         response_text = """I'll get the weather for both cities.
 <tool_call>
 <function=get_weather>
@@ -315,3 +329,145 @@ def test_kimi_k2_parse_invalid_tool_call_json():
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+
+
+# =============================================================================
+# HF-parity tests for tool shapes the shared fixtures don't cover
+# =============================================================================
+
+# Renderers whose HF templates gate the tool-call separator on content and wrap a
+# run of consecutive tool responses in a single <|im_start|>user block.
+_TOOL_BLOCK_PARITY_RENDERERS = [
+    ("Qwen/Qwen3.5-4B", "qwen3_5"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
+    ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", "nemotron3_ultra"),
+]
+
+
+def _assert_generation_matches_hf(model_name: str, renderer_name: str, msgs: list[Message]):
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    ours = renderer.build_generation_prompt(msgs).to_ints()
+    hf_tokens = extract_token_ids(
+        tokenizer.apply_chat_template(
+            [renderer.to_openai_message(m) for m in msgs],
+            add_generation_prompt=True,
+            tokenize=True,
+        )
+    )
+    assert ours == hf_tokens, (
+        f"[{renderer_name}]\nours: {tokenizer.decode(ours)!r}\nhf:   {tokenizer.decode(hf_tokens)!r}"
+    )
+
+
+@pytest.mark.parametrize("model_name,renderer_name", _TOOL_BLOCK_PARITY_RENDERERS)
+def test_contentless_tool_call_matches_hf(model_name: str, renderer_name: str):
+    """No separator before <tool_call> when the assistant message has no visible text.
+
+    The templates gate the blank line on ``content|trim``; an OpenAI-style tool-call
+    message with empty content must start its <tool_call> block immediately.
+    """
+    tc = ToolCall(function=ToolCall.FunctionBody(name="search", arguments='{"query": "x"}'))
+    msgs: list[Message] = [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": "", "tool_calls": [tc]},
+        {"role": "tool", "content": "res"},
+        {"role": "user", "content": "next"},
+    ]
+    _assert_generation_matches_hf(model_name, renderer_name, msgs)
+
+
+@pytest.mark.parametrize(
+    "model_name,renderer_name",
+    [
+        ("Qwen/Qwen3.5-4B", "qwen3_5"),
+        # Qwen3.6 changed scalar serialization from Qwen3.5's |string (True/None) to
+        # |tojson (true/null) but reuses the qwen3_5 renderer, so boolean and null
+        # arguments diverge from its template. Qwen3.8's renderer follows the new rule.
+        pytest.param(
+            "Qwen/Qwen3.6-35B-A3B",
+            "qwen3_5",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="Qwen3.6's template tojson-serializes scalars; the shared "
+                "qwen3_5 renderer keeps Qwen3.5's |string form (True/None)",
+            ),
+        ),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+        ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
+        ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", "nemotron3_ultra"),
+    ],
+)
+def test_tool_argument_value_serialization_matches_hf(model_name: str, renderer_name: str):
+    """Non-string argument values serialize the way each model's template does.
+
+    Qwen3.5 and Nemotron templates apply |tojson only to mappings/sequences and
+    |string to scalars (True/None); Qwen3.6/3.8 templates tojson everything
+    non-string (true/null). Booleans and nulls are where the rules diverge.
+    """
+    tc = ToolCall(
+        function=ToolCall.FunctionBody(
+            name="cfg",
+            arguments=(
+                '{"flag": true, "opt": null, "num": 3, "ratio": 0.5,'
+                ' "text": "s", "obj": {"b": 1, "a": 2}, "arr": [1, "x"]}'
+            ),
+        )
+    )
+    msgs: list[Message] = [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": "Setting up.", "tool_calls": [tc]},
+        {"role": "tool", "content": "ok"},
+        {"role": "user", "content": "next"},
+    ]
+    _assert_generation_matches_hf(model_name, renderer_name, msgs)
+
+
+def test_grouped_tool_response_keeps_terminator_in_final_output():
+    """The <|im_end|> closing a tool-response run belongs to the final response's
+    OUTPUT (so e.g. ALL_MESSAGES weights it), not to the next message's header;
+    mid-run responses emit none at all."""
+    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = get_renderer("qwen3_5", tokenizer)
+    im_end = tokenizer.encode("<|im_end|>", add_special_tokens=False)[0]
+    tool_msg: Message = {"role": "tool", "content": "r1"}
+    next_tool: Message = {"role": "tool", "content": "r2"}
+    next_user: Message = {"role": "user", "content": "go"}
+
+    def output_tokens(ctx: RenderContext) -> list[int]:
+        rendered = renderer.render_message(tool_msg, ctx)
+        return [
+            t
+            for chunk in rendered.output
+            if isinstance(chunk, tinker.EncodedTextChunk)
+            for t in chunk.tokens
+        ]
+
+    mid_run = RenderContext(idx=2, is_last=False, prev_message=None, next_message=next_tool)
+    run_final = RenderContext(idx=2, is_last=False, prev_message=None, next_message=next_user)
+    assert im_end not in output_tokens(mid_run)
+    assert im_end in output_tokens(run_final)
+
+
+@pytest.mark.parametrize("model_name,renderer_name", _TOOL_BLOCK_PARITY_RENDERERS)
+@pytest.mark.parametrize("ends_with_tools", [False, True])
+def test_consecutive_tool_responses_match_hf(
+    model_name: str, renderer_name: str, ends_with_tools: bool
+):
+    """Consecutive tool results share one <|im_start|>user block (parallel tool calls).
+
+    The templates open the user block before the first result of a run and close it
+    after the last one — whether the run is followed by another message or ends the
+    conversation.
+    """
+    msgs: list[Message] = [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": "calling"},
+        {"role": "tool", "content": "r1"},
+        {"role": "tool", "content": "r2"},
+    ]
+    if not ends_with_tools:
+        msgs.append({"role": "user", "content": "go on"})
+    _assert_generation_matches_hf(model_name, renderer_name, msgs)
