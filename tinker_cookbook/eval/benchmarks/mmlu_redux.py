@@ -128,11 +128,14 @@ class MMLUReduxMessageEnv(MessageEnv):
         response = get_text_content(message)
         extracted = extract_mcq_answer(response)
         correct = extracted == self.expected
+        subject_idx = (
+            float(_SUBJECTS.index(self.subject)) if self.subject in _SUBJECTS else -1.0
+        )
         return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,
             next_messages=[],
-            metrics={"correct": float(correct)},
+            metrics={"correct": float(correct), "subject_idx": subject_idx},
             logs={
                 "example_id": self.example_id,
                 "input": self.prompt[:200],
@@ -191,15 +194,23 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[Metrics]) -> BenchmarkResult:
-        """Aggregate with per-subject breakdown."""
+        """Aggregate accuracy with a per-subject breakdown.
+
+        The subject is carried in ``metrics["subject_idx"]`` as an int index
+        into the module-level ``_SUBJECTS`` list (see
+        ``MMLUReduxMessageEnv.step``). ``Metrics`` is typed
+        ``dict[str, float | int]`` and cannot hold the subject string directly,
+        so an index is used instead. A missing or out-of-range index falls back
+        to the ``"unknown"`` bucket.
+        """
         num_correct = sum(1 for r in rewards if r > 0)
         accuracy = num_correct / len(rewards) if rewards else 0.0
 
         subject_results: dict[str, list[bool]] = {}
         for r, m in zip(rewards, metrics_list):
-            subj = m.get("subject", "unknown")
-            if isinstance(subj, str):
-                subject_results.setdefault(subj, []).append(r > 0)
+            idx = m.get("subject_idx", -1.0)
+            subj = _SUBJECTS[int(idx)] if 0 <= idx < len(_SUBJECTS) else "unknown"
+            subject_results.setdefault(subj, []).append(r > 0)
 
         metrics: dict[str, float] = {"mmlu_redux/accuracy": accuracy}
         for subj, subj_res in sorted(subject_results.items()):

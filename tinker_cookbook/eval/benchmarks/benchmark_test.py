@@ -396,6 +396,40 @@ class TestGradingConsistency:
             assert old(resp) == new(resp), f"Mismatch on: {resp}"
 
 
+class TestMMLUReduxAggregate:
+    def test_per_subject_breakdown(self):
+        from tinker_cookbook.eval.benchmarks.mmlu_redux import (
+            _SUBJECTS,
+            MMLUReduxBenchmarkBuilder,
+        )
+
+        builder = MMLUReduxBenchmarkBuilder()
+        s0, s1 = _SUBJECTS[0], _SUBJECTS[1]
+        i0 = float(_SUBJECTS.index(s0))
+        i1 = float(_SUBJECTS.index(s1))
+        rewards = [1.0, 0.0, 1.0, 1.0]
+        metrics_list = [
+            {"correct": 1.0, "subject_idx": i0},
+            {"correct": 0.0, "subject_idx": i0},
+            {"correct": 1.0, "subject_idx": i1},
+            {"correct": 1.0, "subject_idx": i1},
+        ]
+        result = builder.aggregate(rewards, metrics_list)
+        assert abs(result.score - 0.75) < 1e-9
+        assert abs(result.metrics[f"mmlu_redux/{s0}/accuracy"] - 0.5) < 1e-9
+        assert abs(result.metrics[f"mmlu_redux/{s1}/accuracy"] - 1.0) < 1e-9
+        assert "mmlu_redux/unknown/accuracy" not in result.metrics
+
+    def test_missing_subject_idx_falls_to_unknown(self):
+        from tinker_cookbook.eval.benchmarks.mmlu_redux import MMLUReduxBenchmarkBuilder
+
+        builder = MMLUReduxBenchmarkBuilder()
+        rewards = [1.0, 0.0]
+        metrics_list = [{"correct": 1.0}, {"correct": 0.0}]
+        result = builder.aggregate(rewards, metrics_list)
+        assert abs(result.metrics["mmlu_redux/unknown/accuracy"] - 0.5) < 1e-9
+
+
 class TestEvalStore:
     def test_create_and_list_runs(self, tmp_path):
         from tinker_cookbook.stores.eval_store import EvalStore
