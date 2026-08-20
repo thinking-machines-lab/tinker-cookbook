@@ -16,6 +16,7 @@ thinking-effort value at sampling and training time. Use the `inkling` skill for
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `Qwen/Qwen3.8-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.6-35B-A3B` | Hybrid + Vision | MoE | Medium |
 | `Qwen/Qwen3.6-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-397B-A17B` | Hybrid + Vision | MoE | Large |
