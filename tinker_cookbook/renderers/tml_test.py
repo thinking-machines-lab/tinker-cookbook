@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-import tinker
 from tml_renderers import chat as tml_chat
 from tml_renderers.renderer import Renderer as PublicRenderer
 
