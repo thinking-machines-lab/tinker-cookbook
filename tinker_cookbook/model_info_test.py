@@ -30,6 +30,30 @@ class TestQwen3_6:
         assert attrs.is_audio_in is False
 
 
+class TestQwen3_8:
+    """Qwen3.8 keeps the Qwen3.5/3.6 tokenizer and preprocessor but has its own
+    chat template (reasoning-effort instructions, preserve-thinking default), so
+    it gets the dedicated qwen3_8 renderer family."""
+
+    def test_qwen3_8_uses_qwen3_8_renderer(self):
+        assert get_recommended_renderer_name("Qwen/Qwen3.8-27B") == "qwen3_8_xhigh_reasoning"
+
+    def test_qwen3_8_recommended_renderers(self):
+        names = get_recommended_renderer_names("Qwen/Qwen3.8-27B")
+        assert "qwen3_8_disable_thinking" in names
+        assert "qwen3_8_medium_reasoning" in names
+        assert "qwen3_8_low_reasoning" in names
+
+    def test_qwen3_8_attributes(self):
+        attrs = get_model_attributes("Qwen/Qwen3.8-27B")
+        assert attrs.organization == "Qwen"
+        assert attrs.version_str == "3.8"
+        assert attrs.size_str == "27B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is False
+
+
 class TestNemotron3:
     def test_lightning_uses_ultra_format_renderer(self):
         assert (

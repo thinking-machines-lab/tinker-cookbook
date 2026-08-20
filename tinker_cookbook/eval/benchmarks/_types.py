@@ -108,6 +108,8 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "timeout_seconds": 1800,
     },
     "Qwen/Qwen3.6-27B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
+    # Qwen3.8 — Hybrid (thinking), 64K context (27B config identical to Qwen3.6-27B)
+    "Qwen/Qwen3.8-27B": {"max_tokens": 65536, "context_window": 65536, "timeout_seconds": 1800},
     # Qwen3.5 — Hybrid (thinking), 64K context
     "Qwen/Qwen3.5-397B-A17B": {
         "max_tokens": 65536,

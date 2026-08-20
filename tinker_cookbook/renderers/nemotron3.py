@@ -261,6 +261,11 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             + [TextPart(type="text", text="\n</tool_response>\n")]
         )
 
+    def _tool_response_continuation_header(self) -> str:
+        """Nemotron-3 responses carry their own trailing newline, so a consecutive
+        <tool_response> follows immediately with no separator."""
+        return ""
+
     def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
         """Format tool_calls for Nemotron-3.
 
