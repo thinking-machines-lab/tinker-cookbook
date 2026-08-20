@@ -63,6 +63,7 @@ from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
+from tinker_cookbook.renderers.qwen3_8 import Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
     skip_if_deepseek_tokenizer_bug,
@@ -467,6 +468,7 @@ TOOL_CAPABLE_MODELS = {
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "Qwen/Qwen3.6-35B-A3B",
+    "Qwen/Qwen3.8-27B",
     "meta-llama/Llama-3.1-8B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
@@ -497,6 +499,10 @@ _HF_TEST_MODELS = [
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.8-27B", None, {}),  # default renderer qwen3_8 = reasoning effort xhigh
+    ("Qwen/Qwen3.8-27B", "qwen3_8_medium_reasoning", {"reasoning_effort": "medium"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_low_reasoning", {"reasoning_effort": "low"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking", {"enable_thinking": False}),
     ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
@@ -520,6 +526,7 @@ _HF_TOOL_COMPATIBLE_MODELS = {
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "Qwen/Qwen3.6-35B-A3B",
+    "Qwen/Qwen3.8-27B",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
     "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
@@ -631,6 +638,10 @@ _SUPERVISED_TEST_MODELS = [
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.8-27B", None, {}),  # default renderer qwen3_8 = reasoning effort xhigh
+    ("Qwen/Qwen3.8-27B", "qwen3_8_medium_reasoning", {"reasoning_effort": "medium"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_low_reasoning", {"reasoning_effort": "low"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking", {"enable_thinking": False}),
     ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
@@ -780,6 +791,7 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
     [
         "Qwen/Qwen3-8B",
         "Qwen/Qwen3.6-35B-A3B",
+        "Qwen/Qwen3.8-27B",
         # Llama3 does not support tool calling - see llama3.py docstring
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
@@ -873,6 +885,9 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
         ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
+        # Qwen3.8 defaults to strip_thinking_from_history=False already; this
+        # confirms the explicit kwarg keeps working.
+        ("Qwen/Qwen3.8-27B", Qwen3_8Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
@@ -960,6 +975,8 @@ _CONSISTENCY_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_instruct"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
@@ -993,6 +1010,7 @@ _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 _RENDERERS_WITH_THINKING_STRIPPING = {
     "qwen3_disable_thinking",
     "qwen3_5_disable_thinking",
+    "qwen3_8_disable_thinking",
     "nemotron3_disable_thinking",
     "deepseekv3",
     "kimi_k2",
@@ -1004,6 +1022,7 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
 _REASONING_OFF_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
     ("moonshotai/Kimi-K2.5", "kimi_k25_disable_thinking"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
 ]
@@ -1342,6 +1361,8 @@ def test_supervised_generation_parse_consistency(
         ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
         ("meta-llama/Llama-3.1-8B-Instruct", "llama3"),
         # deepseekv3 defaults to non-thinking, deepseekv3_thinking is thinking mode
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
@@ -1366,6 +1387,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "qwen3_disable_thinking": "<|im_end|>",
         "qwen3_5": "<|im_end|>",
         "qwen3_5_disable_thinking": "<|im_end|>",
+        "qwen3_8_xhigh_reasoning": "<|im_end|>",
+        "qwen3_8_disable_thinking": "<|im_end|>",
         "deepseekv3": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes (alias)
@@ -1427,6 +1450,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         ("Qwen/Qwen3-8B", "qwen3"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ],
 )
@@ -1577,6 +1601,11 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
             "of the next prompt, so has_extension_property=True does not hold.",
         ),
     ),
+    # Qwen3.8 is intentionally absent: it preserves thinking in history (HF
+    # preserve_thinking=true) but does not claim has_extension_property — a
+    # no-reasoning turn's closed empty block token-merges differently from the
+    # open-think prompt. Its behavioral extension guarantees are covered in
+    # qwen3_8_test.py.
     # DeepSeek non-thinking with basic multi-turn
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_basic_4turn_conversation),
     # DeepSeek non-thinking with tool calls

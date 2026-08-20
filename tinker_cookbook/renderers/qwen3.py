@@ -615,6 +615,11 @@ class Qwen3VLRenderer(Qwen3Renderer):
 
     image_processor: ImageProcessor | None
 
+    # Qwen3.5-family templates keep one <|im_start|>user block open around a run of
+    # consecutive tool responses (gated on loop.previtem/nextitem); Qwen3/Qwen3-VL
+    # templates close each response in its own block.
+    groups_consecutive_tool_responses = False
+
     def __init__(
         self,
         tokenizer: Tokenizer,
@@ -695,6 +700,29 @@ class Qwen3VLRenderer(Qwen3Renderer):
             + [TextPart(type="text", text="\n</tool_response>")]
         )
 
+    def _tool_response_continuation_header(self) -> str:
+        """Separator between consecutive tool responses inside one user block.
+
+        Qwen3.5-family templates write ``'\\n<tool_response>\\n'`` per response, so a
+        continuation starts with the newline the first response got from its header.
+        Subclasses whose responses carry their own trailing newline return ``""``.
+        """
+        return "\n"
+
+    def _strips_thinking_for(self, message: Message, ctx: RenderContext) -> bool:
+        """Whether this message's thinking is stripped from the render.
+
+        Strips history thinking from every non-last assistant message. Note the HF
+        templates actually keep reasoning for assistants AFTER the last user message
+        (``loop.index0 > ns.last_query_index``) even with preservation off, so this
+        over-strips thinking tool-call turns followed by tool results — kept as-is
+        for backward compatibility with checkpoints trained on this rendering.
+        Nemotron patches around it in render_message; Qwen3.8 overrides this hook.
+        """
+        return (
+            self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last
+        )
+
     def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
         """Format tool_calls as output chunks. Override in subclasses for different formats."""
         # Add leading newline to match HF template behavior
@@ -728,15 +756,23 @@ class Qwen3VLRenderer(Qwen3Renderer):
         maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
-        header_str = f"{maybe_newline}<|im_start|>{role}\n"
-        if message["role"] == "assistant":
-            header_str += self._assistant_header_suffix(message, ctx)
-
-        # Strip thinking from history for non-last assistant messages (matching non-VL behavior)
-        strip_thinking = (
-            self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last
+        grouping = self.groups_consecutive_tool_responses
+        prev_is_tool = (
+            grouping and ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
         )
-        output_chunks = self._preprocess_message_parts(message, strip_thinking=strip_thinking)
+        is_tool = message["role"] == "tool"
+        if is_tool and prev_is_tool:
+            # Continuation of a tool-response run: the template keeps the user block
+            # open and writes the next <tool_response> directly.
+            header_str = self._tool_response_continuation_header()
+        else:
+            header_str = f"{maybe_newline}<|im_start|>{role}\n"
+            if message["role"] == "assistant":
+                header_str += self._assistant_header_suffix(message, ctx)
+
+        output_chunks = self._preprocess_message_parts(
+            message, strip_thinking=self._strips_thinking_for(message, ctx)
+        )
 
         # Handle tool response wrapping
         if message["role"] == "tool":
@@ -744,7 +780,13 @@ class Qwen3VLRenderer(Qwen3Renderer):
 
         if "tool_calls" in message:
             output_chunks += self._format_tool_calls_chunks(message)
-        output_chunks += [TextPart(type="text", text="<|im_end|>")]
+        next_is_tool = (
+            grouping and ctx.next_message is not None and ctx.next_message["role"] == "tool"
+        )
+        if not (is_tool and next_is_tool):
+            # A grouped tool response followed by another tool response leaves the
+            # shared user block open; the final response of the run closes it.
+            output_chunks += [TextPart(type="text", text="<|im_end|>")]
 
         if self.merge_text_chunks:
             output_chunks = _merge_consecutive_text_parts(output_chunks)
