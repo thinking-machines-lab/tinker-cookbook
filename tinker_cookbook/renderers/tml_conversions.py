@@ -33,10 +33,13 @@ _SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "flac")
 
 
 def _native_messages(messages: object) -> list[tml_chat.Message] | None:
-    try:
-        return tml_chat.MessageList.from_messages(cast("TmlRenderInput", messages)).messages
-    except ValueError:
-        return None
+    if isinstance(messages, tml_chat.MessageList):
+        return messages.messages
+    if isinstance(messages, Sequence) and all(
+        isinstance(message, (tml_chat.Message, tml_chat.OpenAIMessage)) for message in messages
+    ):
+        return tml_chat.MessageList.from_messages(messages).messages
+    return None
 
 
 def _jsonable_cookbook_message(message: Message | Mapping[str, Any]) -> Mapping[str, Any]:
