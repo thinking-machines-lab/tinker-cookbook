@@ -265,6 +265,26 @@ def test_native_tml_renderers_inputs_pass_through(
     assert tml_conversions._messages_to_render_input(cast(Any, message_list)) == messages
 
 
+def test_invalid_native_tml_renderers_input_preserves_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
+) -> None:
+    messages = [mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User)]
+
+    def reject_native_messages(messages: object) -> None:
+        del messages
+        raise ValueError("invalid native messages")
+
+    monkeypatch.setattr(
+        mock_tml_renderers_chat.MessageList,
+        "from_messages",
+        staticmethod(reject_native_messages),
+    )
+
+    with pytest.raises(ValueError, match="invalid native messages"):
+        tml_conversions._messages_to_render_input(cast(Any, messages))
+
+
 def test_selective_sft_masking_sets_zero_training_metadata(
     mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
 ) -> None:
