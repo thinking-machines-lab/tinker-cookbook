@@ -17,6 +17,7 @@ from tinker_cookbook.renderers import (
     ToolCall,
     TrainOnWhat,
     get_renderer,
+    tml_conversions,
     tml_v0,
 )
 from tinker_cookbook.supervised.data import conversation_to_datum
@@ -29,7 +30,22 @@ class _FakeTmlRenderersChat:
         User = "user"
 
     class MessageList:
-        pass
+        def __init__(self, messages=None):
+            self.messages = [] if messages is None else messages
+
+        @staticmethod
+        def from_messages(messages):
+            if isinstance(messages, _FakeTmlRenderersChat.MessageList):
+                return _FakeTmlRenderersChat.MessageList(list(messages.messages))
+            if all(isinstance(message, _FakeTmlRenderersChat.Message) for message in messages):
+                return _FakeTmlRenderersChat.MessageList(list(messages))
+            if all(
+                isinstance(message, _FakeTmlRenderersChat.OpenAIMessage) for message in messages
+            ):
+                return _FakeTmlRenderersChat.MessageList(
+                    [item for message in messages for item in message.to_messages()]
+                )
+            raise ValueError("unsupported message input")
 
     class MessageMetadata:
         def __init__(self, training_metadata=None):
@@ -75,9 +91,9 @@ class _FakeTmlRenderersChat:
 def mock_tml_renderers_chat(monkeypatch: pytest.MonkeyPatch) -> type[_FakeTmlRenderersChat]:
     _FakeTmlRenderersChat.OpenAIMessage.source_messages = None
     monkeypatch.setattr(
-        tml_v0,
-        "import_module",
-        lambda module="tml_renderers": _FakeTmlRenderersChat,
+        tml_conversions,
+        "tml_chat",
+        _FakeTmlRenderersChat,
     )
     return _FakeTmlRenderersChat
 
@@ -141,9 +157,9 @@ def test_cookbook_dicts_are_converted_with_tool_calls_for_openai_message(
         ),
     ]
 
-    rendered = cast(Any, tml_v0._messages_to_render_input(messages))
+    rendered = cast(Any, tml_conversions._messages_to_render_input(messages))
 
-    assert all(isinstance(message, mock_tml_renderers_chat.OpenAIMessage) for message in rendered)
+    assert all(isinstance(message, mock_tml_renderers_chat.Message) for message in rendered)
     source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
     assert source_messages is not None
     assert source_messages[1]["tool_calls"][0]["id"] == "call_weather"
@@ -164,7 +180,7 @@ def test_cookbook_audio_bytes_are_normalized_to_openai_input_audio(
         )
     ]
 
-    tml_v0._messages_to_render_input(messages)
+    tml_conversions._messages_to_render_input(messages)
 
     source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
     assert source_messages is not None
@@ -197,7 +213,7 @@ def test_cookbook_audio_local_path_and_metadata_are_normalized(
         )
     ]
 
-    tml_v0._messages_to_render_input(messages)
+    tml_conversions._messages_to_render_input(messages)
 
     source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
     assert source_messages is not None
@@ -211,14 +227,14 @@ def test_cookbook_audio_local_path_and_metadata_are_normalized(
 
 def test_cookbook_audio_non_wav_requires_complete_metadata() -> None:
     with pytest.raises(ValueError, match="must provide num_frames and sample_rate"):
-        tml_v0._audio_part_to_openai(
+        tml_conversions._audio_part_to_openai(
             AudioPart(type="audio", audio=b"mp3", format="mp3", num_frames=48_000)
         )
 
 
 def test_cookbook_audio_metadata_must_be_positive() -> None:
     with pytest.raises(ValueError, match="must be positive"):
-        tml_v0._audio_part_to_openai(
+        tml_conversions._audio_part_to_openai(
             AudioPart(
                 type="audio",
                 audio=b"mp3",
@@ -233,20 +249,40 @@ def test_cookbook_audio_remote_url_is_rejected() -> None:
     part = AudioPart(type="audio", audio="https://example.com/clip.wav")
 
     with pytest.raises(ValueError, match="does not fetch remote audio URLs"):
-        tml_v0._audio_part_to_openai(part)
+        tml_conversions._audio_part_to_openai(part)
 
 
 def test_native_tml_renderers_inputs_pass_through(
     mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
 ) -> None:
-    messages = [
-        mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User),
-        mock_tml_renderers_chat.OpenAIMessage("user"),
-    ]
-    message_list = mock_tml_renderers_chat.MessageList()
+    message = mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User)
+    messages = [message]
+    openai_messages = [mock_tml_renderers_chat.OpenAIMessage("user")]
+    message_list = mock_tml_renderers_chat.MessageList(messages)
 
-    assert tml_v0._messages_to_render_input(cast(Any, messages)) is messages
-    assert tml_v0._messages_to_render_input(cast(Any, message_list)) is message_list
+    assert tml_conversions._messages_to_render_input(cast(Any, messages)) == messages
+    assert len(tml_conversions._messages_to_render_input(cast(Any, openai_messages))) == 1
+    assert tml_conversions._messages_to_render_input(cast(Any, message_list)) == messages
+
+
+def test_invalid_native_tml_renderers_input_preserves_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
+) -> None:
+    messages = [mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User)]
+
+    def reject_native_messages(messages: object) -> None:
+        del messages
+        raise ValueError("invalid native messages")
+
+    monkeypatch.setattr(
+        mock_tml_renderers_chat.MessageList,
+        "from_messages",
+        staticmethod(reject_native_messages),
+    )
+
+    with pytest.raises(ValueError, match="invalid native messages"):
+        tml_conversions._messages_to_render_input(cast(Any, messages))
 
 
 def test_selective_sft_masking_sets_zero_training_metadata(
@@ -260,7 +296,10 @@ def test_selective_sft_masking_sets_zero_training_metadata(
     ]
 
     rendered = cast(
-        Any, tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
+        Any,
+        tml_conversions._cookbook_messages_to_sft_input(
+            messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE
+        ),
     )
 
     assert rendered[1].message_metadata.training_metadata.weight == 0.0
@@ -276,7 +315,9 @@ def test_customized_sft_masking_respects_trainable_flag(
         Message(role="assistant", content="Train.", trainable=True),
     ]
 
-    rendered = cast(Any, tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.CUSTOMIZED))
+    rendered = cast(
+        Any, tml_conversions._cookbook_messages_to_sft_input(messages, TrainOnWhat.CUSTOMIZED)
+    )
 
     assert rendered[1].message_metadata.training_metadata.weight == 0.0
     assert rendered[2].message_metadata is None
@@ -286,7 +327,7 @@ def test_selective_sft_rejects_native_tml_renderers_inputs(
     mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
 ) -> None:
     with pytest.raises(NotImplementedError, match="selective train_on_what"):
-        tml_v0._cookbook_messages_to_sft_input(
+        tml_conversions._cookbook_messages_to_sft_input(
             cast(Any, [mock_tml_renderers_chat.OpenAIMessage("assistant")]),
             TrainOnWhat.LAST_ASSISTANT_MESSAGE,
         )
@@ -324,6 +365,7 @@ def test_build_generation_prompt_defaults_to_high_effort() -> None:
     renderer = _renderer()
 
     default_prompt = renderer.build_generation_prompt(_messages())
+    renderer.parse_response([])
     high_prompt = renderer.build_generation_prompt(_messages(), effort=0.9)
 
     assert default_prompt.to_ints() == high_prompt.to_ints()
@@ -549,6 +591,7 @@ def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
     model_input = tml_v0.import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(
         spans
     )
+    renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(model_input.to_ints())
 
     assert termination.is_clean
@@ -709,6 +752,7 @@ def test_extension_property_holds_multiturn() -> None:
 
     assert renderer.has_extension_property
     sequence_through_first_assistant = renderer.build_generation_prompt(messages[:3]).to_ints()
+    renderer.parse_response([])
     prompt_before_second_assistant = renderer.build_generation_prompt(messages[:4]).to_ints()
     assert (
         prompt_before_second_assistant[: len(sequence_through_first_assistant)]
