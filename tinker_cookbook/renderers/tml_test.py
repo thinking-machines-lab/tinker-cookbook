@@ -115,7 +115,9 @@ def test_adapter_takes_only_the_public_renderer() -> None:
     prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
     parsed, termination = adapter.parse_response([7, 42])
 
-    assert adapter.tokenizer is public_renderer.tokenizer
+    assert adapter.tokenizer.tml_tokenizer is public_renderer.tokenizer
+    assert adapter.tokenizer.encode("prefix") == [9]
+    assert adapter.tokenizer.decode([9]) == "decoded:9"
     assert prompt.to_ints() == [1, 2, 3]
     assert tml_chat.OpenAIMessage.to_oss_messages(
         tml_chat.OpenAIMessage.from_messages(

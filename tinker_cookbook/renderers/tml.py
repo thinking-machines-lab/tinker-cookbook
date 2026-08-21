@@ -36,7 +36,7 @@ from tinker_cookbook.renderers.tml_conversions import (
     _parsed_messages_to_cookbook,
 )
 from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
-from tinker_cookbook.tokenizer_utils import Tokenizer
+from tinker_cookbook.tokenizer_utils import TmlRenderersTokenizerAdapter
 
 
 class TmlRendererAdapter(Renderer):
@@ -45,7 +45,7 @@ class TmlRendererAdapter(Renderer):
     def __init__(self, renderer: PublicRenderer):
         self._tml_renderer = renderer
         self._pending_parser: PublicParser | None = None
-        super().__init__(cast(Tokenizer, renderer.tokenizer))
+        super().__init__(TmlRenderersTokenizerAdapter.from_tokenizer(renderer.tokenizer))
 
     def __reduce__(self) -> tuple:
         if self._pending_parser is not None:
