@@ -85,6 +85,39 @@ The first argument is the task's `environment/` directory (containing a Dockerfi
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
+### Sailboxes
+
+The [Sail Python SDK](https://docs.sailresearch.com/sailbox-sdk) provides a `tinker_sandbox_factory` that implements this factory contract with [Sailboxes](https://docs.sailresearch.com/sailboxes). Install it alongside the cookbook and set a Sail API key:
+
+```bash
+uv pip install \
+  'tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly' \
+  'sail>=0.9.2'
+export SAIL_API_KEY="<your-api-key>"
+```
+
+Pass the factory to the existing training or evaluation entry point:
+
+```python
+from functools import partial
+
+from sail import tinker_sandbox_factory
+
+sailbox_factory = partial(
+    tinker_sandbox_factory,
+    app="tinker-harbor",
+    size="m",
+)
+
+# Training
+await cli_main(cli_config, tasks, sandbox_factory=sailbox_factory)
+
+# Or evaluation
+results = await run_eval(eval_config, tasks, sandbox_factory=sailbox_factory)
+```
+
+The factory creates a fresh Sailbox for each sandbox and terminates it during cleanup. It uses `[environment].docker_image` from the task's `task.toml` when present; otherwise it builds `environment/Dockerfile`. The image must be based on Debian or Ubuntu.
+
 ## Running
 
 First, download the Terminal-Bench tasks:
