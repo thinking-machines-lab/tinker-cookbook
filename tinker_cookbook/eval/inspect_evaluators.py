@@ -35,6 +35,12 @@ class InspectEvaluatorBuilder:
     # When True, model reasoning/thinking is preserved in inspect output as ContentReasoning.
     # When False (default), reasoning is stripped and only text content is returned.
     include_reasoning: bool = False
+    # Reasoning effort for effort-conditioned models (TML renderers), in [0.0, 1.0).
+    # None keeps the renderer default. Set this explicitly when the score is meant
+    # to be comparable to a published number: skills/inkling/SKILL.md notes that
+    # "an eval number without its effort value is not reproducible", and published
+    # Inkling numbers are at effort=0.99 while the renderer default is 0.9.
+    effort: float | None = None
 
     # Generation parameters
     temperature: float = 1.0
@@ -74,6 +80,18 @@ class InspectEvaluator(SamplingClientEvaluator):
         """
         self.config = config
 
+    def _metadata_with_effort(self) -> dict[str, str] | None:
+        """Stamp the effort value into the eval log.
+
+        The cookbook's own guidance is that "an eval number without its effort
+        value is not reproducible" (skills/inkling/SKILL.md). Recording it next
+        to the score is what makes that guidance enforceable after the fact,
+        rather than something the runner has to remember.
+        """
+        if self.config.effort is None:
+            return self.config.metadata
+        return {**(self.config.metadata or {}), "effort": str(self.config.effort)}
+
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         """
         Run inspect evaluation on the given sampling client and return metrics.
@@ -93,6 +111,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             sampling_client=sampling_client,
             verbose=self.config.verbose,
             include_reasoning=self.config.include_reasoning,
+            effort=self.config.effort,
         )
         # Create the inspect model
         model = InspectAIModel(
@@ -124,7 +143,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             log_level=self.config.log_level,
             log_realtime=False,
             log_buffer=1000,
-            metadata=self.config.metadata,
+            metadata=self._metadata_with_effort(),
         )
 
         # Extract metrics from results

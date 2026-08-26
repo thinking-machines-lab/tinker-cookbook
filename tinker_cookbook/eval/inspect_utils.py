@@ -5,6 +5,7 @@ This module contains the common classes and functions used by both
 run_inspect_evals.py and inspect_evaluator.py to avoid code duplication.
 """
 
+import inspect
 import json
 import logging
 import time
@@ -261,6 +262,20 @@ def _message_to_inspect_content(
     return result
 
 
+def renderer_supports_effort(renderer: renderers.Renderer) -> bool:
+    """Whether this renderer's generation prompt is effort-conditioned.
+
+    Only the TML renderers take an ``effort``. Everything else (Qwen, Llama,
+    GPT-OSS, Nemotron) would raise ``TypeError`` on the keyword, so the eval
+    path has to ask before passing it.
+    """
+    try:
+        signature = inspect.signature(renderer.build_generation_prompt)
+    except (TypeError, ValueError):
+        return False
+    return "effort" in signature.parameters
+
+
 class InspectAPIFromTinkerSampling(InspectAIModelAPI):
     """
     A model API wrapper that adapts tinker sampling clients to the inspect API interface.
@@ -281,6 +296,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         config: InspectAIGenerateConfig = InspectAIGenerateConfig(),
         verbose: bool = False,
         include_reasoning: bool = False,
+        effort: float | None = None,
     ):
         if api_key_vars is None:
             api_key_vars = []
@@ -307,6 +323,16 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         self.verbose = verbose
         self.include_reasoning = include_reasoning
 
+        # Reasoning effort. ``None`` keeps the renderer's own default, which is
+        # what every eval did before this parameter existed.
+        if effort is not None and not renderer_supports_effort(self.renderer):
+            raise ConfigurationError(
+                f"effort={effort} was requested but renderer {renderer_name!r} is not "
+                "effort-conditioned. Effort is only meaningful for TML renderers "
+                "(tml_v0); drop the argument for other models."
+            )
+        self.effort = effort
+
     async def generate(
         self,
         input: list[InspectAIChatMessage],
@@ -321,7 +347,10 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
             input = [ChatMessageSystem(content=config.system_message)] + input
         convo = convert_inspect_messages(input)
         convo = _conversation_with_tool_declarations(self.renderer, convo, tools, tool_choice)
-        prompt = self.renderer.build_generation_prompt(convo)
+        if self.effort is None:
+            prompt = self.renderer.build_generation_prompt(convo)
+        else:
+            prompt = self.renderer.build_generation_prompt(convo, effort=self.effort)
         num_responses = 1 if config.num_choices is None else config.num_choices
         sampling_params = tinker.SamplingParams(
             temperature=config.temperature if config.temperature is not None else 1.0,
