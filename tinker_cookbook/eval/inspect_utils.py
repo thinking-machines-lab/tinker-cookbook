@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from collections.abc import Sequence
+from typing import Protocol, cast
 
 import tinker
 from inspect_ai.model import ChatCompletionChoice as InspectAIModelOutputChoice
@@ -262,6 +263,23 @@ def _message_to_inspect_content(
     return result
 
 
+class _EffortConditionedRenderer(Protocol):
+    """The subset of the renderer API that accepts an effort.
+
+    Only the TML renderers do. `renderers.Renderer` does not declare `effort`,
+    so the call site needs this to type-check; `renderer_supports_effort`
+    enforces the same contract at runtime before the cast is used.
+    """
+
+    def build_generation_prompt(
+        self,
+        messages: list[renderers.Message],
+        role: renderers.Role = "assistant",
+        prefill: str | None = None,
+        effort: float = ...,
+    ) -> tinker.ModelInput: ...
+
+
 def renderer_supports_effort(renderer: renderers.Renderer) -> bool:
     """Whether this renderer's generation prompt is effort-conditioned.
 
@@ -350,7 +368,10 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         if self.effort is None:
             prompt = self.renderer.build_generation_prompt(convo)
         else:
-            prompt = self.renderer.build_generation_prompt(convo, effort=self.effort)
+            # Safe: the constructor rejected any renderer without an effort
+            # parameter, so this narrowing cannot be reached otherwise.
+            effort_renderer = cast("_EffortConditionedRenderer", self.renderer)
+            prompt = effort_renderer.build_generation_prompt(convo, effort=self.effort)
         num_responses = 1 if config.num_choices is None else config.num_choices
         sampling_params = tinker.SamplingParams(
             temperature=config.temperature if config.temperature is not None else 1.0,

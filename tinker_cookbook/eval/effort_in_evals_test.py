@@ -9,13 +9,17 @@ published operating point, and no eval log recorded which point it used.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from tinker_cookbook.eval.inspect_utils import renderer_supports_effort
 
 tml_tokenizers = pytest.importorskip("tml_renderers.tokenizers")
 
+from tinker_cookbook.renderers import Renderer  # noqa: E402
 from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer  # noqa: E402
+from tinker_cookbook.tokenizer_utils import Tokenizer  # noqa: E402
 
 PUBLISHED_EFFORT = 0.99  # thinkingmachines.ai/model-card/inkling/
 RENDERER_DEFAULT = 0.9  # renderers/tml_v0.py DEFAULT_EFFORT
@@ -33,7 +37,7 @@ class _TokenizerAdapter:
 
 @pytest.fixture
 def tml_renderer():
-    return TmlV0Renderer(_TokenizerAdapter())
+    return TmlV0Renderer(cast("Tokenizer", _TokenizerAdapter()))
 
 
 @pytest.fixture
@@ -50,7 +54,7 @@ def test_non_effort_renderer_is_detected(tml_renderer):
         def build_generation_prompt(self, messages, role="assistant", prefill=None):
             raise NotImplementedError
 
-    assert not renderer_supports_effort(Plain())
+    assert not renderer_supports_effort(cast("Renderer", Plain()))
 
 
 def test_default_call_renders_the_renderer_default(tml_renderer, messages):
