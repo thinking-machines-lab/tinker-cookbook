@@ -28,6 +28,7 @@ _REPRESENTATIVE_MODELS = (
     "moonshotai/Kimi-K2-Thinking",
     "moonshotai/Kimi-K2.5",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+    "zai-org/GLM-5.3",
 )
 
 

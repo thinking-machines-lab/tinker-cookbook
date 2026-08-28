@@ -45,6 +45,7 @@ Use `hyperparam_utils.get_lr(model_name)` when available. LoRA training typicall
 | **DeepSeek V3.1** | ~5e-4 | ~5e-5 | Not yet calibrated; similar architecture to Kimi |
 | **GPT-OSS** | ~5e-4 | ~5e-5 | Not yet calibrated |
 | **Nemotron-3** | ~5e-4 | ~5e-5 | Not yet calibrated |
+| **GLM-5.3** | ~5e-4 | ~5e-5 | Not yet calibrated; similar scale to Kimi |
 | **DPO** (all models) | ~1e-5 | — | Start with `dpo_beta=0.1` |
 
 ### LoRA Rank and Alpha

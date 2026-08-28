@@ -265,6 +265,8 @@ def _(mo):
     |---|---|---|
     | `qwen3_5` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled (default) |
     | `qwen3_5_disable_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking disabled |
+    | `glm5_3_max_reasoning` | GLM-5.3 | Max reasoning effort (default) |
+    | `glm5_3_low_reasoning` | GLM-5.3 | Low reasoning effort (thinking cannot be disabled) |
     | `deepseekv3` | DeepSeek V3 | Non-thinking mode (default) |
     | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
     | `nemotron3` | NVIDIA Nemotron 3 | Thinking enabled |

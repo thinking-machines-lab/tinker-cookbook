@@ -18,6 +18,9 @@
 | `qwen3_5_disable_thinking` | Qwen3.5/Qwen3.6 VL | Thinking disabled |
 | `deepseekv3` | DeepSeek V3 | Defaults to non-thinking |
 | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
+| `glm5_3_max_reasoning` | GLM-5.3 | Max reasoning effort |
+| `glm5_3_low_reasoning` | GLM-5.3 | Low reasoning effort (thinking cannot be disabled) |
+| `glm5_3_high_reasoning` | GLM-5.3 | High reasoning effort |
 | `kimi_k2` | Kimi K2 | Thinking format |
 | `kimi_k26` | Kimi K2.6 | Thinking enabled |
 | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |

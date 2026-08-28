@@ -57,6 +57,7 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 | `moonshotai/Kimi-K2-Thinking` | Reasoning | MoE | Large |
 | `moonshotai/Kimi-K2.5` | Reasoning + Vision | MoE | Large |
 | `moonshotai/Kimi-K2.6` | Reasoning + Vision | MoE | Large |
+| `zai-org/GLM-5.3` | Reasoning | MoE | Large |
 
 ## Model types explained
 

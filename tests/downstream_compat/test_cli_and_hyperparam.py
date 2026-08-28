@@ -18,6 +18,7 @@ from tinker_cookbook.model_info import (
     get_moonshot_info,
     get_nvidia_info,
     get_qwen_info,
+    get_zai_info,
 )
 
 
@@ -31,6 +32,7 @@ def _all_model_info_names() -> list[str]:
         get_gpt_oss_info,
         get_moonshot_info,
         get_nvidia_info,
+        get_zai_info,
     ):
         for name, attrs in getter().items():
             names.append(f"{attrs.organization}/{name}")
@@ -359,6 +361,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, True): 701_632,
         (False, True, False): 497_664,
         (False, False, True): 203_968,
+    },
+    "zai-org/GLM-5.3": {
+        (True, True, True): 124_437_632,
+        (True, True, False): 124_276_608,
+        (True, False, True): 121_517_312,
+        (True, False, False): 121_356_288,
+        (False, True, True): 3_081_344,
+        (False, True, False): 2_920_320,
+        (False, False, True): 161_024,
     },
 }
 

@@ -181,6 +181,12 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "context_window": 131072,
         "timeout_seconds": 1800,
     },
+    # GLM — Reasoning (low/high/max effort), 256K context
+    "zai-org/GLM-5.3": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
 }
 
 

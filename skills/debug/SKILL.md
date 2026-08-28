@@ -451,6 +451,7 @@ Never hardcode renderer names. Each model family has specific token formats, and
 | Qwen3.5 | `qwen3_5` | `qwen3_5_disable_thinking` | Hybrid attention; also has VL variants. |
 | DeepSeek V3 | `deepseekv3_thinking` | `deepseekv3` | Default is non-thinking. Thinking adds `<think>` prefill. |
 | Kimi K2.6 | `kimi_k26` | `kimi_k26_disable_thinking` | Vision-capable. |
+| GLM-5.3 | `glm5_3_max_reasoning` | — | Thinking cannot be disabled; `glm5_3_low_reasoning`/`glm5_3_high_reasoning` select lower efforts. |
 | Nemotron3 | `nemotron3` | `nemotron3_disable_thinking` | |
 
 **Common hybrid model mistakes:**
