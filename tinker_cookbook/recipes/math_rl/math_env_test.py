@@ -7,6 +7,7 @@ lives in tests/integration/test_math_dataset_builder.py.
 
 import pytest
 
+from tinker_cookbook.recipes.math_rl.arithmetic_env import _extract_final_int
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
 from tinker_cookbook.recipes.math_rl.math_grading import (
     extract_boxed,
@@ -14,6 +15,21 @@ from tinker_cookbook.recipes.math_rl.math_grading import (
     normalize_answer,
     split_tuple,
 )
+
+
+class TestExtractFinalInt:
+    def test_bare_integer(self):
+        assert _extract_final_int("91") == 91
+
+    def test_equation_with_markdown(self):
+        assert _extract_final_int("64 + 67 = **131**") == 131
+
+    def test_explanation_uses_last_integer(self):
+        text = "64 + 60 = 124, then 124 + 7 = 131. The answer is 131."
+        assert _extract_final_int(text) == 131
+
+    def test_no_integer(self):
+        assert _extract_final_int("no numeric answer") is None
 
 
 class TestExtractBoxed:

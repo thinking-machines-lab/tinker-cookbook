@@ -2,47 +2,38 @@
 
 Full listing of available models with types, architecture, and sizes.
 
+## Thinking Machines family
+
+| Model | Type | Arch | Size |
+|-------|------|------|------|
+| `thinkingmachines/Inkling` | Hybrid + Audio + Vision | MoE | Large |
+| `thinkingmachines/Inkling-Small` | Hybrid + Audio + Vision | MoE | Medium |
+
+These models render through `tml-renderers` (a standard Cookbook dependency) and require an explicit
+thinking-effort value at sampling and training time. Use the `inkling` skill for the details.
+
 ## Qwen family
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `Qwen/Qwen3.8-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.6-35B-A3B` | Hybrid + Vision | MoE | Medium |
 | `Qwen/Qwen3.6-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-397B-A17B` | Hybrid + Vision | MoE | Large |
-| `Qwen/Qwen3.5-35B-A3B` | Hybrid + Vision | MoE | Medium |
 | `Qwen/Qwen3.5-35B-A3B-Base` | Base | MoE | Medium |
-| `Qwen/Qwen3.5-27B` | Hybrid + Vision | Dense | Medium |
 | `Qwen/Qwen3.5-9B` | Hybrid + Vision | Dense | Small |
 | `Qwen/Qwen3.5-9B-Base` | Base | Dense | Small |
 | `Qwen/Qwen3.5-4B` | Hybrid + Vision | Dense | Compact |
-| `Qwen/Qwen3-235B-A22B-Instruct-2507` | Instruction | MoE | Large |
-| `Qwen/Qwen3-30B-A3B-Instruct-2507` | Instruction | MoE | Medium |
-| `Qwen/Qwen3-30B-A3B` | Hybrid | MoE | Medium |
-| `Qwen/Qwen3-30B-A3B-Base` | Base | MoE | Medium |
-| `Qwen/Qwen3-32B` | Hybrid | Dense | Medium |
 | `Qwen/Qwen3-8B` | Hybrid | Dense | Small |
-| `Qwen/Qwen3-8B-Base` | Base | Dense | Small |
-| `Qwen/Qwen3-4B-Instruct-2507` | Instruction | Dense | Compact |
-| `Qwen/Qwen3-VL-235B-A22B-Instruct` | Vision | MoE | Large |
-| `Qwen/Qwen3-VL-30B-A3B-Instruct` | Vision | MoE | Medium |
 
 Use the `_disable_thinking` renderer variant when you want direct instruction-following behavior from a hybrid Qwen model.
-
-## Llama family
-
-| Model | Type | Arch | Size |
-|-------|------|------|------|
-| `meta-llama/Llama-3.3-70B-Instruct` | Instruction | Dense | Large |
-| `meta-llama/Llama-3.1-70B` | Base | Dense | Large |
-| `meta-llama/Llama-3.1-8B` | Base | Dense | Small |
-| `meta-llama/Llama-3.1-8B-Instruct` | Instruction | Dense | Small |
-| `meta-llama/Llama-3.2-3B` | Base | Dense | Compact |
-| `meta-llama/Llama-3.2-1B` | Base | Dense | Compact |
 
 ## Nemotron family
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` | Hybrid | MoE | Medium |
+| `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16` | Hybrid | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16` | Hybrid | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` | Hybrid | MoE | Medium |
 
@@ -53,26 +44,23 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 | `openai/gpt-oss-120b` | Reasoning | MoE | Medium |
 | `openai/gpt-oss-20b` | Reasoning | MoE | Small |
 | `deepseek-ai/DeepSeek-V3.1` | Hybrid | MoE | Large |
-| `deepseek-ai/DeepSeek-V3.1-Base` | Base | MoE | Large |
-| `moonshotai/Kimi-K2-Thinking` | Reasoning | MoE | Large |
-| `moonshotai/Kimi-K2.5` | Reasoning + Vision | MoE | Large |
-| `moonshotai/Kimi-K2.6` | Reasoning + Vision | MoE | Large |
+| `moonshotai/Kimi-K2.6` | Hybrid + Vision | MoE | Large |
 | `zai-org/GLM-5.3` | Reasoning | MoE | Large |
 
 ## Model types explained
 
 - **Base**: Pre-trained on raw text. For research or full post-training pipelines.
-- **Instruction**: Fine-tuned for instruction following. Fast inference, no chain-of-thought.
 - **Reasoning**: Always uses chain-of-thought before visible output.
 - **Hybrid**: Can operate in both thinking and non-thinking modes.
 - **Vision**: Processes images alongside text.
+- **Audio**: Processes audio alongside text.
 
 ## Size categories
 
-- **Compact**: 1B-4B parameters
-- **Small**: 8B parameters
-- **Medium**: 27B-32B parameters
-- **Large**: 70B+ parameters
+Sizes are relative tiers (Compact < Small < Medium < Large) matching the
+[Models & Pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/)
+table. For MoE models, compute cost tracks active parameters rather than
+total, so a large-total-parameter MoE model can sit in a smaller tier.
 
 ## Renderer matching
 
@@ -87,3 +75,12 @@ The mapping is maintained in `tinker_cookbook/model_info.py`. Never hardcode ren
 ## Reference
 
 - `tinker_cookbook/model_info.py` — Model metadata and renderer mapping
+
+## Retired models
+
+Models retired from the Tinker service can no longer be used for training or
+sampling, even though `model_info.py` retains their metadata (existing
+checkpoints can still be exported). See the Tinker docs
+([Models & Pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/) and
+[Model Deprecations](https://tinker-docs.thinkingmachines.ai/tinker/model-deprecations/))
+for the retired list and recommended replacements.

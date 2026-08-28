@@ -11,6 +11,7 @@ python -m tinker_cookbook.recipes.vlm_classifier.sweep experiment_dir=./sweep mo
 """
 
 import asyncio
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from itertools import product
@@ -222,7 +223,11 @@ def run_sweep(sweep_config: SweepConfig):
         f"Running {len(experiment_configs)} experiments with {sweep_config.num_parallel} parallel workers"
     )
 
-    with ProcessPoolExecutor(max_workers=sweep_config.num_parallel) as executor:
+    # Use "spawn": the Tinker client's background threads do not survive
+    # fork(), so fork-started workers (the Linux default) hang silently.
+    with ProcessPoolExecutor(
+        max_workers=sweep_config.num_parallel, mp_context=multiprocessing.get_context("spawn")
+    ) as executor:
         futures = [executor.submit(run_experiment, config) for config in experiment_configs]
         results = [f.result() for f in futures]
         print(f"{len(results)} experiments finished running")

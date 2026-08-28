@@ -14,6 +14,7 @@ Response: ja
 ```
 
 At a high level, this method involves two stages:
+
 1. **Creating data for distillation**: A teacher language model uses $p$ to generate responses $r$ on a set of queries $q$; i.e. $r \sim \text{teacher}(\cdot|p, q)$
 2. **Training the student model**: A student model is fine-tuned to predict the responses $r$ to the query $q$ but without accessing $p$, hence learning to behave as if the target prompt is in its context; i.e. $\text{student}(\cdot | q)$ should predict $r$
 
@@ -41,6 +42,7 @@ python -m tinker_cookbook.recipes.prompt_distillation.create_data \
 ```
 
 This command will:
+
 - Use the configured teacher model to generate language classification examples
 - Save the distilled dataset to the specified output file
 - Create diverse training examples suitable for student model fine-tuning
@@ -54,6 +56,7 @@ python -m tinker_cookbook.recipes.prompt_distillation.train
 ```
 
 The training script will:
+
 - Load the generated distillation dataset
 - Apply optimized training configurations
 - Fine-tune the student model for language classification

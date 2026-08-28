@@ -24,8 +24,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # Only count approvals from people with write access to the repo, so two
-# outside accounts can't approve each other's PRs to clear the gate.
-TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+# outside accounts can't approve each other's PRs to clear the gate. Checked
+# via the collaborator-permission API rather than `author_association`: the
+# script authenticates as a GitHub App, and apps without org-membership
+# visibility see MEMBER reviewers as NONE, which would reject valid approvals.
+TRUSTED_PERMISSIONS = {"admin", "write"}
 
 
 def classify_checks(
@@ -126,13 +129,19 @@ def main():
                 backoff *= 2
         return False
 
-    print(":: Fetching newest main...")
-    must(git_fetch_with_retry("main"), "Can't fetch main")
+    # `ghstack land` always lands onto the repo's default branch, so the stack
+    # must be reconstructed against that same branch (not a hardcoded `main`).
+    resp = gh.get(f"https://api.github.com/repos/{REPO}")
+    must(resp.ok, f"Error fetching repo metadata for {REPO}!")
+    base_branch = resp.json()["default_branch"]
+
+    print(f":: Fetching newest {base_branch}...")
+    must(git_fetch_with_retry(base_branch), f"Can't fetch {base_branch}")
     print(":: Fetching orig branch...")
     must(git_fetch_with_retry(orig_ref), "Can't fetch orig branch")
 
     proc = subprocess.Popen(
-        "git log FETCH_HEAD...$(git merge-base FETCH_HEAD origin/main)",
+        f"git log FETCH_HEAD...$(git merge-base FETCH_HEAD origin/{base_branch})",
         stdout=subprocess.PIPE,
         shell=True,
     )
@@ -146,6 +155,18 @@ def main():
     pr_numbers = list(map(int, pr_numbers))
     print(pr_numbers)
     must(pr_numbers and pr_numbers[0] == NUMBER, "Extracted PR numbers don't seem right!")
+
+    reviewer_permission_cache: dict[str, str] = {}
+
+    def reviewer_has_write(login: str) -> bool:
+        if login not in reviewer_permission_cache:
+            resp = gh.get(f"https://api.github.com/repos/{REPO}/collaborators/{login}/permission")
+            # `permission` collapses roles: admin -> admin, maintain/write ->
+            # write, triage/read -> read.
+            reviewer_permission_cache[login] = (
+                resp.json().get("permission", "none") if resp.ok else "none"
+            )
+        return reviewer_permission_cache[login] in TRUSTED_PERMISSIONS
 
     # Every not-yet-merged PR in the stack needs an approval.
     print(":: Checking approvals for all PRs...")
@@ -163,12 +184,21 @@ def main():
         # head commit. The repo's ruleset does not dismiss stale reviews on push,
         # so without the commit_id check an approval of a benign commit would
         # still clear the gate after the PR is updated with different code.
+        reviews = resp.json()
         has_approval = any(
             review["state"] == "APPROVED"
-            and review.get("author_association") in TRUSTED_ASSOCIATIONS
             and review.get("commit_id") == head_sha
-            for review in resp.json()
+            and reviewer_has_write(review["user"]["login"])
+            for review in reviews
         )
+        if not has_approval:
+            for review in reviews:
+                login = review["user"]["login"]
+                print(
+                    f"  review by {login}: state={review['state']} "
+                    f"commit={review.get('commit_id', '')[:7]} "
+                    f"permission={reviewer_permission_cache.get(login, 'not checked')}"
+                )
         must(
             has_approval,
             f"PR #{n} has no current approval from a user with write access "

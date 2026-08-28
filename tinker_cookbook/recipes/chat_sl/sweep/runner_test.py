@@ -1,12 +1,15 @@
 """Tests for sweep runner."""
 
 import json
+from concurrent.futures import Executor, Future
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 import chz
 import pytest
 
 from tinker_cookbook.recipes.chat_sl.sweep.runner import (
+    _is_spawn_bootstrap_error,
     _validate_axes,
     _validate_config_has_log_path,
     run,
@@ -205,5 +208,47 @@ class TestValidateConfigHasLogPath:
                 lambda c: None,
                 BadConfig(),
                 sweep_dir=str(tmp_path),
+                learning_rate=[1e-4],
+            )
+
+
+class TestIsSpawnBootstrapError:
+    BOOTSTRAP_MESSAGE = (
+        "An attempt has been made to start a new process before the current process "
+        "has finished its bootstrapping phase."
+    )
+
+    def test_recognizes_bootstrap_runtime_error(self):
+        assert _is_spawn_bootstrap_error(RuntimeError(self.BOOTSTRAP_MESSAGE))
+
+    def test_recognizes_chained_bootstrap_error(self):
+        inner = RuntimeError(self.BOOTSTRAP_MESSAGE)
+        outer = Exception("worker died")
+        outer.__cause__ = inner
+        assert _is_spawn_bootstrap_error(outer)
+
+    def test_ignores_other_runtime_errors(self):
+        assert not _is_spawn_bootstrap_error(RuntimeError("something else"))
+
+    def test_ignores_non_runtime_errors(self):
+        assert not _is_spawn_bootstrap_error(ValueError(self.BOOTSTRAP_MESSAGE))
+
+
+class TestBrokenPoolIsFatal:
+    def test_run_raises_on_broken_process_pool(self, tmp_path: Path):
+        class BrokenExecutor(Executor):
+            def submit(self, fn, /, *args, **kwargs):  # type: ignore[override]
+                future: Future[None] = Future()
+                future.set_exception(
+                    BrokenProcessPool("A process in the process pool was terminated abruptly")
+                )
+                return future
+
+        with pytest.raises(RuntimeError, match='if __name__ == "__main__"'):
+            run(
+                _mock_main,
+                MockConfig(),
+                sweep_dir=str(tmp_path),
+                executor=BrokenExecutor(),
                 learning_rate=[1e-4],
             )

@@ -11,7 +11,7 @@ import tinker
 import torch
 from tinker import TensorData
 
-from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
+from tinker_cookbook.rl.types import PARSE_ERROR_MASKED_METRIC_KEY, Trajectory, TrajectoryGroup
 from tinker_cookbook.supervised.common import (
     create_rightshifted_model_input_and_leftshifted_targets,
 )
@@ -174,15 +174,23 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             SequenceAccumulator.clear()
             delta_ob_flat = ob_flat
         delta_ob_len = _flat_ob_token_len(delta_ob_flat)
+        # Parse-error turns flagged for masking (ParseErrorPolicy.mask_error_turns)
+        # contribute no training signal: their action tokens get mask=0 and
+        # advantage=0, while surrounding turns train normally.
+        masked = float(transition.metrics.get(PARSE_ERROR_MASKED_METRIC_KEY, 0.0)) >= 1.0
+        action_mask = 0.0 if masked else 1.0
+        action_advantage = 0.0 if masked else traj_advantage
         SequenceAccumulator.full_sequence.extend(delta_ob_flat)
         SequenceAccumulator.full_sequence.extend(ac_with_logprobs.tokens)
         SequenceAccumulator.sampled_logprobs.extend(
             [0.0] * delta_ob_len + ac_with_logprobs.logprobs
         )
         SequenceAccumulator.advantages.extend(
-            [0] * delta_ob_len + [traj_advantage] * len(ac_with_logprobs.tokens)
+            [0] * delta_ob_len + [action_advantage] * len(ac_with_logprobs.tokens)
         )
-        SequenceAccumulator.mask.extend([0.0] * delta_ob_len + [1.0] * len(ac_with_logprobs.tokens))
+        SequenceAccumulator.mask.extend(
+            [0.0] * delta_ob_len + [action_mask] * len(ac_with_logprobs.tokens)
+        )
 
     if SequenceAccumulator.full_sequence:
         data.append(make_datum_from_state())

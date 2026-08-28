@@ -27,6 +27,7 @@ import json
 import random
 import uuid
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 from PIL import Image
@@ -49,9 +50,11 @@ from tinker_cookbook.renderers import (
 from tinker_cookbook.renderers.base import (
     ContentPart,
     ImagePart,
+    Renderer,
     ensure_list,
     ensure_text,
     format_content_as_string,
+    has_thinking,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.glm5_3 import Glm5_3Renderer
@@ -60,6 +63,7 @@ from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
+from tinker_cookbook.renderers.qwen3_8 import Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
     skip_if_deepseek_tokenizer_bug,
@@ -463,9 +467,11 @@ TOOL_CAPABLE_MODELS = {
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "Qwen/Qwen3.6-35B-A3B",
+    "Qwen/Qwen3.8-27B",
     "meta-llama/Llama-3.1-8B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     "openai/gpt-oss-20b",
     "zai-org/GLM-5.3",
@@ -493,6 +499,16 @@ _HF_TEST_MODELS = [
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.8-27B", None, {}),  # default renderer qwen3_8 = reasoning effort xhigh
+    ("Qwen/Qwen3.8-27B", "qwen3_8_medium_reasoning", {"reasoning_effort": "medium"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_low_reasoning", {"reasoning_effort": "low"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking", {"enable_thinking": False}),
+    ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+        "nemotron3_ultra_disable_thinking",
+        {"enable_thinking": False},
+    ),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -512,8 +528,10 @@ _HF_TOOL_COMPATIBLE_MODELS = {
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "Qwen/Qwen3.6-35B-A3B",
+    "Qwen/Qwen3.8-27B",
     "deepseek-ai/DeepSeek-V3.1",
     "moonshotai/Kimi-K2-Thinking",
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     "zai-org/GLM-5.3",
 }
@@ -626,6 +644,16 @@ _SUPERVISED_TEST_MODELS = [
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.8-27B", None, {}),  # default renderer qwen3_8 = reasoning effort xhigh
+    ("Qwen/Qwen3.8-27B", "qwen3_8_medium_reasoning", {"reasoning_effort": "medium"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_low_reasoning", {"reasoning_effort": "low"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking", {"enable_thinking": False}),
+    ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+        "nemotron3_ultra_disable_thinking",
+        {"enable_thinking": False},
+    ),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
@@ -663,11 +691,10 @@ def test_supervised_example_against_hf_chat_templates(
         )
 
     # Skip supervised tests for thinking renderer - we intentionally don't add </think> to the
-    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always adds it
-    if renderer_override in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
-        pytest.skip(
-            f"{renderer_override} intentionally differs from HF for supervised target (no </think>)"
-        )
+    # last message (supervised target) so it can preserve ThinkingPart, unlike HF which always
+    # adds it. A target without a ThinkingPart has nothing to preserve and stays HF-compatible.
+    if renderer_override in _RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET:
+        pytest.skip(f"{renderer_override} renders the supervised target the way sampling makes it")
 
     tokenizer = get_tokenizer(model_name)
     attributes = get_model_attributes(model_name)
@@ -704,14 +731,18 @@ def test_supervised_example_against_hf_chat_templates(
         hf_convo, tools=tools_for_hf, tokenize=False, add_generation_prompt=False, **hf_kwargs
     )
     assert isinstance(hf_output, str)
-    hf_tokens = tokenizer.encode(hf_output.rstrip("\n"), add_special_tokens=False)
+    # The text, not the tokens. `apply_chat_template` tokenizes a whole conversation at once
+    # and an example is a prompt plus what was sampled after it, so the two segment the same
+    # string differently wherever a boundary falls inside a merge: `<think>\n` is
+    # `<think>`,`\n` in a prompt that stops between them and `<think>`,`\n\n` in a document
+    # that does not. Both decode the same, and only one is reachable by sampling.
+    rendered = tokenizer.decode(cookbook_tokens)
+    # Templates differ on whether the last turn ends with the turn separator; ours writes it
+    # before the *next* turn, so a whole-conversation render never carries a trailing one.
+    # `removesuffix` takes exactly that one and is a no-op where the template wrote none.
+    expected = hf_output.removesuffix("\n")
 
-    assert cookbook_tokens == hf_tokens, (
-        f"[{conv_desc}] Cookbook tokens: {cookbook_tokens}\n"
-        f"Cookbook string: {tokenizer.decode(cookbook_tokens)}\n"
-        f"HF tokens: {hf_tokens}\n"
-        f"HF string: {tokenizer.decode(hf_tokens)}"
-    )
+    assert rendered == expected, f"[{conv_desc}]\nrendered: {rendered!r}\nexpected: {expected!r}"
 
 
 @pytest.mark.parametrize(
@@ -766,9 +797,11 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
     [
         "Qwen/Qwen3-8B",
         "Qwen/Qwen3.6-35B-A3B",
+        "Qwen/Qwen3.8-27B",
         # Llama3 does not support tool calling - see llama3.py docstring
         "deepseek-ai/DeepSeek-V3.1",
         "moonshotai/Kimi-K2-Thinking",
+        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "openai/gpt-oss-20b",
     ],
@@ -860,6 +893,9 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
         ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
+        # Qwen3.8 defaults to strip_thinking_from_history=False already; this
+        # confirms the explicit kwarg keeps working.
+        ("Qwen/Qwen3.8-27B", Qwen3_8Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
@@ -948,10 +984,13 @@ _CONSISTENCY_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_instruct"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
     ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+    ("moonshotai/Kimi-K2.5", "kimi_k25"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
     ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
@@ -976,19 +1015,232 @@ _RENDERERS_WITHOUT_THINKING_SUPPORT = {"llama3", "role_colon"}
 # Renderers that don't support tool calling
 _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 
-# Renderers that strip thinking in non-thinking mode (conversation must not have ThinkingPart)
+# These renderers cannot be given a turn that reasoned, so the conversation must have no
+# ThinkingPart. `deepseekv3` and `kimi_k2` drop the reasoning; the other three raise, per
+# `test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned`.
 _RENDERERS_WITH_THINKING_STRIPPING = {
     "qwen3_disable_thinking",
     "qwen3_5_disable_thinking",
+    "qwen3_8_disable_thinking",
     "nemotron3_disable_thinking",
     "deepseekv3",
     "kimi_k2",
 }
 
-# Renderers where supervised and generation have different headers (HF thinking=True behavior).
-# These add </think> to supervised assistant headers but <think> to generation prompt,
-# so observation != generation_prompt by design.
-_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"deepseekv3_thinking", "qwen3_5", "nemotron3"}
+# One renderer per class that sets `disables_thinking`. kimi_k25's covers
+# `kimi_k26_disable_thinking` and nemotron3's covers `nemotron3_ultra_disable_thinking`, which
+# subclass them.
+_REASONING_OFF_RENDERERS = [
+    ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
+    ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
+    ("moonshotai/Kimi-K2.5", "kimi_k25_disable_thinking"),
+    ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
+]
+
+
+@pytest.mark.parametrize("model_name,renderer_name", _REASONING_OFF_RENDERERS)
+def test_a_reasoning_off_renderer_refuses_a_turn_that_reasoned(model_name: str, renderer_name: str):
+    """These renderers tell the model not to reason, so a turn that reasoned cannot be trained.
+
+    Without the reasoning the same turn renders fine, and its observation equals the prompt.
+    """
+    renderer = get_renderer(renderer_name, get_tokenizer(model_name))
+    reasoned = [
+        {"role": "user", "content": "q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="r"),
+                TextPart(type="text", text="a"),
+            ],
+        },
+    ]
+
+    with pytest.raises(RendererError, match="closes the think block"):
+        renderer.build_supervised_example(cast(list[Message], reasoned))
+
+    plain = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    model_input, weights = renderer.build_supervised_example(cast(list[Message], plain))
+    observation = model_input.to_ints()[: [w > 0 for w in weights.tolist()].index(True)]
+    assert (
+        observation == renderer.build_generation_prompt(cast(list[Message], plain[:-1])).to_ints()
+    )
+
+
+@pytest.mark.parametrize(
+    "model_name,renderer_name",
+    sorted(set(_CONSISTENCY_RENDERERS) | set(_REASONING_OFF_RENDERERS)),
+)
+def test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow(
+    model_name: str, renderer_name: str
+):
+    """A turn that reasoned is refused, or it is trained after the prompt it is sampled from.
+
+    Refusing, rendering and dropping the reasoning are all fine. Training an example that does
+    not start with its own generation prompt is not, because the model is never given that
+    sequence.
+
+    Catches a reasoning-off renderer added without `disables_thinking`: it would render the
+    reasoning, and nothing else here would notice.
+    """
+    renderer = get_renderer(renderer_name, get_tokenizer(model_name))
+    reasoned = [
+        {"role": "user", "content": "q"},
+        {
+            "role": "assistant",
+            "content": [
+                ThinkingPart(type="thinking", thinking="r"),
+                TextPart(type="text", text="a"),
+            ],
+        },
+    ]
+
+    try:
+        model_input, _ = renderer.build_supervised_example(cast(list[Message], reasoned))
+    except RendererError:
+        return  # declining to render it is one of the acceptable answers
+
+    prompt = renderer.build_generation_prompt(cast(list[Message], reasoned[:-1])).to_ints()
+    assert model_input.to_ints()[: len(prompt)] == prompt, (
+        f"{renderer_name} trains a turn that reasoned after a prompt it cannot follow. If this "
+        "renderer tells the model not to reason, set disables_thinking = True on it."
+    )
+
+
+# Renderers whose supervised target is rendered the way sampling produces it rather than the
+# way the template renders history. HF writes a finished turn as history -- deepseek as a bare
+# `</think>`, the opening tag living only in the generation prompt -- and no sampling can
+# produce that, so the document comparison does not apply to the target.
+_RENDERERS_THAT_DIVERGE_FROM_HF_FOR_THE_TARGET = {"deepseekv3_thinking"}
+
+# Renderers whose supervised target keeps a header the generation prompt does not end with, so
+# observation != generation_prompt however the boundary moves.
+_RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS = {"nemotron3"}
+
+
+@pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
+def test_every_example_of_a_split_conversation_starts_where_it_was_sampled(
+    model_name: str, renderer_name: str, conversation_fn
+):
+    """A renderer without the extension property gets one example per trained message.
+
+    Such a renderer writes an assistant message one way as history and another as the turn
+    being produced, so a single sequence cannot show every turn the context it was sampled
+    from -- which is what `build_supervised_examples` is for. It used to raise for every
+    renderer but two, leaving callers with a multi-message turn no correct option at all.
+    """
+    skip_if_deepseek_tokenizer_bug(model_name)
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    if renderer.has_extension_property:
+        pytest.skip(f"{renderer_name} extends, so one example already shows every turn")
+    if type(renderer).build_supervised_examples is not Renderer.build_supervised_examples:
+        pytest.skip(f"{renderer_name} splits its own way; this covers the default split")
+
+    messages = conversation_fn()
+    has_thinking_content = any(has_thinking(m["content"]) for m in messages)
+    if has_thinking_content and renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support ThinkingPart content")
+    if has_thinking_content and renderer_name in _RENDERERS_WITH_THINKING_STRIPPING:
+        pytest.skip(f"{renderer_name} strips thinking, so a produced turn cannot round-trip")
+    if _conversation_has_tools(messages) and renderer_name in _RENDERERS_WITHOUT_TOOL_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support tool calling")
+    if renderer_name in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(f"{renderer_name} has different headers for supervised vs generation")
+
+    examples = renderer.build_supervised_examples(
+        messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+    assistants = [idx for idx, m in enumerate(messages) if m["role"] == "assistant"]
+    assert len(examples) == len(assistants)
+
+    for idx, (model_input, weights) in zip(assistants, examples):
+        tokens = model_input.to_ints()
+        trained = [w > 0 for w in weights.tolist()]
+        assert True in trained, f"example for message {idx} trains nothing"
+        observation = tokens[: trained.index(True)]
+        assert observation == renderer.build_generation_prompt(messages[:idx]).to_ints(), (
+            f"example for message {idx} does not start where that turn was sampled"
+        )
+
+
+# Renderers whose generation prompt ends in a prefill, so the observation/action boundary is
+# something a renderer can get wrong without changing a single token.
+_RENDERERS_WITH_A_GENERATION_PREFILL = [
+    ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+    ("moonshotai/Kimi-K2.5", "kimi_k25"),
+]
+
+
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
+def test_a_caller_prefill_composes_with_the_format_one(model_name: str, renderer_name: str):
+    """`prefill` is the caller's slot; a format's own prefill must not consume it.
+
+    Renderers whose prompt ends in `<think>` write it through that same parameter, so one of
+    them defaulted rather than composed: any caller passing a prefill silently turned thinking
+    mode off.
+    """
+    skip_if_deepseek_tokenizer_bug(model_name)
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    messages = [Message(role="user", content="q")]
+
+    plain = cast(str, tokenizer.decode(renderer.build_generation_prompt(messages).to_ints()))
+    prefilled = cast(
+        str, tokenizer.decode(renderer.build_generation_prompt(messages, prefill="Sure").to_ints())
+    )
+
+    assert prefilled == plain + "Sure", (
+        f"{renderer_name} did not append the caller's prefill to its own prompt:\n"
+        f"  without: {plain!r}\n  with:    {prefilled!r}"
+    )
+
+
+@pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
+@pytest.mark.parametrize("model_name,renderer_name", _CONSISTENCY_RENDERERS)
+def test_last_assistant_turn_observes_the_prefill_too(
+    model_name: str, renderer_name: str, conversation_fn
+):
+    """LAST_ASSISTANT_TURN stops training where LAST_ASSISTANT_MESSAGE does.
+
+    The two modes weight different amounts -- a turn can span several messages -- but both are
+    sampled from the prompt for the conversation up to the last user message, so both must
+    observe its prefill. Only LAST_ASSISTANT_MESSAGE was covered, which let the boundary move
+    here without changing a token or failing a test.
+    """
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    messages = conversation_fn()
+
+    last_user = max((idx for idx, m in enumerate(messages) if m["role"] == "user"), default=-1)
+    if last_user + 1 >= len(messages) or messages[last_user + 1]["role"] != "assistant":
+        pytest.skip("no assistant turn after the last user message")
+    if len(messages) - (last_user + 1) > 1 and not renderer.has_extension_property:
+        # A turn spanning several messages needs one example per message, which is what
+        # build_supervised_examples is for; a single sequence cannot show them all.
+        pytest.skip("multi-message turn on a renderer that does not extend")
+    if _conversation_has_tools(messages) and renderer_name in _RENDERERS_WITHOUT_TOOL_SUPPORT:
+        pytest.skip(f"{renderer_name} doesn't support tool calling")
+    if any(has_thinking(m["content"]) for m in messages) and (
+        renderer_name in _RENDERERS_WITHOUT_THINKING_SUPPORT
+        or renderer_name in _RENDERERS_WITH_THINKING_STRIPPING
+    ):
+        pytest.skip(f"{renderer_name} cannot round-trip thinking here")
+    if renderer_name in _RENDERERS_WITH_DIFFERENT_SUPERVISED_GEN_HEADERS:
+        pytest.skip(f"{renderer_name} has different headers for supervised vs generation")
+
+    model_input, weights = renderer.build_supervised_example(
+        messages, train_on_what=TrainOnWhat.LAST_ASSISTANT_TURN
+    )
+    tokens = model_input.to_ints()
+    trained = [w > 0 for w in weights.tolist()]
+    if True not in trained:
+        pytest.skip("nothing trained")
+    observation = tokens[: trained.index(True)]
+
+    assert observation == renderer.build_generation_prompt(messages[: last_user + 1]).to_ints()
 
 
 @pytest.mark.parametrize("conversation_fn", _CONSISTENCY_CONVERSATIONS)
@@ -1120,6 +1372,8 @@ def test_supervised_generation_parse_consistency(
         ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
         ("meta-llama/Llama-3.1-8B-Instruct", "llama3"),
         # deepseekv3 defaults to non-thinking, deepseekv3_thinking is thinking mode
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
@@ -1146,6 +1400,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "qwen3_disable_thinking": "<|im_end|>",
         "qwen3_5": "<|im_end|>",
         "qwen3_5_disable_thinking": "<|im_end|>",
+        "qwen3_8_xhigh_reasoning": "<|im_end|>",
+        "qwen3_8_disable_thinking": "<|im_end|>",
         "deepseekv3": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes (alias)
@@ -1202,6 +1458,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         ("Qwen/Qwen3-8B", "qwen3"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
         ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
     ],
@@ -1338,13 +1595,28 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),
-    # Qwen3.5 disable thinking with strip_thinking_from_history=False (preserves thinking)
-    (
+    # Qwen3.5 disable thinking, on a conversation with no reasoning: this check trains each
+    # assistant turn in turn, and a reasoning-off renderer refuses one that reasoned. The old
+    # thinking conversation hid the failure below, because every turn reasoned and so no turn
+    # ever got the empty block.
+    pytest.param(
         "Qwen/Qwen3.6-35B-A3B",
         Qwen3_5DisableThinkingRenderer,
         {"strip_thinking_from_history": False},
-        get_multiturn_thinking_conversation,
+        get_basic_4turn_conversation,
+        marks=pytest.mark.xfail(
+            strict=True,
+            reason="`_assistant_header_suffix` decides the empty block by position "
+            "(`idx > last_user_index`), so one assistant turn gets it as the turn being "
+            "produced and not as history. The sequence through that turn is then not a prefix "
+            "of the next prompt, so has_extension_property=True does not hold.",
+        ),
     ),
+    # Qwen3.8 is intentionally absent: it preserves thinking in history (HF
+    # preserve_thinking=true) but does not claim has_extension_property — a
+    # no-reasoning turn's closed empty block token-merges differently from the
+    # open-think prompt. Its behavioral extension guarantees are covered in
+    # qwen3_8_test.py.
     # DeepSeek non-thinking with basic multi-turn
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_basic_4turn_conversation),
     # DeepSeek non-thinking with tool calls

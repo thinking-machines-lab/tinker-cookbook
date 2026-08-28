@@ -167,6 +167,7 @@ python -m tinker_cookbook.recipes.true_thinking_score.analyze \
 ```
 
 Results are saved to `/tmp/tinker-examples/tts/<run-name>/`:
+
 - `tts_per_problem.jsonl` — per-problem details (steps, TTS scores)
 - `tts_summary.json` — aggregate statistics
 

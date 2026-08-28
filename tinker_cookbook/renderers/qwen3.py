@@ -14,8 +14,10 @@ from typing import cast
 
 import tinker
 
+from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
+    ContentPart,
     ImagePart,
     ImageProcessorProtocol,
     Message,
@@ -28,12 +30,51 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     UnparsedToolCall,
     _tool_call_payload,
+    detect_unterminated_tool_block,
+    has_thinking,
     image_to_chunk,
     parse_content_blocks,
     parse_response_for_stop_token,
     remove_thinking,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
+
+
+def _frame_thinking(reasoning: str) -> str:
+    """Frame reasoning the way Qwen3's chat template does.
+
+    The template writes `<think>\\n{reasoning}\\n</think>\\n\\n` around the turn being
+    produced -- padded, and present even when the reasoning is empty. Rendering
+    `<think>{reasoning}</think>` instead differs from `apply_chat_template` by 3 tokens
+    with reasoning and 4 without, on the turn the model is about to continue.
+    """
+    return "<think>\n" + reasoning.strip("\n") + "\n</think>\n\n"
+
+
+def _unframe_thinking(parts: list[ContentPart]) -> list[ContentPart]:
+    """Reverse `_frame_thinking`, so render -> parse is the identity.
+
+    The template's `strip`/`lstrip` mean the padding is framing rather than content, and
+    an empty block is a turn that did not reason rather than one that reasoned emptily.
+    """
+    out: list[ContentPart] = []
+    after_block = False
+    for p in parts:
+        if p["type"] == "thinking":
+            reasoning = p["thinking"].strip("\n")
+            if reasoning:
+                out.append({"type": "thinking", "thinking": reasoning})
+            # An empty block is dropped, but the content after it was still lstripped.
+            after_block = True
+        elif p["type"] == "text":
+            out.append(
+                {"type": "text", "text": p["text"].lstrip("\n") if after_block else p["text"]}
+            )
+            after_block = False
+        else:
+            out.append(p)
+            after_block = False
+    return out
 
 
 def _merge_consecutive_text_parts(
@@ -85,6 +126,28 @@ class Qwen3Renderer(Renderer):
     """
 
     supports_streaming = True
+    # The 2507-Instruct variants below do not use the `<think>` tag at all, so they must
+    # not be given the block the template writes around a produced turn.
+    frames_thinking = True
+
+    def _frames_produced_turn(self, message: Message, ctx: RenderContext) -> bool:
+        """Whether to frame this message the way the template frames a produced turn.
+
+        `chat_template` gates on `loop.index0 > ns.last_query_index`, so only a turn after
+        the last user message is framed. That rule is positional, and the extension
+        property needs an assistant turn to render the same wherever it sits -- so when
+        history keeps its thinking (`strip_thinking_from_history=False`, the configuration
+        that claims the property) every assistant turn is framed alike instead. The
+        default configuration strips history, where the positional rule is exact.
+        """
+        if not self.frames_thinking or message["role"] != "assistant":
+            return False
+        if ctx.last_user_index < 0:
+            # The template gates on `loop.index0 > ns.last_query_index`, and that defaults to
+            # the final index when no user message exists -- so a conversation without one is
+            # never framed, however it ends.
+            return False
+        return ctx.is_last or not self.strip_thinking_from_history
 
     def __init__(self, tokenizer: Tokenizer, strip_thinking_from_history: bool = True):
         """
@@ -149,6 +212,8 @@ class Qwen3Renderer(Renderer):
         header_str = f"{maybe_newline}<|im_start|>{role}\n"
 
         content = message["content"]
+        frames = self._frames_produced_turn(message, ctx)
+        has_reasoning = has_thinking(content)
 
         if isinstance(content, list):
             # Structured content - handle with list operations
@@ -163,12 +228,27 @@ class Qwen3Renderer(Renderer):
             # Render parts in order, preserving interleaved thinking/text structure.
             # No separator needed - whitespace is preserved in TextPart for roundtrip identity.
             rendered_parts = []
+            after_block = False
             for p in parts:
                 if p["type"] == "thinking":
-                    rendered_parts.append(f"<think>{p['thinking']}</think>")
+                    rendered_parts.append(
+                        _frame_thinking(p["thinking"])
+                        if frames
+                        else f"<think>{p['thinking']}</think>"
+                    )
+                    after_block = frames
                 elif p["type"] == "text":
-                    rendered_parts.append(p["text"])
+                    # `content.lstrip('\n')` from template line 44: the block has just
+                    # written the padding, so content must not add its own.
+                    rendered_parts.append(p["text"].lstrip("\n") if after_block else p["text"])
+                    after_block = False
             output_content = "".join(rendered_parts)
+        elif frames and "</think>" in content:
+            # An inline block in string content is normalized the way the template
+            # normalizes it, so `<think>\n\n</think>\nx` and `<think>\n\n</think>\n\nx`
+            # both render as the latter rather than passing through as written.
+            reasoning, _, rest = content.partition("</think>")
+            output_content = _frame_thinking(reasoning.rpartition("<think>")[2]) + rest.lstrip("\n")
         else:
             # String content - pass through as-is.
             # Note: strip_thinking_from_history only works with list-based content.
@@ -176,27 +256,45 @@ class Qwen3Renderer(Renderer):
             # with ThinkingPart separated from text (as returned by parse_response).
             output_content = content
 
+        # The template's `content` is the message's own text, and the separator below asks
+        # about that -- not about the empty block, which is framing the template writes
+        # itself. Captured before the block is prepended.
+        has_text = bool(output_content)
+
+        # The template opens the block on the turn being produced whether or not it
+        # reasoned, so a turn that did not reason still gets an empty one -- whatever
+        # shape its content arrived in.
+        if frames and not has_reasoning:
+            output_content = _frame_thinking("") + output_content.lstrip("\n")
+
         # Handle tool response wrapping
         if message["role"] == "tool":
             output_content = self._wrap_qwen_tool_response(output_content)
 
         # Handle tool_calls field
         if "tool_calls" in message:
-            # Add leading newline to match HF template behavior
-            output_content += "\n" + "\n".join(
+            # The template separates the calls from the text before them, and from each
+            # other, but writes nothing before the first when there is no text:
+            # `{%- if (loop.first and content) or (not loop.first) %}{{- \'\\n\' }}`.
+            calls = "\n".join(
                 [
                     f"<tool_call>\n{json.dumps(_tool_call_payload(tool_call))}\n</tool_call>"
                     for tool_call in message["tool_calls"]
                 ]
             )
-        output_content += "<|im_end|>"
+            output_content += ("\n" if has_text else "") + calls
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
         output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(output_content, add_special_tokens=False)
-            )
+                tokens=self.tokenizer.encode(
+                    output_content,
+                    add_special_tokens=False,
+                    split_special_tokens=True,
+                )
+            ),
+            tinker.types.EncodedTextChunk(tokens=[self._end_message_token]),
         ]
         return RenderedMessage(header=header, output=output)
 
@@ -247,7 +345,9 @@ class Qwen3Renderer(Renderer):
 
         if result is not None:
             parts, tool_results = result
-            assistant_message["content"] = parts
+            assistant_message["content"] = (
+                _unframe_thinking(parts) if self.frames_thinking else parts
+            )
 
             tool_calls = [t for t in tool_results if isinstance(t, ToolCall)]
             unparsed = [t for t in tool_results if isinstance(t, UnparsedToolCall)]
@@ -259,7 +359,24 @@ class Qwen3Renderer(Renderer):
             # No special blocks found - keep as string for backward compatibility
             assistant_message["content"] = content
 
+        self._append_unterminated_tool_block(assistant_message, content)
         return assistant_message, termination
+
+    @staticmethod
+    def _append_unterminated_tool_block(message: Message, content: str) -> None:
+        """Surface a ``<tool_call>`` block that was opened but never closed.
+
+        Such a response can still terminate cleanly on ``<|im_end|>``;
+        without this check the dangling block degrades silently to plain
+        text. Detected blocks are appended to ``unparsed_tool_calls`` so the
+        failure is recoverable (a content-level parse failure).
+        """
+        dangling = detect_unterminated_tool_block(content, "<tool_call>", "</tool_call>")
+        if dangling is not None:
+            message["unparsed_tool_calls"] = [
+                *message.get("unparsed_tool_calls", []),
+                dangling,
+            ]
 
     def _parse_response_for_streaming(
         self, response: list[int]
@@ -286,7 +403,9 @@ class Qwen3Renderer(Renderer):
 
         if result is not None:
             parts, tool_results = result
-            assistant_message["content"] = parts
+            assistant_message["content"] = (
+                _unframe_thinking(parts) if self.frames_thinking else parts
+            )
 
             tool_calls = [t for t in tool_results if isinstance(t, ToolCall)]
             unparsed = [t for t in tool_results if isinstance(t, UnparsedToolCall)]
@@ -297,6 +416,7 @@ class Qwen3Renderer(Renderer):
         else:
             assistant_message["content"] = content
 
+        self._append_unterminated_tool_block(assistant_message, content)
         return assistant_message, termination
 
     def to_openai_message(self, message: Message) -> dict:
@@ -418,42 +538,40 @@ class Qwen3DisableThinkingRenderer(Qwen3Renderer):
     "non-thinking" mode while maintaining compatibility with the OpenAI endpoint.
     """
 
+    disables_thinking = True
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        """Render a message, prepending an empty thinking block to the last assistant message.
+        """Refuse a produced turn in a conversation with no user message.
 
-        For the last assistant message that lacks a thinking block, an empty
-        ``<think>\\n\\n</think>\\n\\n`` is added to the header to signal non-thinking mode.
-
-        Args:
-            message (Message): The chat message to render.
-            ctx (RenderContext): Positional context including index and is_last flag.
-
-        Returns:
-            RenderedMessage: Header (with optional empty think block) and output token chunks.
+        The template gates the empty block on `loop.index0 > ns.last_query_index`, and with
+        no user message `last_query_index` is the final index -- so nothing is ever after it
+        and the document carries no block. `add_generation_prompt` writes one regardless. The
+        two cannot both be honoured: the turn would train after a prompt that always opens a
+        block the training sequence does not contain.
         """
-        # Get the base rendered message
-        rendered = super().render_message(message, ctx)
+        if (
+            message["role"] == "assistant"
+            and ctx.is_last
+            and message.get("content")
+            and ctx.last_user_index < 0
+        ):
+            raise RendererError(
+                "this conversation has no user message, so Qwen3's template writes no empty "
+                "think block on the produced turn -- but the generation prompt always opens "
+                "one. Add a user message, or render with thinking enabled."
+            )
+        return super().render_message(message, ctx)
 
-        # Add empty thinking block to header for last assistant message
-        # This goes in header (weight=0) so observation matches generation prompt.
-        if message["role"] == "assistant" and ctx.is_last:
-            content = message.get("content", "")
-            if isinstance(content, str):
-                has_think = "<think>" in content
-            else:
-                has_think = any(p["type"] == "thinking" for p in content)
+    def _get_generation_suffix(self, role: str, ctx: RenderContext) -> list[int]:
+        """The empty block is part of the prompt, so sampling starts after it.
 
-            if not has_think:
-                empty_think_tokens = self.tokenizer.encode(
-                    "<think>\n\n</think>\n\n", add_special_tokens=False
-                )
-                old_header_tokens = list(rendered.header.tokens) if rendered.header else []
-                new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + empty_think_tokens)
-                rendered = RenderedMessage(
-                    header=new_header, output=rendered.output, stop_overlap=rendered.stop_overlap
-                )
-
-        return rendered
+        The Qwen3.5 disable-thinking renderer says the same thing the same way.
+        """
+        maybe_newline = "\n" if ctx.idx > 0 else ""
+        return self.tokenizer.encode(
+            f"{maybe_newline}<|im_start|>{role}\n<think>\n\n</think>\n\n",
+            add_special_tokens=False,
+        )
 
 
 class Qwen3InstructRenderer(Qwen3Renderer):
@@ -464,6 +582,8 @@ class Qwen3InstructRenderer(Qwen3Renderer):
     Inherits from Qwen3Renderer. ThinkingPart in content is still handled (rendered as
     <think>...</think>) in case the conversation includes thinking.
     """
+
+    frames_thinking = False
 
     @property
     def has_extension_property(self) -> bool:
@@ -494,6 +614,11 @@ class Qwen3VLRenderer(Qwen3Renderer):
     """
 
     image_processor: ImageProcessor | None
+
+    # Qwen3.5-family templates keep one <|im_start|>user block open around a run of
+    # consecutive tool responses (gated on loop.previtem/nextitem); Qwen3/Qwen3-VL
+    # templates close each response in its own block.
+    groups_consecutive_tool_responses = False
 
     def __init__(
         self,
@@ -575,6 +700,29 @@ class Qwen3VLRenderer(Qwen3Renderer):
             + [TextPart(type="text", text="\n</tool_response>")]
         )
 
+    def _tool_response_continuation_header(self) -> str:
+        """Separator between consecutive tool responses inside one user block.
+
+        Qwen3.5-family templates write ``'\\n<tool_response>\\n'`` per response, so a
+        continuation starts with the newline the first response got from its header.
+        Subclasses whose responses carry their own trailing newline return ``""``.
+        """
+        return "\n"
+
+    def _strips_thinking_for(self, message: Message, ctx: RenderContext) -> bool:
+        """Whether this message's thinking is stripped from the render.
+
+        Strips history thinking from every non-last assistant message. Note the HF
+        templates actually keep reasoning for assistants AFTER the last user message
+        (``loop.index0 > ns.last_query_index``) even with preservation off, so this
+        over-strips thinking tool-call turns followed by tool results — kept as-is
+        for backward compatibility with checkpoints trained on this rendering.
+        Nemotron patches around it in render_message; Qwen3.8 overrides this hook.
+        """
+        return (
+            self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last
+        )
+
     def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
         """Format tool_calls as output chunks. Override in subclasses for different formats."""
         # Add leading newline to match HF template behavior
@@ -608,15 +756,23 @@ class Qwen3VLRenderer(Qwen3Renderer):
         maybe_newline = "\n" if ctx.idx > 0 else ""
 
         role = self._get_qwen_role_for_message(message)
-        header_str = f"{maybe_newline}<|im_start|>{role}\n"
-        if message["role"] == "assistant":
-            header_str += self._assistant_header_suffix(message, ctx)
-
-        # Strip thinking from history for non-last assistant messages (matching non-VL behavior)
-        strip_thinking = (
-            self.strip_thinking_from_history and message["role"] == "assistant" and not ctx.is_last
+        grouping = self.groups_consecutive_tool_responses
+        prev_is_tool = (
+            grouping and ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
         )
-        output_chunks = self._preprocess_message_parts(message, strip_thinking=strip_thinking)
+        is_tool = message["role"] == "tool"
+        if is_tool and prev_is_tool:
+            # Continuation of a tool-response run: the template keeps the user block
+            # open and writes the next <tool_response> directly.
+            header_str = self._tool_response_continuation_header()
+        else:
+            header_str = f"{maybe_newline}<|im_start|>{role}\n"
+            if message["role"] == "assistant":
+                header_str += self._assistant_header_suffix(message, ctx)
+
+        output_chunks = self._preprocess_message_parts(
+            message, strip_thinking=self._strips_thinking_for(message, ctx)
+        )
 
         # Handle tool response wrapping
         if message["role"] == "tool":
@@ -624,7 +780,13 @@ class Qwen3VLRenderer(Qwen3Renderer):
 
         if "tool_calls" in message:
             output_chunks += self._format_tool_calls_chunks(message)
-        output_chunks += [TextPart(type="text", text="<|im_end|>")]
+        next_is_tool = (
+            grouping and ctx.next_message is not None and ctx.next_message["role"] == "tool"
+        )
+        if not (is_tool and next_is_tool):
+            # A grouped tool response followed by another tool response leaves the
+            # shared user block open; the final response of the run closes it.
+            output_chunks += [TextPart(type="text", text="<|im_end|>")]
 
         if self.merge_text_chunks:
             output_chunks = _merge_consecutive_text_parts(output_chunks)
@@ -648,10 +810,29 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     )
                 )
 
+        prefix_str = self._generation_suffix_in_header(message, ctx)
+        if prefix_str and header_str.startswith(prefix_str):
+            rest = header_str[len(prefix_str) :]
+            if rest:
+                output_chunks_encoded.insert(
+                    0,
+                    tinker.EncodedTextChunk(
+                        tokens=self.tokenizer.encode(rest, add_special_tokens=False)
+                    ),
+                )
+            header_str = prefix_str
+
         header = tinker.types.EncodedTextChunk(
             tokens=self.tokenizer.encode(header_str, add_special_tokens=False)
         )
         return RenderedMessage(header=header, output=output_chunks_encoded)
+
+    def _generation_suffix_in_header(self, message: Message, ctx: RenderContext) -> str:
+        """How much of this message's header the generation prompt already wrote.
+
+        Empty when the prompt stops before the header does, which is the usual case.
+        """
+        return ""
 
 
 class Qwen3VLInstructRenderer(Qwen3VLRenderer):
@@ -660,5 +841,7 @@ class Qwen3VLInstructRenderer(Qwen3VLRenderer):
 
     Unlike the Qwen3-VL Thinking models, The Qwen3-VL Instruct models do not use the <think> tag.
     """
+
+    frames_thinking = False
 
     pass

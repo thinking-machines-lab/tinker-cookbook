@@ -27,7 +27,7 @@ from tinker_cookbook.eval.evaluators import (
     TrainingClientEvaluator,
 )
 from tinker_cookbook.exceptions import ConfigurationError
-from tinker_cookbook.supervised.common import compute_mean_nll
+from tinker_cookbook.supervised.common import compute_bpb, compute_mean_nll
 from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -382,7 +382,9 @@ async def main(config: Config):
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     if maybe_test_dataset is not None:
-        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
+        # Pass the tokenizer so the evaluator also reports test/bpb (bits per
+        # byte), a tokenizer-independent NLL that is comparable across models.
+        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset, tokenizer=tokenizer))
 
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
     logger.info(
@@ -487,6 +489,11 @@ async def main(config: Config):
             ),
             train_mean_nll=train_nll,
         )
+        # Bits per byte: a tokenizer-independent counterpart to train_mean_nll,
+        # letting NLL be compared across models with different tokenizers.
+        if submitted.data and "target_tokens" in submitted.data[0].loss_fn_inputs:
+            target_tokens = [datum.loss_fn_inputs["target_tokens"] for datum in submitted.data]
+            metrics["train_mean_bpb"] = compute_bpb(logprobs, weights, target_tokens, tokenizer)
         # Merge evaluation metrics gathered before the training step was submitted
         if submitted.eval_metrics is not None:
             metrics.update(submitted.eval_metrics)

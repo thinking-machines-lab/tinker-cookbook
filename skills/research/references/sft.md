@@ -16,6 +16,10 @@
 | `qwen3_vl_instruct` | Qwen3 VL Instruct | Vision, no thinking |
 | `qwen3_5` | Qwen3.5/Qwen3.6 VL | Thinking enabled |
 | `qwen3_5_disable_thinking` | Qwen3.5/Qwen3.6 VL | Thinking disabled |
+| `qwen3_8_xhigh_reasoning` | Qwen3.8 VL | Thinking enabled, reasoning effort xhigh (default) |
+| `qwen3_8_medium_reasoning` | Qwen3.8 VL | Thinking enabled, reasoning effort medium |
+| `qwen3_8_low_reasoning` | Qwen3.8 VL | Thinking enabled, reasoning effort low |
+| `qwen3_8_disable_thinking` | Qwen3.8 VL | Thinking disabled |
 | `deepseekv3` | DeepSeek V3 | Defaults to non-thinking |
 | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
 | `glm5_3_max_reasoning` | GLM-5.3 | Max reasoning effort |
@@ -25,8 +29,10 @@
 | `kimi_k26` | Kimi K2.6 | Thinking enabled |
 | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 | `kimi_k26_preserve_thinking` | Kimi K2.6 | Preserve historical thinking |
-| `nemotron3` | Nemotron-3 | Thinking enabled |
-| `nemotron3_disable_thinking` | Nemotron-3 | Thinking disabled |
+| `nemotron3` | Nemotron-3 Nano/Super | Thinking enabled |
+| `nemotron3_disable_thinking` | Nemotron-3 Nano/Super | Thinking disabled |
+| `nemotron3_ultra` | Nemotron-3 Ultra / 3.5 Lightning | Thinking enabled |
+| `nemotron3_ultra_disable_thinking` | Nemotron-3 Ultra / 3.5 Lightning | Thinking disabled |
 | `gpt_oss_no_sysprompt` | GPT-OSS | No system prompt |
 | `gpt_oss_low_reasoning` | GPT-OSS | Low reasoning |
 | `gpt_oss_medium_reasoning` | GPT-OSS | Medium reasoning |

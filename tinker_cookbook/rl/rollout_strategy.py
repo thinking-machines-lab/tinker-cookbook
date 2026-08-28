@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from tinker_cookbook.completers import TokenCompleter
-from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.exceptions import AllTrajectoriesFailedError, ConfigurationError
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RolloutError, Trajectory
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,188 @@ class RetryOnFailure(RolloutStrategy):
                         await asyncio.gather(*pending, return_exceptions=True)
                         raise exc
 
+        return RolloutResult(
+            trajectories=trajectories,
+            envs=surviving_envs,
+            errors=errors,
+        )
+
+
+@dataclass(frozen=True)
+class MinViableGroup(RolloutStrategy):
+    """Accept a partial group once a minimum number of rollouts succeed.
+
+    Runs all rollouts concurrently and retries failures (with fresh
+    environments) while the retry budget lasts and the floor has not yet been
+    met.  Once at least ``min_successful`` trajectories have completed, the
+    group is returned as-is — possibly smaller than requested, with the
+    failures recorded in ``RolloutResult.errors``.  If the floor is still
+    unmet after all rollouts and retries have finished,
+    :class:`~tinker_cookbook.exceptions.AllTrajectoriesFailedError` is raised
+    and the whole group is dropped (the same group-drop path used when every
+    trajectory fails).
+
+    **Why a floor instead of all-or-nothing or anything-goes?**
+    Group-relative advantage estimation
+    (:func:`~tinker_cookbook.rl.data_processing.compute_advantages`) centers
+    each trajectory's reward against the *group mean*: the group is the
+    baseline.  The mean of ``G`` rewards is an estimate whose variance scales
+    as ``1/G``, so as failures shrink the group, the baseline estimate gets
+    noisier and every advantage in the group degrades with it (an advantage
+    is ``reward - baseline``, so baseline noise lands on every member).
+    Below some floor, the salvaged group contributes more variance than
+    signal — at that point it is better to drop the group entirely than to
+    train on noise.  The floor bounds how degraded a baseline we are willing
+    to train against, while still salvaging groups that lost only a few
+    members (unlike :class:`RetryOnFailure`, which drops the whole group once
+    its retry budget is exhausted).
+
+    **Partial groups change the centering denominator.**  A 13-member group
+    centers against the mean of 13 rewards where a full group would have
+    centered against 16.  This is expected and handled:
+    ``compute_advantages`` computes ``rewards_G - rewards_G.mean()`` over
+    whatever ``G`` the group actually contains, normalizing by the actual
+    group size — there is no hardcoded assumption of the requested size
+    anywhere downstream.  The consequence is statistical, not mechanical:
+    the smaller ``G`` is, the noisier the baseline (see above).
+
+    **Interaction with constant-reward filtering.**  Downstream,
+    ``do_group_rollout_and_filter_constant_reward`` drops groups whose
+    surviving trajectories all share one reward value (no gradient signal).
+    A salvaged partial group whose survivors happen to agree — e.g. the
+    diverse members were exactly the ones that failed — still gets filtered,
+    so effective sample size can shrink twice: once from failures (bounded by
+    this floor) and once from the constant-reward filter (not bounded by it).
+    The floor guarantees a minimum group size *entering* that filter, not a
+    minimum surviving it.
+
+    Args:
+        min_successful: The floor — the minimum number of successful
+            trajectories required to keep the group.  ``None`` (default)
+            computes ``ceil(0.75 * group_size)`` at call time, where
+            ``group_size`` is the number of environments the builder created.
+        max_retries: Total retry budget across all trajectories in the group
+            (same semantics as :class:`RetryOnFailure`).  Retries are only
+            spent while the floor is unmet; once enough trajectories have
+            succeeded, further failures are recorded but not retried.
+        per_rollout_timeout: Maximum seconds for a single rollout before it
+            is cancelled and treated as a failure.  ``None`` (default)
+            disables the timeout.
+    """
+
+    min_successful: int | None = None
+    max_retries: int = 3
+    per_rollout_timeout: float | None = None
+
+    @property
+    def catches_group_errors(self) -> bool:
+        return True
+
+    async def execute(
+        self,
+        env_group_builder: EnvGroupBuilder,
+        policy: TokenCompleter,
+    ) -> RolloutResult:
+        """Run rollouts, retrying failures until the floor is guaranteed met.
+
+        Args:
+            env_group_builder (EnvGroupBuilder): Builder used to create (and
+                re-create on retry) environments for this rollout group.
+            policy (TokenCompleter): The policy used to generate actions.
+
+        Returns:
+            RolloutResult: The surviving trajectories (at least the floor,
+                at most the full group) with any failures recorded in
+                ``errors``.
+
+        Raises:
+            AllTrajectoriesFailedError: If fewer than the floor succeeded
+                after all rollouts and retries finished.  Callers treat this
+                as "drop the group" (the group is skipped, not crashed).
+        """
+        from tinker_cookbook.rl.rollouts import do_single_rollout
+
+        envs = await env_group_builder.make_envs()
+        group_size = len(envs)
+        floor = (
+            self.min_successful if self.min_successful is not None else math.ceil(0.75 * group_size)
+        )
+
+        def _launch(env: Env) -> asyncio.Task[Trajectory]:
+            coro = do_single_rollout(policy, env)
+            if self.per_rollout_timeout is not None:
+                coro = asyncio.wait_for(coro, timeout=self.per_rollout_timeout)
+            return asyncio.create_task(coro)
+
+        task_to_env: dict[asyncio.Task[Trajectory], Env] = {}
+        for env in envs:
+            task = _launch(env)
+            task_to_env[task] = env
+
+        trajectories: list[Trajectory] = []
+        surviving_envs: list[Env] = []
+        errors: list[RolloutError] = []
+        retries_remaining = self.max_retries
+        pending: set[asyncio.Task[Trajectory]] = set(task_to_env.keys())
+
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                try:
+                    traj = task.result()
+                    trajectories.append(traj)
+                    surviving_envs.append(task_to_env[task])
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    # Never swallow cancellation — cancel remaining and propagate
+                    for t in pending:
+                        t.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    raise
+                except Exception as exc:
+                    is_timeout = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+                    label = "timed out" if is_timeout else "failed"
+                    errors.append(
+                        RolloutError(
+                            error_type=type(exc).__name__,
+                            error_message=str(exc),
+                        )
+                    )
+                    # Retry only while the floor is unmet: once enough
+                    # trajectories succeeded, a partial group is acceptable
+                    # and further retries would only add latency.
+                    if len(trajectories) < floor and retries_remaining > 0:
+                        retries_remaining -= 1
+                        logger.warning(
+                            "Trajectory %s (%s): %s — retrying (retries_remaining=%d)",
+                            label,
+                            type(exc).__name__,
+                            exc,
+                            retries_remaining,
+                        )
+                        new_envs = await env_group_builder.make_envs()
+                        new_env = new_envs[0]
+                        new_task = _launch(new_env)
+                        task_to_env[new_task] = new_env
+                        pending.add(new_task)
+                    else:
+                        logger.warning(
+                            "Trajectory %s (%s): %s — not retried (%d/%d succeeded, "
+                            "floor=%d, retries_remaining=%d)",
+                            label,
+                            type(exc).__name__,
+                            exc,
+                            len(trajectories),
+                            group_size,
+                            floor,
+                            retries_remaining,
+                        )
+
+        if len(trajectories) < floor:
+            raise AllTrajectoriesFailedError(
+                f"Only {len(trajectories)}/{group_size} rollouts succeeded, below the "
+                f"minimum viable group size {floor} "
+                f"({len(errors)} failures, max_retries={self.max_retries}); dropping the group"
+            )
         return RolloutResult(
             trajectories=trajectories,
             envs=surviving_envs,

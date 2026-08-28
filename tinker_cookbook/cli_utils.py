@@ -10,6 +10,22 @@ logger = logging.getLogger(__name__)
 LogdirBehavior = Literal["delete", "resume", "ask", "raise"]
 
 
+def model_name_from_argv(argv: list[str], default: str) -> str:
+    """Extract a model_name=... override from argv before building a blueprint.
+
+    Recipes that derive settings from the model name (renderer name, dataset
+    tokenizer) must resolve those values before applying the rest of argv;
+    otherwise a model_name override trains with the default model's renderer
+    and tokenizer.
+    """
+    model_name = default
+    # Last occurrence wins, matching chz's argv precedence.
+    for arg in argv:
+        if arg.startswith("model_name="):
+            model_name = arg.removeprefix("model_name=")
+    return model_name
+
+
 def check_log_dir(log_dir: str, behavior_if_exists: LogdirBehavior):
     """
     Call this at the beginning of CLI entrypoint to training scripts. This handles

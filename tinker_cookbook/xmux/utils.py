@@ -215,9 +215,9 @@ def get_symbol_path(cls_or_fn: Any) -> SymbolPath:
     # Get the file where the function is defined
     file_path = os.path.abspath(inspect.getfile(cls_or_fn))
 
-    # Check for monorepo root in sys.path (including the empty string case)
+    # Check for the project root in sys.path (including the empty string case)
     # We have a set of candidates (for example for a file in /a/b/c.py, this could be
-    # - a.b.c relative to the monorepo root
+    # - a.b.c relative to the project root
     # - b.c relative to module `a` if `a` is in sys.path
     # so just return the shortest candidate match
     relative_candidates = []

@@ -169,6 +169,24 @@ class ImagePart(TypedDict):
     image: str | Image.Image
 
 
+class AudioPart(TypedDict):
+    """A chunk of input audio in a message.
+
+    ``audio`` accepts encoded bytes, a base64 ``data:`` URI, or a local path.
+    The renderer loads it into memory as base64-encoded audio; remote URLs are unsupported.
+
+    WAV metadata is read from the file header. MP3 and FLAC inputs must also
+    provide ``num_frames`` and ``sample_rate`` because the OpenAI-compatible
+    parser cannot derive that metadata without decoding them.
+    """
+
+    type: Literal["audio"]
+    audio: str | bytes
+    format: NotRequired[Literal["wav", "mp3", "flac"]]
+    num_frames: NotRequired[int]
+    sample_rate: NotRequired[int]
+
+
 class ThinkingPart(TypedDict):
     """Model's internal reasoning (chain-of-thought) as a content part."""
 
@@ -178,7 +196,7 @@ class ThinkingPart(TypedDict):
 
 # Container for a part of a multimodal message content.
 # Tool calls live exclusively in message["tool_calls"] / message["unparsed_tool_calls"].
-ContentPart = TextPart | ImagePart | ThinkingPart
+ContentPart = TextPart | ImagePart | AudioPart | ThinkingPart
 
 
 # Streaming types to enable incremental parsing of model output for real-time display.
@@ -679,12 +697,29 @@ class RenderContext:
     prev_message: Message | None = None
     """The previous message in the conversation, if any."""
 
+    next_message: Message | None = None
+    """The next message in the conversation, if any.
+
+    Used by renderers whose templates look ahead — e.g. Qwen3.5-family tool-response
+    grouping closes the shared user block only after the final consecutive tool
+    message. None for the last message or when a message is rendered standalone.
+    """
+
     last_user_index: int = -1
     """Index of the last user message in the conversation. -1 if no user messages.
 
     This is computed by the base build_generation_prompt/build_supervised_example
     and used by renderers like Qwen3.5 that need to treat assistant messages
     differently based on whether they come before or after the last user message.
+    """
+
+    in_last_assistant_turn: bool = False
+    """Whether this message belongs to the turn the model is being asked to produce.
+
+    Distinct from ``is_last``, which is literally the final message. A turn can span several
+    messages -- an assistant message, a tool response, the assistant's follow-up -- so a
+    renderer that keeps reasoning in the produced turn while stripping it from history has to
+    ask about the turn, not the message. ``_last_assistant_turn_start_index`` says where it starts.
     """
 
 
@@ -831,6 +866,18 @@ def message_to_jsonable(message: Message) -> dict[str, Any]:
     if "name" in message:
         result["name"] = message["name"]
     return result
+
+
+def has_thinking(content: Content) -> bool:
+    """Whether content carries reasoning, in either shape it can arrive in.
+
+    Structured content carries a ThinkingPart; a string carries an opening ``<think>``,
+    closed or not. Renderers ask this to decide whether to write the empty block their
+    template puts on a turn that did not reason.
+    """
+    if isinstance(content, list):
+        return any(p["type"] == "thinking" for p in content)
+    return "<think>" in content
 
 
 def remove_thinking(parts: list[ContentPart]) -> list[ContentPart]:
@@ -1060,6 +1107,121 @@ def parse_think_blocks(content: str) -> list[ContentPart] | None:
     return parts
 
 
+class ParseFailureKind(StrEnum):
+    """What kind of parse failure a sampled response exhibits.
+
+    The renderer layer produces two orthogonal failure signals:
+
+    - :class:`ParseTermination` (``MALFORMED``) reports *structural* failures:
+      the response framing itself is broken (no stop signal, truncated stream,
+      duplicated stop tokens).  The conversation state can no longer be
+      re-rendered faithfully, so callers should treat the episode as
+      unrecoverable.
+    - ``message["unparsed_tool_calls"]`` reports *content* failures: the
+      framing terminated cleanly but a tool block inside it could not be
+      parsed (invalid JSON, missing fields, an unterminated tool block).
+      The conversation remains coherent, so callers may retry (e.g. inject a
+      corrective message and sample again).
+
+    :func:`classify_parse_failure` folds both signals into this enum.
+    """
+
+    STRUCTURAL = "structural"
+    """Broken framing: the response did not terminate cleanly.  Not
+    recoverable within the episode — the stream state is corrupted."""
+
+    CONTENT = "content"
+    """Clean framing with unparsable content (tool-call JSON errors,
+    unterminated tool blocks).  Recoverable: the conversation is still
+    coherent and the model can be asked to try again."""
+
+
+PARSE_FAILURE_DETAIL_MAX_CHARS = 16384
+"""Cap on the human-readable detail string returned by
+:func:`classify_parse_failure` (raw model output can be arbitrarily long)."""
+
+UNTERMINATED_TOOL_BLOCK_ERROR = "unterminated tool block"
+"""Error-string prefix used by :func:`detect_unterminated_tool_block` (and the
+per-renderer detection built on it), so callers can recognize this failure
+mode among ``unparsed_tool_calls`` entries."""
+
+
+def classify_parse_failure(
+    message: Message, termination: ParseTermination
+) -> tuple[ParseFailureKind, str] | None:
+    """Classify the parse failure (if any) in a ``parse_response`` result.
+
+    This is the typed accessor over the two failure channels that
+    ``Renderer.parse_response`` already produces: the
+    :class:`ParseTermination` (structural signal) and
+    ``message["unparsed_tool_calls"]`` (content signal).
+
+    Args:
+        message (Message): The message returned by ``parse_response``.
+        termination (ParseTermination): The termination returned alongside it.
+
+    Returns:
+        tuple[ParseFailureKind, str] | None: ``None`` when the response parsed
+            cleanly with no tool-call errors.  Otherwise a ``(kind, detail)``
+            pair where ``detail`` is a human-readable description (truncated
+            to :data:`PARSE_FAILURE_DETAIL_MAX_CHARS`).  A structural failure
+            wins over any content failures in the same response (broken
+            framing makes the content signal unreliable anyway).  Note that a
+            message mixing successfully parsed and unparsed tool calls still
+            classifies as a CONTENT failure — whether to act on it (versus
+            proceeding with the valid calls) is the caller's policy.
+    """
+    if not termination.is_clean:
+        return (
+            ParseFailureKind.STRUCTURAL,
+            "response did not terminate cleanly "
+            f"(termination={termination.value}): expected the renderer's stop signal "
+            "or EOS, so the message framing is broken",
+        )
+    unparsed = message.get("unparsed_tool_calls") or []
+    if unparsed:
+        detail = "\n".join(tc.error for tc in unparsed)
+        return (ParseFailureKind.CONTENT, detail[:PARSE_FAILURE_DETAIL_MAX_CHARS])
+    return None
+
+
+def detect_unterminated_tool_block(
+    content: str, open_marker: str, close_marker: str
+) -> UnparsedToolCall | None:
+    """Detect a tool block that was opened but never closed.
+
+    A response can terminate cleanly (stop token present) while a tool block
+    inside it is left unterminated — e.g. the open marker appears but the
+    close marker never follows.  Renderer regexes only match complete blocks,
+    so without explicit detection such a response silently degrades to plain
+    text and the tool-call intent is lost.  Renderers with a tool-block syntax
+    call this after their normal tool parsing and append the result to
+    ``message["unparsed_tool_calls"]``, turning the silent degradation into a
+    recoverable :attr:`ParseFailureKind.CONTENT` failure.
+
+    Args:
+        content (str): The decoded response content (before any stripping).
+        open_marker (str): The tool-block opening marker.
+        close_marker (str): The corresponding closing marker.  Must not
+            contain ``open_marker`` as a substring (and vice versa).
+
+    Returns:
+        UnparsedToolCall | None: An entry describing the dangling block (its
+            ``raw_text`` is the content from the last unmatched open marker),
+            or ``None`` when every open marker is balanced by a close marker.
+    """
+    opens = content.count(open_marker)
+    if opens == 0 or opens <= content.count(close_marker):
+        return None
+    return UnparsedToolCall(
+        raw_text=content[content.rfind(open_marker) :][:PARSE_FAILURE_DETAIL_MAX_CHARS],
+        error=(
+            f"{UNTERMINATED_TOOL_BLOCK_ERROR}: '{open_marker}' opened without a "
+            f"matching '{close_marker}'"
+        ),
+    )
+
+
 def _tool_call_payload(tool_call: ToolCall) -> dict[str, object]:
     """Minimal JSON payload for embedding in <tool_call> blocks."""
     # Convert from nested structure to flat format for compatibility
@@ -1180,6 +1342,21 @@ class Renderer(ABC):
     """
 
     tokenizer: Tokenizer
+
+    disables_thinking: bool = False
+    """Whether this renderer's generation prompt closes the think block.
+
+    A closed block tells the model not to reason::
+
+        qwen3                   ...assistant\\n<think>\\n                 open, so False
+        qwen3_disable_thinking  ...assistant\\n<think>\\n\\n</think>\\n\\n  closed, so True
+
+    Set it on any renderer that does that. Forgetting is caught by
+    ``test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow``.
+
+    DeepSeek's non-thinking renderer does not set it and does not need to: it strips reasoning
+    out of the content, so its render already matches its prompt.
+    """
 
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
     # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
@@ -1493,12 +1670,16 @@ class Renderer(ABC):
             default=-1,
         )
 
+        turn_start = self._last_assistant_turn_start_index(messages)
+
         for idx, message in enumerate(messages):
             ctx = RenderContext(
                 idx=idx,
                 is_last=(idx == len(messages) - 1),
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
                 last_user_index=last_user_idx,
+                in_last_assistant_turn=idx >= turn_start,
             )
             rendered_message = self.render_message(message, ctx)
             header_chunk = rendered_message.header
@@ -1515,6 +1696,7 @@ class Renderer(ABC):
             is_last=True,
             prev_message=messages[-1] if messages else None,
             last_user_index=last_user_idx,
+            in_last_assistant_turn=True,
         )
         suffix_tokens = self._get_generation_suffix(role, suffix_ctx)
         if suffix_tokens:
@@ -1536,7 +1718,10 @@ class Renderer(ABC):
         """Build tokens and per-token weights for supervised fine-tuning.
 
         Returns a list of (model_input, weights) tuples. Multiple examples are
-        needed when the renderer does not satisfy the extension property.
+        needed when the renderer does not satisfy the extension property: it writes an
+        assistant message one way as history and another as the turn being produced, so a
+        single sequence cannot show every turn the context it was sampled from. One example
+        per trained message can, each ending at the message it trains.
 
         Args:
             messages (list[Message]): The conversation to render.
@@ -1550,11 +1735,28 @@ class Renderer(ABC):
 
         if self.has_extension_property:
             return [self.build_supervised_example(messages, train_on_what=train_on_what)]
-        else:
-            # TODO: Add a default implementation that calls `build_supervised_example` for each message and merges examples with shared prefixes.
-            raise NotImplementedError(
-                "build_supervised_examples has not been implemented for this renderer."
+
+        match train_on_what:
+            case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
+                candidates = range(len(messages) - 1, len(messages))
+            case TrainOnWhat.LAST_ASSISTANT_TURN:
+                candidates = range(self._last_assistant_turn_start_index(messages), len(messages))
+            case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+                candidates = range(len(messages))
+            case _:
+                raise NotImplementedError(
+                    f"build_supervised_examples cannot split {train_on_what} for a renderer "
+                    "without the extension property: it weights messages that are not turns "
+                    "the model produces, so there is no prompt to end each example at."
+                )
+
+        return [
+            self.build_supervised_example(
+                messages[: idx + 1], train_on_what=TrainOnWhat.LAST_ASSISTANT_MESSAGE
             )
+            for idx in candidates
+            if messages[idx]["role"] == "assistant"
+        ]
 
     def build_supervised_example(
         self,
@@ -1618,6 +1820,8 @@ class Renderer(ABC):
             default=-1,
         )
 
+        turn_start = self._last_assistant_turn_start_index(messages[:-1])
+
         for idx, message in enumerate(messages):
             if train_on_what == TrainOnWhat.CUSTOMIZED:
                 assert "trainable" in message, (
@@ -1629,16 +1833,16 @@ class Renderer(ABC):
                 )
 
             is_last_message = idx == len(messages) - 1
-            is_assistant = message["role"] == "assistant"
-            is_user_or_system = message["role"] in ["user", "system"]
-            is_after_last_user = last_user_idx == -1 or idx > last_user_idx
+            in_last_assistant_turn = idx >= turn_start
 
             # only apply weight to header if train_on_what is ALL_TOKENS
             ctx = RenderContext(
                 idx=idx,
                 is_last=is_last_message,
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
                 last_user_index=last_user_idx,
+                in_last_assistant_turn=in_last_assistant_turn,
             )
             rendered_message = self.render_message(message, ctx)
             header_part = rendered_message.header
@@ -1649,23 +1853,7 @@ class Renderer(ABC):
             if header_part:
                 model_input_chunks_weights += [(header_part, header_weight)]
 
-            match train_on_what:
-                case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
-                    output_has_weight = is_last_message and is_assistant
-                case TrainOnWhat.LAST_ASSISTANT_TURN:
-                    output_has_weight = is_assistant and is_after_last_user
-                case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-                    output_has_weight = is_assistant
-                case TrainOnWhat.ALL_MESSAGES:
-                    output_has_weight = True
-                case TrainOnWhat.ALL_TOKENS:
-                    output_has_weight = True
-                case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
-                    output_has_weight = is_user_or_system
-                case TrainOnWhat.CUSTOMIZED:
-                    output_has_weight = message.get("trainable", False)
-                case _:
-                    raise RendererError(f"Unknown train_on_what: {train_on_what}")
+            output_has_weight = self._output_is_trained(message, ctx, train_on_what)
 
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
@@ -1680,7 +1868,122 @@ class Renderer(ABC):
         weights_tensor = torch.tensor(weights_data)
 
         model_input_chunks = [chunk for chunk, _ in model_input_chunks_weights]
-        return tinker.ModelInput(chunks=model_input_chunks), weights_tensor
+        model_input = tinker.ModelInput(chunks=model_input_chunks)
+        return model_input, self._train_after_the_generation_prompt(
+            messages, train_on_what, model_input, weights_tensor
+        )
+
+    def _train_after_the_generation_prompt(
+        self,
+        messages: list[Message],
+        train_on_what: TrainOnWhat,
+        model_input: tinker.ModelInput,
+        weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Withhold loss from everything build_generation_prompt would have supplied.
+
+        A renderer whose generation prompt ends in a prefill -- an open ``<think>`` -- leaves
+        that prefill on whichever side its header logic puts it, so the model is trained to
+        produce a token it is always given. Only the weights move; the tokens are untouched.
+
+        If the render does not start with the prompt, the example is broken: it would train the
+        model on a sequence the model is never given. Two things cause that.
+
+        1. A ``disables_thinking`` renderer was given a turn that reasoned. It was told not to
+           reason, so the empty block the prompt ends on is missing from the render::
+
+               prompt  ...assistant\\n<think>\\n\\n</think>\\n\\n
+               render  ...assistant\\n<think>\\n2+2 is 4\\n</think>\\n\\n4<|im_end|>
+
+           The caller can fix this, by using the thinking renderer or dropping the reasoning,
+           so raise and let them choose.
+
+        2. Any other renderer: its own template disagrees with itself. nemotron3 does this
+           (#860) -- its prompt ends ``<think>\\n`` but it writes ``<think></think>`` for a turn
+           with no reasoning. Nobody calling us can fix someone else's chat template, and
+           raising would reject training a thinking renderer on ordinary data with no
+           reasoning, so return the weights unchanged as before.
+        """
+        boundary = self._first_trained_message_index(messages, train_on_what)
+        if boundary is None:
+            return weights
+        if not all(isinstance(c, tinker.types.EncodedTextChunk) for c in model_input.chunks):
+            return weights
+
+        prompt = self.build_generation_prompt(messages[:boundary]).to_ints()
+        if model_input.to_ints()[: len(prompt)] != prompt:
+            if self.disables_thinking:
+                raise RendererError(
+                    f"{type(self).__name__} has thinking turned off: its generation prompt "
+                    "closes the think block, which tells the model not to reason. This turn "
+                    "contains reasoning, so training on it would teach the model to reason "
+                    "anyway, after being told not to. Either use the thinking version of this "
+                    "renderer, or remove the reasoning from this turn."
+                )
+            return weights
+
+        return torch.cat([torch.zeros(len(prompt)), weights[len(prompt) :]])
+
+    def _output_is_trained(
+        self, message: Message, ctx: RenderContext, train_on_what: TrainOnWhat
+    ) -> bool:
+        """Whether this message's output carries loss.
+
+        The rule a renderer is most likely to need to change: `KimiK2Renderer` wanted a
+        different `LAST_ASSISTANT_TURN` and, with this inline in the assembly loop, had to
+        copy the whole loop to get it. Override this instead.
+        """
+        is_assistant = message["role"] == "assistant"
+        match train_on_what:
+            case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
+                return ctx.is_last and is_assistant
+            case TrainOnWhat.LAST_ASSISTANT_TURN:
+                return is_assistant and ctx.in_last_assistant_turn
+            case TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+                return is_assistant
+            case TrainOnWhat.ALL_MESSAGES | TrainOnWhat.ALL_TOKENS:
+                return True
+            case TrainOnWhat.ALL_USER_AND_SYSTEM_MESSAGES:
+                return message["role"] in ("user", "system")
+            case TrainOnWhat.CUSTOMIZED:
+                return message.get("trainable", False)
+            case _:
+                raise RendererError(f"Unknown train_on_what: {train_on_what}")
+
+    def _last_assistant_turn_start_index(self, messages: list[Message]) -> int:
+        """Index of the first message in the turn the model is being asked to produce.
+
+        Everything from here on is the produced turn; everything before it is history. The
+        default is the message after the last user one. Renderers whose template draws the
+        line elsewhere override this rather than reinterpreting ``ctx.is_last``.
+        """
+        return max((idx for idx, m in enumerate(messages) if m["role"] == "user"), default=-1) + 1
+
+    def _first_trained_message_index(
+        self, messages: list[Message], train_on_what: TrainOnWhat
+    ) -> int | None:
+        """Index of the message the generation prompt stops before, or None if there isn't one.
+
+        Only the modes that mean "train the turn sampling would produce" have such a point; the
+        others weight messages the generation prompt would have rendered as history.
+
+        Deliberately not ``_last_assistant_turn_start_index``: that says where reasoning starts being
+        preserved, which a renderer may put earlier than the prompt ends. This says where the
+        prompt ends, and it is always the message after the last user one.
+        """
+        match train_on_what:
+            case TrainOnWhat.LAST_ASSISTANT_MESSAGE:
+                boundary = len(messages) - 1
+            case TrainOnWhat.LAST_ASSISTANT_TURN:
+                boundary = (
+                    max((idx for idx, m in enumerate(messages) if m["role"] == "user"), default=-1)
+                    + 1
+                )
+            case _:
+                return None
+        if not 0 <= boundary < len(messages):
+            return None
+        return boundary if messages[boundary]["role"] == "assistant" else None
 
 
 def tokens_weights_from_strings_weights(

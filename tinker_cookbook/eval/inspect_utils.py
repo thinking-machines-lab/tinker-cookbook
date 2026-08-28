@@ -36,6 +36,13 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 logger = logging.getLogger(__name__)
 
+# Fallback when an inspect eval doesn't set `max_tokens` (it arrives as None).
+# tinker.SamplingParams requires an integer, so we can't omit it the way the
+# OpenAI/Google inspect providers do; we mirror inspect's own default
+# (inspect_ai._util.constants.DEFAULT_MAX_TOKENS) to stay consistent with every
+# other inspect target instead of silently truncating generations.
+DEFAULT_MAX_TOKENS = 2048
+
 
 def _inspect_tool_call_to_renderer_tool_call(tool_call: InspectAIToolCall) -> renderers.ToolCall:
     return renderers.ToolCall(
@@ -318,7 +325,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         num_responses = 1 if config.num_choices is None else config.num_choices
         sampling_params = tinker.SamplingParams(
             temperature=config.temperature if config.temperature is not None else 1.0,
-            max_tokens=config.max_tokens or 128,
+            max_tokens=config.max_tokens or DEFAULT_MAX_TOKENS,
             stop=self.renderer.get_stop_sequences(),
             top_p=config.top_p if config.top_p is not None else 1.0,
             top_k=config.top_k if config.top_k is not None else -1,

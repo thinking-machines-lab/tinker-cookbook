@@ -27,9 +27,62 @@ class TestQwen3_6:
         assert attrs.size_str == size_str
         assert attrs.is_chat is True
         assert attrs.is_vl is True
+        assert attrs.is_audio_in is False
+
+
+class TestQwen3_8:
+    """Qwen3.8 keeps the Qwen3.5/3.6 tokenizer and preprocessor but has its own
+    chat template (reasoning-effort instructions, preserve-thinking default), so
+    it gets the dedicated qwen3_8 renderer family."""
+
+    def test_qwen3_8_uses_qwen3_8_renderer(self):
+        assert get_recommended_renderer_name("Qwen/Qwen3.8-27B") == "qwen3_8_xhigh_reasoning"
+
+    def test_qwen3_8_recommended_renderers(self):
+        names = get_recommended_renderer_names("Qwen/Qwen3.8-27B")
+        assert "qwen3_8_disable_thinking" in names
+        assert "qwen3_8_medium_reasoning" in names
+        assert "qwen3_8_low_reasoning" in names
+
+    def test_qwen3_8_attributes(self):
+        attrs = get_model_attributes("Qwen/Qwen3.8-27B")
+        assert attrs.organization == "Qwen"
+        assert attrs.version_str == "3.8"
+        assert attrs.size_str == "27B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is False
 
 
 class TestNemotron3:
+    def test_lightning_uses_ultra_format_renderer(self):
+        assert (
+            get_recommended_renderer_name("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16")
+            == "nemotron3_ultra"
+        )
+
+    def test_lightning_peft_suffix_uses_ultra_format_renderer(self):
+        assert (
+            get_recommended_renderer_name(
+                "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16:peft:262144"
+            )
+            == "nemotron3_ultra"
+        )
+
+    def test_lightning_attributes(self):
+        model_name = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+        attrs = get_model_attributes(model_name)
+        assert attrs.organization == "nvidia"
+        assert attrs.version_str == "3.5"
+        assert attrs.size_str == "30B-A3B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names(model_name) == [
+            "nemotron3_ultra",
+            "nemotron3_ultra_disable_thinking",
+            "nemotron3_ultra_preserve_thinking",
+        ]
+
     def test_ultra_uses_nemotron3_ultra_renderer(self):
         assert (
             get_recommended_renderer_name("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16")
@@ -55,6 +108,7 @@ class TestNemotron3:
             "nemotron3_ultra",
             "nemotron3_ultra_disable_thinking",
             "nemotron3_ultra_medium_thinking",
+            "nemotron3_ultra_preserve_thinking",
         ]
 
 
@@ -79,6 +133,25 @@ class TestGlm5_3:
             "glm5_3_low_reasoning",
             "glm5_3_high_reasoning",
         ]
+
+
+class TestTmlModels:
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "thinkingmachines/Inkling",
+            "thinkingmachines/Inkling:peft:131072",
+        ],
+    )
+    def test_tml_renderers_models_use_tml_v0_renderer(self, model_name: str):
+        assert get_recommended_renderer_name(model_name) == "tml_v0"
+
+    def test_inkling_attributes_route_to_tml_renderers(self):
+        attrs = get_model_attributes("thinkingmachines/Inkling")
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is True
+        assert attrs.recommended_renderers == ("tml_v0",)
 
 
 class TestWarnIfRendererNotRecommended:

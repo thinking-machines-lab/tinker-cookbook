@@ -23,7 +23,9 @@ from tinker_cookbook.renderers.base import (
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
+    detect_unterminated_tool_block,
     ensure_text,
+    has_thinking,
     parse_response_for_stop_token,
     parse_think_blocks,
 )
@@ -268,6 +270,24 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         return tool_calls, unparsed_tool_calls
 
+    @staticmethod
+    def _detect_unterminated_tool_block(content: str) -> UnparsedToolCall | None:
+        """Detect a DeepSeek tool block opened but never closed.
+
+        Covers both the section wrapper and an individual call inside a
+        closed section. Either way the block regexes above cannot match, so
+        without this check the dangling tool-call intent silently degrades
+        to plain text even when the response terminated cleanly.
+        """
+        for open_marker, close_marker in (
+            ("<｜tool▁calls▁begin｜>", "<｜tool▁calls▁end｜>"),
+            ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>"),
+        ):
+            dangling = detect_unterminated_tool_block(content, open_marker, close_marker)
+            if dangling is not None:
+                return dangling
+        return None
+
     def _parse_response_content(
         self, response: list[int], *, allow_missing_stop: bool = False
     ) -> tuple[Message, ParseTermination]:
@@ -287,6 +307,9 @@ class _DeepSeekV3BaseRenderer(Renderer):
 
         # Parse DeepSeek-specific tool calls
         tool_calls, unparsed_tool_calls = self._parse_deepseek_tool_calls(content)
+        dangling = self._detect_unterminated_tool_block(content)
+        if dangling is not None:
+            unparsed_tool_calls.append(dangling)
         if tool_calls:
             assistant_message["tool_calls"] = tool_calls
         if unparsed_tool_calls:
@@ -460,20 +483,33 @@ class DeepSeekV3ThinkingRenderer(_DeepSeekV3BaseRenderer):
         # Add </think> to header for historical assistant messages when stripping thinking.
         # This matches the base class's should_strip_thinking logic - only historical messages
         # (not the last one) get </think> added. The last message is the supervised target and
-        # should preserve its format (including any ThinkingPart).
+        # should preserve its format (including any ThinkingPart) - but a target without one
+        # has no format to preserve, and HF adds </think> there too. Empty content means the
+        # generation prompt's own header, which keeps the open <think>.
         follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
+        content = message.get("content", "")
+        is_assistant_turn = message["role"] == "assistant" and not follows_tool
         should_add_think_close = (
-            message["role"] == "assistant"
-            and not follows_tool
-            and self.strip_thinking_from_history
-            and not ctx.is_last
+            is_assistant_turn and self.strip_thinking_from_history and not ctx.is_last
         )
 
         if should_add_think_close:
             think_close_tokens = self.tokenizer.encode("</think>", add_special_tokens=False)
             old_header_tokens = list(rendered.header.tokens) if rendered.header else []
             new_header = tinker.EncodedTextChunk(tokens=old_header_tokens + think_close_tokens)
-            rendered = RenderedMessage(header=new_header, output=rendered.output)
+            return RenderedMessage(header=new_header, output=rendered.output)
+
+        if is_assistant_turn and ctx.is_last and content and not has_thinking(content):
+            empty_block = self.tokenizer.encode("<think></think>", add_special_tokens=False)
+            first, *rest = rendered.output
+            assert isinstance(first, tinker.types.EncodedTextChunk)
+            return RenderedMessage(
+                header=rendered.header,
+                output=[
+                    tinker.types.EncodedTextChunk(tokens=empty_block + list(first.tokens)),
+                    *rest,
+                ],
+            )
 
         return rendered
 

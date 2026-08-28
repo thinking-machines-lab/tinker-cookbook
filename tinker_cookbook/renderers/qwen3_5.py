@@ -21,15 +21,18 @@ import json
 import re
 
 from tinker_cookbook.renderers.base import (
+    UNTERMINATED_TOOL_BLOCK_ERROR,
     ImagePart,
     Message,
     ParseTermination,
     RenderContext,
+    RenderedMessage,
     Role,
     TextPart,
     ToolCall,
     ToolSpec,
     UnparsedToolCall,
+    has_thinking,
 )
 from tinker_cookbook.renderers.qwen3 import Qwen3VLRenderer
 
@@ -55,15 +58,35 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
     populated by the base build_generation_prompt/build_supervised_example.
     """
 
-    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
-        """Override to produce the full generation suffix directly.
+    # The Qwen3.5-family templates wrap a run of consecutive tool responses in a
+    # single <|im_start|>user block (gated on loop.previtem/nextitem).
+    groups_consecutive_tool_responses = True
 
-        Builds the header tokens manually and appends <think>\\n. This matches
-        the Qwen3.5 template's add_generation_prompt behavior for thinking mode.
-        """
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        if isinstance(message["content"], str):
+            message = {**message, "content": message["content"].strip()}
+        return super().render_message(message, ctx)
+
+    def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
+        """The header the generation prompt ends with, including the `<think>` prefill."""
         maybe_newline = "\n" if ctx.idx > 0 else ""
-        header_str = f"{maybe_newline}<|im_start|>{role}\n<think>\n"
-        return self.tokenizer.encode(header_str, add_special_tokens=False)
+        return f"{maybe_newline}<|im_start|>{role}\n<think>\n"
+
+    def _generation_suffix_in_header(self, message: Message, ctx: RenderContext) -> str:
+        """The produced turn is sampled after the prefill, so the prefill is observed.
+
+        Only the turn actually being produced sits at that boundary; an earlier assistant
+        turn is history however the framing gate classifies it.
+        """
+        if message["role"] != "assistant" or not ctx.is_last:
+            return ""
+        return self._generation_suffix_str(self._get_qwen_role_for_message(message), ctx)
+
+    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+        """The full generation suffix: the role header plus the `<think>` prefill."""
+        return self.tokenizer.encode(
+            self._generation_suffix_str(role, ctx), add_special_tokens=False
+        )
 
     def _assistant_header_suffix(self, message: Message, ctx: RenderContext) -> str:
         """Insert empty think block for assistant messages after the last user query."""
@@ -71,11 +94,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             return ""
 
         content = message.get("content", "")
-        has_think = False
-        if isinstance(content, list):
-            has_think = any(p["type"] == "thinking" for p in content)
-        elif isinstance(content, str):
-            has_think = "<think>" in content
+        has_think = has_thinking(content)
 
         return "" if has_think else "<think>\n\n</think>\n\n"
 
@@ -181,7 +200,12 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         converted_xml_calls: list[ToolCall] = []
         remaining_unparsed: list[UnparsedToolCall] = []
         for unparsed in message.get("unparsed_tool_calls", []):
-            if "<function=" not in unparsed.raw_text:
+            if (
+                unparsed.error.startswith(UNTERMINATED_TOOL_BLOCK_ERROR)
+                or "<function=" not in unparsed.raw_text
+            ):
+                # Unterminated blocks stay unparsed as-is (the XML converter
+                # would replace the informative error with a generic one).
                 remaining_unparsed.append(unparsed)
                 continue
             parsed = self._parse_qwen3_5_tool_call_xml(unparsed.raw_text)
@@ -214,26 +238,52 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         self._postprocess_parsed_message(message)
         return message, termination
 
+    def _format_tool_call_argument(self, value: object) -> str:
+        """Serialize one tool-call argument value the way the template does.
+
+        The Qwen3.5 (and Nemotron) templates apply ``|tojson`` only to mappings
+        and sequences; scalars go through ``|string``, i.e. Python-style
+        ``True``/``None``. Qwen3.6 changed this to ``|tojson`` for everything
+        non-string (JSON ``true``/``null``) but reuses this renderer, so boolean
+        and null arguments diverge from the Qwen3.6 template; Qwen3.8 has its own
+        renderer and overrides this accordingly.
+        """
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        return str(value)
+
     def _format_tool_call_xml(self, tool_call: ToolCall) -> str:
         """Format a single tool call in Qwen3.5's XML parameter format."""
         args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
         lines = [f"<tool_call>\n<function={tool_call.function.name}>"]
         for param_name, param_value in args.items():
-            if isinstance(param_value, (dict, list)):
-                value_str = json.dumps(param_value)
-            else:
-                value_str = str(param_value)
+            value_str = self._format_tool_call_argument(param_value)
             lines.append(f"<parameter={param_name}>\n{value_str}\n</parameter>")
         lines.append("</function>\n</tool_call>")
         return "\n".join(lines)
 
     def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
-        """Format tool_calls using Qwen3.5's XML parameter format."""
+        """Format tool_calls using Qwen3.5's XML parameter format.
+
+        The template separates the first <tool_call> from the message content with
+        a blank line only when there is visible content (``{%- if content|trim %}``);
+        with no content the block starts immediately.
+        """
         assert "tool_calls" in message, "tool_calls are required to format tool calls"
+        content = message.get("content", "")
+        if isinstance(content, str):
+            has_visible_content = bool(content.strip())
+        else:
+            # Thinking parts are rendered separately by the template, so only text
+            # and image parts count as content for the separator.
+            has_visible_content = any(
+                (p["type"] == "text" and p["text"].strip()) or p["type"] == "image" for p in content
+            )
+        separator = "\n\n" if has_visible_content else ""
         return [
             TextPart(
                 type="text",
-                text="\n\n"
+                text=separator
                 + "\n".join(self._format_tool_call_xml(tc) for tc in message["tool_calls"]),
             )
         ]
@@ -300,7 +350,8 @@ class Qwen3_5DisableThinkingRenderer(Qwen3_5Renderer):
     of <think>\\n, signaling to the model to respond directly without reasoning.
     """
 
-    def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
+    disables_thinking = True
+
+    def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
         maybe_newline = "\n" if ctx.idx > 0 else ""
-        header_str = f"{maybe_newline}<|im_start|>{role}\n<think>\n\n</think>\n\n"
-        return self.tokenizer.encode(header_str, add_special_tokens=False)
+        return f"{maybe_newline}<|im_start|>{role}\n<think>\n\n</think>\n\n"

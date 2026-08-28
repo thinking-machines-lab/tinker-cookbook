@@ -185,8 +185,7 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
             )
 
         results = await asyncio.gather(*tasks)
-        tokenizer = sampling_client.get_tokenizer()
-        responses = [tokenizer.decode(r.sequences[0].tokens) for r in results]
+        responses = [str(self.renderer.tokenizer.decode(r.sequences[0].tokens)) for r in results]
 
         scores = evaluate_science_correctness(responses, self.answers)
         accuracy = sum(scores) / len(scores) if scores else 0.0
@@ -237,8 +236,7 @@ class ToolUseEvaluator(SamplingClientEvaluator):
             )
 
         results = await asyncio.gather(*tasks)
-        tokenizer = sampling_client.get_tokenizer()
-        responses = [tokenizer.decode(r.sequences[0].tokens) for r in results]
+        responses = [str(self.renderer.tokenizer.decode(r.sequences[0].tokens)) for r in results]
 
         scores = evaluate_tooluse_correctness(responses, self.golden_answers)
         accuracy = sum(scores) / len(scores) if scores else 0.0

@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image
 
-from tinker_cookbook.image_processing_utils import get_image_processor
+from tinker_cookbook.image_processing_utils import get_image_processor, image_to_data_uri
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +38,12 @@ def test_no_trust_remote_code_by_default(
     )
 
 
+@patch("transformers.models.auto.image_processing_auto.AutoImageProcessor")
+def test_inkling_has_no_hf_image_processor(mock_auto: MagicMock) -> None:
+    assert get_image_processor("thinkingmachines/Inkling") is None
+    mock_auto.from_pretrained.assert_not_called()
+
+
 @pytest.mark.parametrize("env_value", ["1", "true", "TRUE", "yes"])
 @patch("transformers.models.auto.image_processing_auto.AutoImageProcessor")
 def test_env_var_enables_trust_remote_code(
@@ -49,3 +56,15 @@ def test_env_var_enables_trust_remote_code(
         "some-org/some-model",
         trust_remote_code=True,
     )
+
+
+@patch("tinker_cookbook.image_processing_utils.Image.open")
+def test_image_to_data_uri_closes_local_file_handles(mock_open: MagicMock) -> None:
+    opened = MagicMock()
+    opened.__enter__.return_value.copy.return_value = Image.new("RGB", (1, 1), "white")
+    mock_open.return_value = opened
+
+    result = image_to_data_uri("/tmp/example.png")
+
+    assert result.startswith("data:image/jpeg;base64,")
+    opened.__exit__.assert_called_once()

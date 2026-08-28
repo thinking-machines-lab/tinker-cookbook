@@ -142,11 +142,13 @@ Therefore, in the `Env.step` function, we need to receive the opponent's action,
 This motivates the design of the `Coordinator` class, which passes the LLM-generated text between two `Environment` objects and synchronizes the two `Environment` objects to alternate taking steps.
 
 In our implementation, the `TwoPlayerCoordinator` object is shared across two `Environment` objects, and it:
+
 - wraps the tic-tac-toe environment from the TextArena [1],
 - waits for a specific player's turn to begin, and
 - allows one player to `make_move` on the board, and notifies the other player that the move is complete.
 
 As a result, in the `Environment.step` function, we can:
+
 - determine when to start the next move, since `TwoPlayerCoordinator` informs us when the opponent has finished.
 - compute the next observation, since `TwoPlayerCoordinator` passes the move from the opponent.
 

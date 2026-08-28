@@ -39,6 +39,10 @@ class RunResult:
     run_name: str
     # step -> test_nll for NLL curves
     history: list[tuple[int, float]] = field(default_factory=list)
+    # Bits per byte (tokenizer-independent NLL). None for runs logged before it
+    # was added.
+    test_bpb: float | None = None
+    train_bpb: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +123,8 @@ def fetch_runs(wandb_project: str, fetch_history: bool = True) -> list[RunResult
         summary = dict(r.summary)
         test_nll = summary.get("test/nll")
         train_nll = summary.get("train_mean_nll")
+        test_bpb = summary.get("test/bpb")
+        train_bpb = summary.get("train_mean_bpb")
         runtime_s = summary.get("_runtime", 0)
 
         if test_nll is None or train_nll is None:
@@ -148,6 +154,8 @@ def fetch_runs(wandb_project: str, fetch_history: bool = True) -> list[RunResult
                 wall_time_min=float(runtime_s) / 60.0,
                 run_name=r.name,
                 history=history_points,
+                test_bpb=float(test_bpb) if test_bpb is not None else None,
+                train_bpb=float(train_bpb) if train_bpb is not None else None,
             )
         )
 
@@ -205,6 +213,8 @@ def fetch_runs_local(sweep_root: str) -> list[RunResult]:
 
             test_nll = last_row.get("test/nll")
             train_nll = last_row.get("train_mean_nll")
+            test_bpb = last_row.get("test/bpb")
+            train_bpb = last_row.get("train_mean_bpb")
             if test_nll is None or train_nll is None:
                 continue
 
@@ -225,6 +235,8 @@ def fetch_runs_local(sweep_root: str) -> list[RunResult]:
                     wall_time_min=wall_time_min,
                     run_name=run_name,
                     history=history_points,
+                    test_bpb=float(test_bpb) if test_bpb is not None else None,
+                    train_bpb=float(train_bpb) if train_bpb is not None else None,
                 )
             )
 
@@ -347,6 +359,11 @@ def _format_lr(lr: float) -> str:
     return f"{lr:.0e}"
 
 
+def _fmt_metric(value: float | None) -> str:
+    """Format an optional metric value, using an em dash when it is missing."""
+    return f"{value:.4f}" if value is not None else "—"
+
+
 def generate_model_section(
     model_slug: str,
     runs: list[RunResult],
@@ -377,7 +394,11 @@ def generate_model_section(
     lines.append("- Batch size: 128")
     lines.append(f"- Learning rates: [{lr_list_str}]")
     lines.append(f"- LoRA ranks: [{rank_list_str}]")
-    lines.append("- Metric: `test/nll` — negative log-likelihood on held-out test split")
+    lines.append(
+        "- Metric: `test/nll` — per-token negative log-likelihood on the held-out "
+        "test split (compare within a model; use `test/bpb` to compare across "
+        "tokenizers)"
+    )
     lines.append("")
     lines.append("<details>")
     lines.append("<summary>Reproduce</summary>")
@@ -401,15 +422,30 @@ def generate_model_section(
         lines.append("")
         return "\n".join(lines)
 
-    # Results table
+    # Results table. Include BPB columns only when at least one run has them, so
+    # legacy sweeps (logged before BPB existed) keep their original layout.
     lines.append("**Results:**")
     lines.append("")
-    lines.append("| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |")
-    lines.append("|---:|----------:|---------:|----------:|----------------:|")
-    for r in sorted(healthy, key=lambda r: (r.rank, r.lr)):
+    show_bpb = any(r.test_bpb is not None or r.train_bpb is not None for r in healthy)
+    if show_bpb:
         lines.append(
-            f"| {_format_lr(r.lr)} | {r.rank} | {r.test_nll:.4f} | {r.train_nll:.4f} | {r.wall_time_min:.0f} |"
+            "| LR | LoRA Rank | Test NLL | Test BPB | Train NLL | Train BPB | Wall Time (min) |"
         )
+        lines.append(
+            "|---:|----------:|---------:|---------:|----------:|----------:|----------------:|"
+        )
+        for r in sorted(healthy, key=lambda r: (r.rank, r.lr)):
+            lines.append(
+                f"| {_format_lr(r.lr)} | {r.rank} | {r.test_nll:.4f} | {_fmt_metric(r.test_bpb)} "
+                f"| {r.train_nll:.4f} | {_fmt_metric(r.train_bpb)} | {r.wall_time_min:.0f} |"
+            )
+    else:
+        lines.append("| LR | LoRA Rank | Test NLL | Train NLL | Wall Time (min) |")
+        lines.append("|---:|----------:|---------:|----------:|----------------:|")
+        for r in sorted(healthy, key=lambda r: (r.rank, r.lr)):
+            lines.append(
+                f"| {_format_lr(r.lr)} | {r.rank} | {r.test_nll:.4f} | {r.train_nll:.4f} | {r.wall_time_min:.0f} |"
+            )
     lines.append("")
 
     # Best config
@@ -532,6 +568,15 @@ def generate_sft_sweep_md(
     lines.append(
         "> **Note:** Wall times are approximate and depend on server load at the time of "
         "the run. They may fluctuate significantly between runs."
+    )
+    lines.append("")
+    lines.append(
+        "> **Comparing across models:** `Test NLL` / `Train NLL` are *per-token* "
+        "cross-entropy and are **not comparable across models with different "
+        "tokenizers** (a coarser tokenizer has fewer, higher-loss tokens; a finer "
+        "one has more, lower-loss tokens). Where present, `Test BPB` / `Train BPB` "
+        "(bits per byte) normalize by the target text's UTF-8 byte count instead of "
+        "the token count and *are* comparable across tokenizers."
     )
     lines.append("")
 

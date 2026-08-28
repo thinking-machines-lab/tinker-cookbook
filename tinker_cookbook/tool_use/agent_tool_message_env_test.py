@@ -5,7 +5,17 @@ from typing import Any
 
 from PIL import Image
 
-from tinker_cookbook.renderers.base import ImagePart, Message, TextPart, ToolCall, ToolSpec
+from tinker_cookbook.renderers.base import (
+    PARSE_FAILURE_DETAIL_MAX_CHARS,
+    ImagePart,
+    Message,
+    TextPart,
+    ToolCall,
+    ToolSpec,
+    UnparsedToolCall,
+)
+from tinker_cookbook.rl import types
+from tinker_cookbook.rl.rollout_limits import ParseErrorPolicy
 from tinker_cookbook.tool_use.agent_tool_message_env import AgentToolMessageEnv
 from tinker_cookbook.tool_use.tools import simple_tool_result
 from tinker_cookbook.tool_use.types import ToolInput, ToolResult
@@ -174,6 +184,245 @@ class TestStepLogs:
         assert result.logs == {"assistant_content": "Just text."}
         assert "tool_call_0" not in result.logs
         assert "tool_result_0" not in result.logs
+
+
+# ---------------------------------------------------------------------------
+# Stop-reason metrics
+# ---------------------------------------------------------------------------
+
+
+class TestStopReasonMetrics:
+    """Episode-ending steps emit a one-hot stop/<reason> metric alongside the
+    pre-existing metric keys."""
+
+    def test_no_tool_calls_emits_completed(self):
+        env = AgentToolMessageEnv(
+            tools=[],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+
+        result = asyncio.run(env.step({"role": "assistant", "content": "final answer"}))
+
+        assert result.episode_done is True
+        assert result.metrics["stop/completed"] == 1.0
+
+    def test_tool_stop_emits_tool_stopped(self):
+        stop_tool = StubTool("halt", "stopping", should_stop=True)
+        env = AgentToolMessageEnv(
+            tools=[stop_tool],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+
+        result = asyncio.run(
+            env.step({"role": "assistant", "content": "", "tool_calls": [_make_tool_call("halt")]})
+        )
+
+        assert result.episode_done is True
+        assert result.metrics["tool_stopped"] == 1.0  # pre-existing key kept
+        assert result.metrics["stop/tool_stopped"] == 1.0
+
+    def test_max_turns_emits_max_turns(self):
+        search_tool = StubTool("search", "result")
+        env = AgentToolMessageEnv(
+            tools=[search_tool],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=1,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+
+        result = asyncio.run(
+            env.step(
+                {"role": "assistant", "content": "", "tool_calls": [_make_tool_call("search")]}
+            )
+        )
+
+        assert result.episode_done is True
+        assert result.metrics["max_turns"] == 1.0  # pre-existing key kept
+        assert result.metrics["stop/max_turns"] == 1.0
+
+    def test_non_terminal_step_has_no_stop_metric(self):
+        search_tool = StubTool("search", "result")
+        env = AgentToolMessageEnv(
+            tools=[search_tool],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=5,
+            reward_fn=_noop_reward,
+        )
+        asyncio.run(env.initial_observation())
+
+        result = asyncio.run(
+            env.step(
+                {"role": "assistant", "content": "", "tool_calls": [_make_tool_call("search")]}
+            )
+        )
+
+        assert result.episode_done is False
+        assert not any(k.startswith("stop/") for k in result.metrics)
+
+
+# ---------------------------------------------------------------------------
+# Unparsed (malformed) tool calls
+# ---------------------------------------------------------------------------
+
+
+class RecordingReward:
+    """reward_fn stub that records how often it was called."""
+
+    def __init__(self, reward: float = 1.0):
+        self.calls = 0
+        self.reward = reward
+
+    async def __call__(self, history: list[Message]) -> tuple[float, dict[str, float]]:
+        self.calls += 1
+        return self.reward, {"graded": 1.0}
+
+
+def _make_unparsed(error: str = "Invalid JSON: Expecting value") -> UnparsedToolCall:
+    return UnparsedToolCall(raw_text='{"name": "search", bad json}', error=error)
+
+
+class TestUnparsedToolCalls:
+    """A turn whose only tool call is malformed must be treated as a parse
+    failure — NOT as a 'no tool calls' completion with normal grading.
+
+    Regression tests for the silent unparsed-tool-call drop: previously the
+    env read only message['tool_calls'], so a malformed-JSON-only turn looked
+    like 'no tool calls' and ended the episode with the normal reward.
+    """
+
+    def _make_env(self, **kwargs: Any) -> tuple[AgentToolMessageEnv, RecordingReward]:
+        reward_fn = kwargs.pop("reward_fn", RecordingReward())
+        env = AgentToolMessageEnv(
+            tools=[StubTool("search", "result")],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=kwargs.pop("max_turns", 5),
+            reward_fn=reward_fn,
+            **kwargs,
+        )
+        asyncio.run(env.initial_observation())
+        return env, reward_fn
+
+    def test_unparsed_only_turn_is_parse_failure(self):
+        """Malformed-JSON-only turn: failed_parse_reward, parse_error metric,
+        errors in logs, reward_fn skipped, episode terminated (default)."""
+        env, reward_fn = self._make_env()
+
+        result = asyncio.run(
+            env.step(
+                {
+                    "role": "assistant",
+                    "content": "calling search",
+                    "unparsed_tool_calls": [_make_unparsed("Invalid JSON: Expecting value")],
+                }
+            )
+        )
+
+        assert result.reward == -0.1  # default failed_parse_reward
+        assert result.episode_done is True  # terminate_on_parse_error default
+        assert result.metrics["parse_error"] == 1.0
+        assert result.metrics["stop/parse_error"] == 1.0
+        assert result.logs["parse_errors"] == "Invalid JSON: Expecting value"
+        assert reward_fn.calls == 0  # grading skipped: this is a parse failure
+
+    def test_unparsed_only_custom_reward(self):
+        env, reward_fn = self._make_env(failed_parse_reward=-0.7)
+
+        result = asyncio.run(
+            env.step(
+                {"role": "assistant", "content": "", "unparsed_tool_calls": [_make_unparsed()]}
+            )
+        )
+
+        assert result.reward == -0.7
+        assert reward_fn.calls == 0
+
+    def test_unparsed_only_no_terminate_continues(self):
+        """With terminate_on_parse_error=False the episode continues; the
+        penalty applies to the failed turn only."""
+        env, reward_fn = self._make_env(terminate_on_parse_error=False)
+
+        result = asyncio.run(
+            env.step(
+                {"role": "assistant", "content": "", "unparsed_tool_calls": [_make_unparsed()]}
+            )
+        )
+
+        assert result.episode_done is False
+        assert result.reward == -0.1
+        assert result.metrics["parse_error"] == 1.0
+        assert "stop/parse_error" not in result.metrics  # episode is not over
+        assert reward_fn.calls == 0
+
+    def test_unparsed_only_on_final_turn_still_ends(self):
+        """Even with terminate_on_parse_error=False, max_turns still ends the
+        episode; the parse-failure reward applies and reward_fn stays skipped."""
+        env, reward_fn = self._make_env(terminate_on_parse_error=False, max_turns=1)
+
+        result = asyncio.run(
+            env.step(
+                {"role": "assistant", "content": "", "unparsed_tool_calls": [_make_unparsed()]}
+            )
+        )
+
+        assert result.episode_done is True
+        assert result.reward == -0.1
+        assert result.metrics["max_turns"] == 1.0
+        assert reward_fn.calls == 0
+
+    def test_multiple_unparsed_errors_joined_in_logs(self):
+        env, _ = self._make_env()
+
+        result = asyncio.run(
+            env.step(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "unparsed_tool_calls": [_make_unparsed("err one"), _make_unparsed("err two")],
+                }
+            )
+        )
+
+        assert result.logs["parse_errors"] == "err one\nerr two"
+
+    def test_mixed_valid_and_unparsed_executes_valid_and_surfaces_error(self):
+        """Mixed valid + malformed tool calls: the valid ones execute and the
+        episode proceeds normally with NO failure reward (some tool progress
+        happened), but the parse error is surfaced in metrics and logs.
+
+        This mirrors per-message error handling: content errors on individual
+        tool calls don't void the turn when other calls succeeded.
+        """
+        env, reward_fn = self._make_env()
+
+        result = asyncio.run(
+            env.step(
+                {
+                    "role": "assistant",
+                    "content": "one good, one bad",
+                    "tool_calls": [_make_tool_call("search", '{"q": "x"}')],
+                    "unparsed_tool_calls": [_make_unparsed("Invalid JSON: Expecting value")],
+                }
+            )
+        )
+
+        # Valid tool executed and its result is in history/logs.
+        assert result.logs["tool_call_0"] == 'search({"q": "x"})'
+        assert result.logs["tool_result_0"] == "result"
+        assert any(m["role"] == "tool" for m in env.history)
+        # Parse error surfaced without the failure reward.
+        assert result.metrics["parse_error"] == 1.0
+        assert result.logs["parse_errors"] == "Invalid JSON: Expecting value"
+        assert result.reward == 0.0  # not failed_parse_reward
+        # Episode continues (tool calls present, turns remain).
+        assert result.episode_done is False
+        assert reward_fn.calls == 0
 
 
 # ---------------------------------------------------------------------------
@@ -348,3 +597,171 @@ class TestMultimodalToolResults:
         tool_log = str(result.logs["tool_result_0"])
         assert "<image>Image(10x10, RGB)</image>" in tool_log
         assert "Screenshot taken" in tool_log
+
+
+class TestParseErrorPolicyContent:
+    """Content parse failures under a configured ParseErrorPolicy: retry
+    injection with the formatted detail, penalty on retried turns, terminal
+    stop with terminal_reward once the consecutive budget is exceeded, counter
+    reset on clean turns, and the mask marker."""
+
+    def _make_env(
+        self, policy: ParseErrorPolicy, **kwargs: Any
+    ) -> tuple[AgentToolMessageEnv, RecordingReward]:
+        reward_fn = kwargs.pop("reward_fn", RecordingReward())
+        env = AgentToolMessageEnv(
+            tools=[StubTool("search", "result")],
+            initial_messages=[{"role": "user", "content": "hi"}],
+            max_turns=kwargs.pop("max_turns", 10),
+            reward_fn=reward_fn,
+            parse_error_policy=policy,
+            **kwargs,
+        )
+        asyncio.run(env.initial_observation())
+        return env, reward_fn
+
+    def _error_message(self, error: str = "Invalid JSON: Expecting value") -> Message:
+        return {
+            "role": "assistant",
+            "content": "calling",
+            "unparsed_tool_calls": [_make_unparsed(error)],
+        }
+
+    def test_retry_injects_corrective_user_message(self):
+        policy = ParseErrorPolicy(max_consecutive=1)
+        env, reward_fn = self._make_env(policy)
+
+        result = asyncio.run(env.step(self._error_message("Invalid JSON: boom")))
+
+        assert result.episode_done is False
+        assert result.reward == 0.0  # penalty_per_error defaults to 0
+        assert result.metrics["parse_error"] == 1.0
+        assert "stop/parse_error" not in result.metrics
+        assert result.logs["parse_failure_kind"] == "content"
+        assert reward_fn.calls == 0
+        # The corrective message is the next user message and carries the detail.
+        injected = env.history[-1]
+        assert injected["role"] == "user"
+        assert isinstance(injected["content"], str)
+        assert "formatting issue" in injected["content"]
+        assert "Invalid JSON: boom" in injected["content"]
+
+    def test_penalty_applied_to_retried_turn(self):
+        policy = ParseErrorPolicy(max_consecutive=1, penalty_per_error=0.25)
+        env, _ = self._make_env(policy)
+
+        result = asyncio.run(env.step(self._error_message()))
+
+        assert result.episode_done is False
+        assert result.reward == -0.25
+
+    def test_budget_exceeded_terminal_stop(self):
+        """max_consecutive=1: the second consecutive error is terminal with
+        terminal_reward, stop/parse_error, and reward_fn still skipped."""
+        policy = ParseErrorPolicy(max_consecutive=1, terminal_reward=-0.5)
+        env, reward_fn = self._make_env(policy)
+
+        first = asyncio.run(env.step(self._error_message("err one")))
+        assert first.episode_done is False
+
+        second = asyncio.run(env.step(self._error_message("err two")))
+        assert second.episode_done is True
+        assert second.reward == -0.5
+        assert second.metrics["stop/parse_error"] == 1.0
+        assert reward_fn.calls == 0
+
+    def test_max_consecutive_zero_stops_on_first_error(self):
+        policy = ParseErrorPolicy(max_consecutive=0, terminal_reward=0.0)
+        env, reward_fn = self._make_env(policy)
+
+        result = asyncio.run(env.step(self._error_message()))
+
+        assert result.episode_done is True
+        assert result.reward == 0.0
+        assert result.metrics["stop/parse_error"] == 1.0
+        assert reward_fn.calls == 0
+
+    def test_clean_turn_resets_consecutive_counter(self):
+        """error -> valid tool turn -> error again is retried (not terminal)."""
+        policy = ParseErrorPolicy(max_consecutive=1)
+        env, _ = self._make_env(policy)
+
+        first = asyncio.run(env.step(self._error_message()))
+        assert first.episode_done is False
+
+        tool_turn = asyncio.run(
+            env.step(
+                {
+                    "role": "assistant",
+                    "content": "trying properly",
+                    "tool_calls": [_make_tool_call("search")],
+                }
+            )
+        )
+        assert tool_turn.episode_done is False
+
+        third = asyncio.run(env.step(self._error_message()))
+        assert third.episode_done is False  # counter reset: this is error 1 of 1
+
+    def test_max_turns_wins_over_retry(self):
+        policy = ParseErrorPolicy(max_consecutive=3, terminal_reward=-0.2)
+        env, reward_fn = self._make_env(policy, max_turns=1)
+
+        result = asyncio.run(env.step(self._error_message()))
+
+        assert result.episode_done is True
+        assert result.reward == -0.2
+        assert result.metrics["max_turns"] == 1.0
+        assert result.metrics["stop/parse_error"] == 1.0
+        assert reward_fn.calls == 0
+
+    def test_mask_error_turns_marks_retried_and_terminal_turns(self):
+        policy = ParseErrorPolicy(max_consecutive=1, mask_error_turns=True)
+        env, _ = self._make_env(policy)
+
+        first = asyncio.run(env.step(self._error_message()))
+        assert first.metrics[types.PARSE_ERROR_MASKED_METRIC_KEY] == 1.0
+
+        second = asyncio.run(env.step(self._error_message()))
+        assert second.episode_done is True
+        assert second.metrics[types.PARSE_ERROR_MASKED_METRIC_KEY] == 1.0
+
+    def test_mask_disabled_by_default(self):
+        policy = ParseErrorPolicy(max_consecutive=1)
+        env, _ = self._make_env(policy)
+
+        result = asyncio.run(env.step(self._error_message()))
+        assert types.PARSE_ERROR_MASKED_METRIC_KEY not in result.metrics
+
+    def test_detail_truncated_in_injected_message(self):
+        policy = ParseErrorPolicy(max_consecutive=1)
+        env, _ = self._make_env(policy)
+
+        long_error = "x" * (2 * PARSE_FAILURE_DETAIL_MAX_CHARS)
+        asyncio.run(env.step(self._error_message(long_error)))
+
+        injected = env.history[-1]
+        assert isinstance(injected["content"], str)
+        assert len(injected["content"]) < PARSE_FAILURE_DETAIL_MAX_CHARS + 200
+
+    def test_mixed_valid_and_unparsed_not_retried(self):
+        """Stage-1 semantics stand under a policy: mixed calls proceed normally."""
+        policy = ParseErrorPolicy(max_consecutive=2, penalty_per_error=0.5)
+        env, _ = self._make_env(policy)
+
+        result = asyncio.run(
+            env.step(
+                {
+                    "role": "assistant",
+                    "content": "mixed",
+                    "tool_calls": [_make_tool_call("search")],
+                    "unparsed_tool_calls": [_make_unparsed()],
+                }
+            )
+        )
+
+        assert result.episode_done is False
+        assert result.reward == 0.0  # no penalty: the turn made tool progress
+        assert result.metrics["parse_error"] == 1.0  # error still surfaced
+        # No corrective message was injected; the last history entries are tool results.
+        assert env.history[-1]["role"] == "tool"

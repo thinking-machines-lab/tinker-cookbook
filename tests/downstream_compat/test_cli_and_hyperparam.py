@@ -209,6 +209,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 2_965_504,
         (False, False, True): 253_440,
     },
+    "Qwen/Qwen3.8-27B": {
+        (True, True, True): 7_544_320,
+        (True, True, False): 7_290_880,
+        (True, False, True): 4_578_816,
+        (True, False, False): 4_325_376,
+        (False, True, True): 3_218_944,
+        (False, True, False): 2_965_504,
+        (False, False, True): 253_440,
+    },
     "Qwen/Qwen3.6-35B-A3B": {
         (True, True, True): 17_545_728,
         (True, True, False): 17_295_360,
@@ -326,6 +335,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 584_832,
         (False, False, True): 133_760,
     },
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": {
+        (True, True, True): 12_064_768,
+        (True, True, False): 11_931_008,
+        (True, False, True): 11_479_936,
+        (True, False, False): 11_346_176,
+        (False, True, True): 718_592,
+        (False, True, False): 584_832,
+        (False, False, True): 133_760,
+    },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
         (True, True, True): 113_160_192,
         (True, True, False): 113_025_024,
@@ -361,6 +379,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, True): 701_632,
         (False, True, False): 497_664,
         (False, False, True): 203_968,
+    },
+    "thinkingmachines/Inkling": {
+        (True, True, True): 158_337_344,
+        (True, True, False): 158_130_176,
+        (True, False, True): 154_913_088,
+        (True, False, False): 154_705_920,
+        (False, True, True): 3_631_424,
+        (False, True, False): 3_424_256,
+        (False, False, True): 207_168,
     },
     "zai-org/GLM-5.3": {
         (True, True, True): 124_437_632,

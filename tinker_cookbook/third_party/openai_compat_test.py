@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from tinker_cookbook.renderers.base import ToolCall
+from tinker_cookbook.renderers.base import ToolCall, ToolSpec
 from tinker_cookbook.third_party.openai_compat import (
     openai_messages_to_tinker,
     openai_tools_to_tinker,
+    tool_specs_to_openai_tools,
 )
 
 # ---------------------------------------------------------------------------
@@ -114,3 +115,52 @@ class TestOpenAIToolsToTinker:
 
     def test_empty_tools(self) -> None:
         assert openai_tools_to_tinker([]) == []
+
+
+# ---------------------------------------------------------------------------
+# tool_specs_to_openai_tools
+# ---------------------------------------------------------------------------
+
+
+class TestToolSpecsToOpenAITools:
+    def test_basic_tool(self) -> None:
+        tools: list[ToolSpec] = [
+            {
+                "name": "get_weather",
+                "description": "Get weather for a city",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                },
+            }
+        ]
+
+        result = tool_specs_to_openai_tools(tools)
+
+        assert result == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather for a city",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                    },
+                },
+            }
+        ]
+
+    def test_round_trips_function_tools(self) -> None:
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search docs",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        assert tool_specs_to_openai_tools(openai_tools_to_tinker(tools)) == tools

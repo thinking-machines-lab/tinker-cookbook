@@ -22,19 +22,32 @@ _QWEN3_INSTRUCT = ("qwen3_instruct",)
 _QWEN3_VL = ("qwen3_vl",)
 _QWEN3_VL_INSTRUCT = ("qwen3_vl_instruct",)
 _QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking")
+_QWEN3_8 = (
+    "qwen3_8_xhigh_reasoning",
+    "qwen3_8_disable_thinking",
+    "qwen3_8_medium_reasoning",
+    "qwen3_8_low_reasoning",
+)
 _DEEPSEEKV3 = ("deepseekv3", "deepseekv3_thinking")
 _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 _KIMI_K26 = ("kimi_k26", "kimi_k26_disable_thinking", "kimi_k26_preserve_thinking")
 _GLM5_3 = ("glm5_3_max_reasoning", "glm5_3_low_reasoning", "glm5_3_high_reasoning")
-_NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking")
+_NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking", "nemotron3_preserve_thinking")
 _NEMOTRON3_SUPER = _NEMOTRON3 + ("nemotron3_low_thinking",)
 _NEMOTRON3_ULTRA = (
     "nemotron3_ultra",
     "nemotron3_ultra_disable_thinking",
     "nemotron3_ultra_medium_thinking",
+    "nemotron3_ultra_preserve_thinking",
 )
+_NEMOTRON3_LIGHTNING = (
+    "nemotron3_ultra",
+    "nemotron3_ultra_disable_thinking",
+    "nemotron3_ultra_preserve_thinking",
+)
+_TML_V0 = ("tml_v0",)
 
 
 @dataclass
@@ -49,6 +62,7 @@ class ModelAttributes:
         recommended_renderers (tuple[str, ...]): Renderer names compatible with
             this model, ordered by recommendation (first is most recommended).
         is_vl (bool): Whether this is a vision-language model.
+        is_audio_in (bool): Whether the model accepts audio input.
     """
 
     organization: str
@@ -57,6 +71,7 @@ class ModelAttributes:
     is_chat: bool
     recommended_renderers: tuple[str, ...]
     is_vl: bool = False
+    is_audio_in: bool = False
 
 
 @cache
@@ -120,6 +135,10 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
         # so renderer/merge/export code paths are shared.
         "Qwen3.6-27B": ModelAttributes(org, "3.6", "27B", True, _QWEN3_5, is_vl=True),
         "Qwen3.6-35B-A3B": ModelAttributes(org, "3.6", "35B-A3B", True, _QWEN3_5, is_vl=True),
+        # Qwen3.8 keeps Qwen3.5/3.6's tokenizer, special tokens, and preprocessor, but
+        # its chat template adds reasoning-effort instructions and preserves thinking
+        # in history by default, so it gets its own qwen3_8 renderer family.
+        "Qwen3.8-27B": ModelAttributes(org, "3.8", "27B", True, _QWEN3_8, is_vl=True),
     }
 
 
@@ -202,6 +221,9 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
         "NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": ModelAttributes(
             org, "3", "550B-A55B", True, _NEMOTRON3_ULTRA
         ),
+        "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": ModelAttributes(
+            org, "3.5", "30B-A3B", True, _NEMOTRON3_LIGHTNING
+        ),
     }
 
 
@@ -226,11 +248,10 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         attrs = get_model_attributes("Qwen/Qwen3-8B")
         print(attrs.size_str, attrs.recommended_renderers)
     """
-    model_name = model_name.split(":")[0]
+    model_name = model_name.split(":", 1)[0]
     if "/" not in model_name:
         raise ValueError(f"Model name must be in 'org/model' format, got {model_name!r}")
     org, model_version_full = model_name.split("/", 1)
-    model_version_full = model_version_full.split(":")[0]
     if org == "meta-llama":
         return get_llama_info()[model_version_full]
     elif org == "Qwen":
@@ -245,6 +266,18 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_zai_info()[model_version_full]
     elif org == "nvidia":
         return get_nvidia_info()[model_version_full]
+    elif model_name.startswith("thinkingmachines/Inkling"):
+        # Inkling models are rendered by the standalone tml-renderers package.
+        # Version/size parsing is TBD; use the full model version for now.
+        return ModelAttributes(
+            organization=org,
+            version_str=model_version_full,
+            size_str=model_version_full,
+            is_chat=True,
+            recommended_renderers=_TML_V0,
+            is_vl=True,
+            is_audio_in=True,
+        )
     else:
         raise ConfigurationError(f"Unknown model: {model_name}")
 
