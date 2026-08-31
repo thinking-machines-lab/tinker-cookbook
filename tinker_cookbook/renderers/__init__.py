@@ -220,8 +220,6 @@ def get_renderer(
         Nemotron3UltraRenderer,
     )
     from tinker_cookbook.renderers.qwen3 import (
-        Qwen3DisableThinkingRenderer,
-        Qwen3InstructRenderer,
         Qwen3VLInstructRenderer,
         Qwen3VLRenderer,
     )
@@ -243,9 +241,11 @@ def get_renderer(
     elif name == "qwen3_vl_instruct":
         renderer = Qwen3VLInstructRenderer(tokenizer, image_processor)
     elif name == "qwen3_disable_thinking":
-        renderer = Qwen3DisableThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(
+            import_module("tml_renderers.qwen3_disable_thinking").Renderer()
+        )
     elif name == "qwen3_instruct":
-        renderer = Qwen3InstructRenderer(tokenizer)
+        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3_instruct").Renderer())
     elif name == "qwen3_5":
         renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_5_disable_thinking":
