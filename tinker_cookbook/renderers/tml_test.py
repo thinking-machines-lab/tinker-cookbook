@@ -248,16 +248,26 @@ def test_adapter_enforces_single_pending_completion() -> None:
     adapter.build_generation_prompt(messages)
 
 
-def test_qwen3_builtin_wraps_the_public_renderer() -> None:
-    caller_tokenizer = cast(Tokenizer, SimpleNamespace(name_or_path="Qwen/Qwen3-8B"))
-    adapter = renderers.get_renderer(
-        "qwen3",
-        caller_tokenizer,
-    )
+@pytest.mark.parametrize(
+    ("renderer_name", "generation_suffix"),
+    [
+        ("qwen3", "<|im_start|>assistant\n"),
+        (
+            "qwen3_disable_thinking",
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
+        ),
+        ("qwen3_instruct", "<|im_start|>assistant\n"),
+    ],
+)
+def test_qwen3_builtins_use_public_renderer_behavior(
+    renderer_name: str,
+    generation_suffix: str,
+) -> None:
+    caller_tokenizer = SimpleNamespace(name_or_path="Qwen/Qwen3-8B")
+    adapter = renderers.get_renderer(renderer_name, cast(Tokenizer, caller_tokenizer))
+    prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
 
     assert isinstance(adapter, tml.TmlRendererAdapter)
-    assert adapter.tokenizer is adapter._tml_renderer.tokenizer
     assert adapter.tokenizer is not caller_tokenizer
-    prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
-    assert adapter.tokenizer.decode(prompt.to_ints()).endswith("<|im_start|>assistant\n")
+    assert adapter.tokenizer.decode(prompt.to_ints()).endswith(generation_suffix)
     adapter.parse_response([])
