@@ -245,6 +245,23 @@ def test_adapter_enforces_single_pending_completion() -> None:
     adapter.build_generation_prompt(messages)
 
 
+def test_adapter_parses_multiple_responses_from_one_prompt() -> None:
+    public_renderer = _Renderer()
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
+    adapter.build_generation_prompt([Message(role="user", content="hello")])
+
+    parsed = adapter.parse_responses([[7, 42], [8, 42]])
+
+    assert parsed == [
+        (Message(role="assistant", content="answer"), ParseTermination.STOP_SEQUENCE),
+        (Message(role="assistant", content="answer"), ParseTermination.STOP_SEQUENCE),
+    ]
+    assert [parser.parsed_tokens for parser in public_renderer.parsers] == [
+        [[7, 42]],
+        [[8, 42]],
+    ]
+
+
 @pytest.mark.parametrize(
     ("renderer_name", "generation_suffix"),
     [

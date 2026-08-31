@@ -349,7 +349,10 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         end_time = time.time()
 
         parsed_responses = [
-            self.renderer.parse_response(r.tokens)[0] for r in sampled_token_sequences
+            message
+            for message, _termination in self.renderer.parse_responses(
+                [response.tokens for response in sampled_token_sequences]
+            )
         ]
         _validate_required_tool_choice(parsed_responses, tool_choice)
         if self.include_reasoning:

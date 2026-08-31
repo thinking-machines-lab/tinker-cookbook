@@ -45,6 +45,7 @@ class TmlRendererAdapter(Renderer):
     def __init__(self, renderer: PublicRenderer):
         self._tml_renderer = renderer
         self._pending_parser: PublicParser | None = None
+        self._pending_parser_factory: Callable[[], PublicParser] | None = None
         super().__init__(TmlRenderersTokenizerAdapter.from_tokenizer(renderer.tokenizer))
 
     def __reduce__(self) -> tuple:
@@ -61,9 +62,26 @@ class TmlRendererAdapter(Renderer):
     def _take_parser(self) -> PublicParser:
         parser = self._pending_parser
         self._pending_parser = None
+        self._pending_parser_factory = None
         if parser is None:
             raise RuntimeError("render a completion prompt before parsing its response")
         return parser
+
+    def _take_parsers(self, count: int) -> list[PublicParser]:
+        if count == 0:
+            return []
+        parser = self._pending_parser
+        parser_factory = self._pending_parser_factory
+        self._pending_parser = None
+        self._pending_parser_factory = None
+        if parser is None or parser_factory is None:
+            raise RuntimeError("render a completion prompt before parsing its responses")
+        try:
+            parsers = [parser]
+            parsers.extend(parser_factory() for _ in range(count - 1))
+            return parsers
+        except ValueError as error:
+            raise RendererError(str(error)) from error
 
     @staticmethod
     def _validate_generation_options(role: Role, prefill: str | None) -> None:
@@ -85,7 +103,9 @@ class TmlRendererAdapter(Renderer):
         if self._pending_parser is not None:
             raise RuntimeError("parse the pending completion before rendering another prompt")
         try:
-            spans, self._pending_parser = render_for_completion(_messages_to_render_input(messages))
+            render_input = _messages_to_render_input(messages)
+            spans, self._pending_parser = render_for_completion(render_input)
+            self._pending_parser_factory = lambda: render_for_completion(render_input)[1]
         except ValueError as error:
             raise RendererError(str(error)) from error
         return token_spans_to_tinker_model_input(spans)
@@ -176,9 +196,11 @@ class TmlRendererAdapter(Renderer):
         except ValueError:
             return ""
 
-    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
+    def _parse_response(
+        self, parser: PublicParser, response: list[int]
+    ) -> tuple[Message, ParseTermination]:
         try:
-            parsed = self._take_parser().parse_tokens(response)
+            parsed = parser.parse_tokens(response)
         except ValueError:
             return (
                 Message(role="assistant", content=self._decode_or_empty(response)),
@@ -195,6 +217,17 @@ class TmlRendererAdapter(Renderer):
             message or Message(role="assistant", content=self._decode_or_empty(response)),
             ParseTermination.STOP_SEQUENCE if saw_stop else ParseTermination.MALFORMED,
         )
+
+    def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
+        return self._parse_response(self._take_parser(), response)
+
+    def parse_responses(
+        self, responses: list[list[int]]
+    ) -> list[tuple[Message, ParseTermination]]:
+        return [
+            self._parse_response(parser, response)
+            for parser, response in zip(self._take_parsers(len(responses)), responses, strict=True)
+        ]
 
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
         parser = self._take_parser()
