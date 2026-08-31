@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
 from tml_renderers import chat as tml_chat
 from tml_renderers.renderer import Renderer as PublicRenderer
 
+import tinker_cookbook.renderers as renderers
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers import tml
 from tinker_cookbook.renderers.base import (
@@ -20,6 +22,7 @@ from tinker_cookbook.renderers.base import (
     ThinkingPart,
 )
 from tinker_cookbook.renderers.tml_conversions import TmlRenderInput
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 class _Tokenizer:
@@ -243,3 +246,18 @@ def test_adapter_enforces_single_pending_completion() -> None:
 
     adapter.parse_response([42])
     adapter.build_generation_prompt(messages)
+
+
+def test_qwen3_builtin_wraps_the_public_renderer() -> None:
+    caller_tokenizer = cast(Tokenizer, SimpleNamespace(name_or_path="Qwen/Qwen3-8B"))
+    adapter = renderers.get_renderer(
+        "qwen3",
+        caller_tokenizer,
+    )
+
+    assert isinstance(adapter, tml.TmlRendererAdapter)
+    assert adapter.tokenizer is adapter._tml_renderer.tokenizer
+    assert adapter.tokenizer is not caller_tokenizer
+    prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
+    assert adapter.tokenizer.decode(prompt.to_ints()).endswith("<|im_start|>assistant\n")
+    adapter.parse_response([])
