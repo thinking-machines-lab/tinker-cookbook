@@ -35,8 +35,12 @@ _SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "flac")
 def _native_messages(messages: object) -> list[tml_chat.Message] | None:
     if isinstance(messages, tml_chat.MessageList):
         return messages.messages
-    if isinstance(messages, Sequence) and messages and all(
-        isinstance(message, (tml_chat.Message, tml_chat.OpenAIMessage)) for message in messages
+    if (
+        isinstance(messages, Sequence)
+        and messages
+        and all(
+            isinstance(message, (tml_chat.Message, tml_chat.OpenAIMessage)) for message in messages
+        )
     ):
         return tml_chat.MessageList.from_messages(messages).messages
     return None
