@@ -279,7 +279,10 @@ def test_native_tml_renderers_inputs_pass_through(
     message_list = mock_tml_renderers_chat.MessageList(messages)
 
     assert tml_conversions._messages_to_render_input(cast(Any, messages)) == messages
-    assert len(tml_conversions._messages_to_render_input(cast(Any, openai_messages))) == 1
+    rendered_openai = cast(
+        list[Any], tml_conversions._messages_to_render_input(cast(Any, openai_messages))
+    )
+    assert len(rendered_openai) == 1
     assert tml_conversions._messages_to_render_input(cast(Any, message_list)) == messages
 
 
