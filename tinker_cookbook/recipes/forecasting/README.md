@@ -1,20 +1,27 @@
 # Forecasting with RL
 
-Fine-tune Qwen3.8-27B with Tinker on binary markets from the
+Fine-tune a model (Qwen3.8-27B in this example) with Tinker on binary markets from the
 [Prophet Arena subset](https://huggingface.co/datasets/prophetarena/Prophet-Arena-Subset-1200)
 using a chronological split and Brier reward.
+
 
 ## Run
 
 ```bash
 export TINKER_API_KEY=...
 
+# optionally download, verify, and inspect the data split
 python -m tinker_cookbook.recipes.forecasting.data
+
+# train forecasting model
 python -m tinker_cookbook.recipes.forecasting.train
 ```
 
 ## Prompt
 
+Task: Given a binary prediction-market question and information available at a historical snapshot, forecast the probability that the market will resolve YES. The model does not use tools or live search in this recipe.
+
+Here is the exact prompt template we use:
 ```text
 Forecast whether this market will resolve YES using information available through {snapshot time}.
 
@@ -95,12 +102,37 @@ and 1,180 questions, which the default caps trim to 1,024 and 256.
 The recipe downloads a fixed published version and verifies the CSV contents,
 so later dataset updates do not change a rerun.
 
+
+### Temporal split methodology
+This cookbook specifically uses a cutoff of October 20, 2025 UTC, but feel free to adjust based on the model you are using.
+
+* Knowledge cutoff: Try to find the knowledge cutoff for the model you are post-training. Ideally its pretraining cutoff predates the forecasting questions. Qwen3.8 has been reported to self-identify an [early-2025 cutoff](https://huggingface.co/Qwen/Qwen3.8-27B-FP8/discussions/8), although this is not publisher-verified. Adjust the model or split date to reduce outcome contamination.
+* Training split: Events whose markets all closed before the cutoff.
+* Validation split: Events first observed on or after the cutoff.
+
+We further refine our data via:
+* Boundary events: Events open across the cutoff are excluded.
+* Deduplication: Each event-market pair becomes one question using its earliest snapshot, and all markets from the same event remain in the same split.
+
 ## Configuration
 
-The default run uses the Qwen3.8 low-reasoning renderer, LoRA rank 32, 16
-questions per step, 32 forecasts per question, and a learning rate of `8e-5`. It
-trains for 100 steps. Validation runs every 20 steps and after the final update,
-with eight forecasts per question.
+**Model**
+* Qwen3.8-27B, using the Tinker [`qwen3_8_low_reasoning`](../../renderers/qwen3_8.py) renderer
+* LoRA rank 32
+* learning rate `8e-5`
+
+When switching models, use that model's recommended renderer and rerun the relevant hyperparameter ablations.
+
+**Training loop**
+
+* 16 questions per step
+* 32 forecasts per question
+* 100 training steps
+
+**Validation**
+
+* every 20 steps and after the final update
+* 8 forecasts per question
 
 ## Reward
 
@@ -116,7 +148,7 @@ for the outcome-based forecasting setup.
 
 ## Result
 
-A default run produced:
+With Qwen3.8-27B, we produced the following for reference:
 
 | Step | Validation Brier reward | Validation accuracy | Valid format |
 |---:|---:|---:|---:|
@@ -126,6 +158,8 @@ A default run produced:
 | 60 | 0.8198 | 74.49% | 99.95% |
 | 80 | 0.8223 | 74.24% | 100.00% |
 | 100 | 0.8252 | 74.15% | 100.00% |
+
+This shows consistent improvement on temporally **held-out** validation questions and suggests that the learned forecasting behavior generalizes beyond the training events.
 
 For scale, always answering `0.5` scores `0.7500` on this validation split and
 always answering the training base rate scores `0.7709`.

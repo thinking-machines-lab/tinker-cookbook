@@ -118,13 +118,18 @@ def _required_text(row: Mapping[str, str], key: str, context: str) -> str:
     return value
 
 
-def _parse_datetime(value: str, context: str) -> datetime:
+def parse_utc_datetime(value: str, context: str = "datetime") -> datetime:
+    """Parse an ISO datetime and normalize it to UTC.
+
+    Values without an explicit timezone are interpreted as UTC. Values with
+    an offset are converted to UTC without changing the instant they represent.
+    """
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError(f"invalid ISO datetime for {context}: {value!r}") from exc
     if parsed.tzinfo is None:
-        raise ValueError(f"expected timezone-aware datetime for {context}: {value!r}")
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
 
 
@@ -193,10 +198,10 @@ def _row_to_examples(row: Mapping[str, str], row_number: int) -> list[ForecastEx
     reference_material = _format_sources(raw_sources, context)
     if not reference_material:
         raise ValueError(f"expected at least one source in {context}")
-    snapshot_time = _parse_datetime(
+    snapshot_time = parse_utc_datetime(
         _required_text(row, "snapshot_time", context), f"{context}.snapshot_time"
     )
-    close_time = _parse_datetime(
+    close_time = parse_utc_datetime(
         _required_text(row, "close_time", context), f"{context}.close_time"
     )
     if snapshot_time >= close_time:
@@ -353,8 +358,8 @@ def main() -> None:
     parser.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
     parser.add_argument(
         "--split-date",
-        type=datetime.fromisoformat,
-        default=datetime.fromisoformat(DEFAULT_SPLIT_DATE).replace(tzinfo=UTC),
+        type=parse_utc_datetime,
+        default=parse_utc_datetime(DEFAULT_SPLIT_DATE, "default split date"),
     )
     parser.add_argument("--max-train-questions", type=int, default=DEFAULT_MAX_TRAIN_QUESTIONS)
     parser.add_argument(

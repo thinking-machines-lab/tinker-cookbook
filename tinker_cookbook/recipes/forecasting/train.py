@@ -16,7 +16,6 @@ from tinker.types import LossFnType
 
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.rl import train
-from tinker_cookbook.rl.rollout_strategy import RetryOnFailure
 from tinker_cookbook.stores.storage import storage_from_uri
 from tinker_cookbook.stores.training_store import TrainingRunStore
 
@@ -55,7 +54,6 @@ class Config:
     learning_rate: float = 8e-5
     max_tokens: int = 24_576
     temperature: float = 1.0
-    rollout_max_retries: int = 3
     loss_fn: LossFnType = "importance_sampling"
     max_steps: int | None = 100
 
@@ -159,7 +157,6 @@ async def cli_main(cfg: Config) -> None:
         base_url=cfg.base_url,
         kl_penalty_coef=0.0,
         compute_post_kl=False,
-        rollout_error_tolerance=RetryOnFailure(max_retries=cfg.rollout_max_retries),
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cfg.behavior_if_log_dir_exists)

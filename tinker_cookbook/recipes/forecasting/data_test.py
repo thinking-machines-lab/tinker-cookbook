@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from .data import load_prophet_arena_examples, load_prophet_arena_split
+from .data import load_prophet_arena_examples, load_prophet_arena_split, parse_utc_datetime
 
 
 def _row(
@@ -55,6 +55,19 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(output, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("2025-10-20", datetime(2025, 10, 20, tzinfo=UTC)),
+        ("2025-10-20T00:00:00Z", datetime(2025, 10, 20, tzinfo=UTC)),
+        ("2025-10-20T00:00:00-07:00", datetime(2025, 10, 20, 7, tzinfo=UTC)),
+        ("2025-10-20T12:30:00+05:30", datetime(2025, 10, 20, 7, tzinfo=UTC)),
+    ],
+)
+def test_parse_utc_datetime(value: str, expected: datetime) -> None:
+    assert parse_utc_datetime(value) == expected
 
 
 def test_loader_uses_every_market_and_its_earliest_snapshot(tmp_path: Path) -> None:

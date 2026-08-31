@@ -7,7 +7,6 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 import chz
 
@@ -33,6 +32,7 @@ from .data import (
     ForecastExample,
     fetch_prophet_arena,
     load_prophet_arena_split,
+    parse_utc_datetime,
 )
 
 logger = logging.getLogger(__name__)
@@ -258,7 +258,7 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
         )
         split = load_prophet_arena_split(
             csv_path,
-            split_time=datetime.fromisoformat(self.split_date).replace(tzinfo=UTC),
+            split_time=parse_utc_datetime(self.split_date, "split_date"),
             max_train_questions=self.max_train_questions,
             max_validation_questions=self.max_validation_questions,
             seed=self.seed,
