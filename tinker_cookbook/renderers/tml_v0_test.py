@@ -192,6 +192,24 @@ def test_cookbook_audio_bytes_are_normalized_to_openai_input_audio(
     }
 
 
+def test_cookbook_media_normalization_accepts_any_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tml_conversions, "image_to_data_uri", lambda _image: "data:image/test")
+    messages = (
+        Message(
+            role="user",
+            content=[ImagePart(type="image", image="image")],
+        ),
+    )
+
+    normalized = tml_conversions._normalize_cookbook_media(messages)
+
+    assert normalized[0]["content"] == [
+        {"type": "image_url", "image_url": {"url": "data:image/test"}}
+    ]
+
+
 def test_cookbook_audio_local_path_and_metadata_are_normalized(
     tmp_path: Path,
     mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
@@ -263,6 +281,13 @@ def test_native_tml_renderers_inputs_pass_through(
     assert tml_conversions._messages_to_render_input(cast(Any, messages)) == messages
     assert len(tml_conversions._messages_to_render_input(cast(Any, openai_messages))) == 1
     assert tml_conversions._messages_to_render_input(cast(Any, message_list)) == messages
+
+
+def test_empty_sequence_is_not_inferred_as_native(
+    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
+) -> None:
+    assert tml_conversions.tml_chat is mock_tml_renderers_chat
+    assert tml_conversions._native_messages([]) is None
 
 
 def test_invalid_native_tml_renderers_input_preserves_validation_error(
