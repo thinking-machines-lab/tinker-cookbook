@@ -44,26 +44,13 @@ class TmlRendererAdapter(Renderer):
 
     def __init__(self, renderer: PublicRenderer):
         self._tml_renderer = renderer
-        self._pending_parser: PublicParser | None = None
         super().__init__(TmlRenderersTokenizerAdapter.from_tokenizer(renderer.tokenizer))
-
-    def __reduce__(self) -> tuple:
-        if self._pending_parser is not None:
-            raise RuntimeError("cannot pickle a TML renderer adapter with an unparsed completion")
-        return super().__reduce__()
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         del message, ctx
         raise NotImplementedError(
             "TML renderer adapters render complete conversations, not context-free messages"
         )
-
-    def _take_parser(self) -> PublicParser:
-        parser = self._pending_parser
-        self._pending_parser = None
-        if parser is None:
-            raise RuntimeError("render a completion prompt before parsing its response")
-        return parser
 
     @staticmethod
     def _validate_generation_options(role: Role, prefill: str | None) -> None:
@@ -82,10 +69,8 @@ class TmlRendererAdapter(Renderer):
         ],
     ) -> tinker.ModelInput:
         self._validate_generation_options(role, prefill)
-        if self._pending_parser is not None:
-            raise RuntimeError("parse the pending completion before rendering another prompt")
         try:
-            spans, self._pending_parser = render_for_completion(_messages_to_render_input(messages))
+            spans, _parser = render_for_completion(_messages_to_render_input(messages))
         except ValueError as error:
             raise RendererError(str(error)) from error
         return token_spans_to_tinker_model_input(spans)
@@ -178,7 +163,7 @@ class TmlRendererAdapter(Renderer):
 
     def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         try:
-            parsed = self._take_parser().parse_tokens(response)
+            parsed = self._tml_renderer.parser_for_completion().parse_tokens(response)
         except ValueError:
             return (
                 Message(role="assistant", content=self._decode_or_empty(response)),
@@ -197,7 +182,7 @@ class TmlRendererAdapter(Renderer):
         )
 
     def parse_response_streaming(self, response: list[int]) -> Iterator[MessageDelta]:
-        parser = self._take_parser()
+        parser = self._tml_renderer.parser_for_completion()
         try:
             updates = [update for token in response for update in parser.parse_token(token)]
             updates.extend(parser.flush_updates())

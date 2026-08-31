@@ -82,9 +82,14 @@ class _Renderer:
         self, messages: TmlRenderInput
     ) -> tuple[list[tml_chat.TokenSpan], _Parser]:
         self.rendered = messages
+        return [
+            tml_chat.TokenSpan(tml_chat.EncodedTextTokenSpan([1, 2, 3]))
+        ], self.parser_for_completion()
+
+    def parser_for_completion(self) -> _Parser:
         parser = _Parser()
         self.parsers.append(parser)
-        return [tml_chat.TokenSpan(tml_chat.EncodedTextTokenSpan([1, 2, 3]))], parser
+        return parser
 
     def render_for_sft(self, messages: TmlRenderInput) -> list[tml_chat.TrainingExample]:
         self.sft_input = messages
@@ -228,21 +233,21 @@ def test_adapter_translates_public_streaming_updates() -> None:
     )
 
 
-def test_adapter_enforces_single_pending_completion() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
-    messages = [Message(role="user", content="hello")]
+def test_adapter_parses_responses_with_independent_parsers() -> None:
+    public_renderer = _Renderer()
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
+    adapter.build_generation_prompt([Message(role="user", content="hello")])
 
-    with pytest.raises(RuntimeError, match="render a completion prompt"):
-        adapter.parse_response([42])
+    parsed = [adapter.parse_response([7, 42]), adapter.parse_response([8, 42])]
 
-    adapter.build_generation_prompt(messages)
-    with pytest.raises(RuntimeError, match="parse the pending completion"):
-        adapter.build_generation_prompt(messages)
-    with pytest.raises(RuntimeError, match="unparsed completion"):
-        adapter.__reduce__()
-
-    adapter.parse_response([42])
-    adapter.build_generation_prompt(messages)
+    assert parsed == [
+        (Message(role="assistant", content="answer"), ParseTermination.STOP_SEQUENCE),
+        (Message(role="assistant", content="answer"), ParseTermination.STOP_SEQUENCE),
+    ]
+    assert [parser.parsed_tokens for parser in public_renderer.parsers[-2:]] == [
+        [[7, 42]],
+        [[8, 42]],
+    ]
 
 
 @pytest.mark.parametrize(

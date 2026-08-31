@@ -131,7 +131,6 @@ def _format_nemotron3_tool_declaration(tool: ToolSpec) -> str:
     return "\n".join(lines)
 
 
-# TODO: Graduate Nemotron as an independent OSS renderer and remove this Qwen3.5 inheritance.
 class Nemotron3Renderer(Qwen3_5Renderer):
     """Renderer for Nemotron-3 models.
 
