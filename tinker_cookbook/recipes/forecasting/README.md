@@ -117,7 +117,7 @@ We further refine our data via:
 ## Configuration
 
 **Model**
-* Qwen3.8-27B, using the Tinker [`qwen3_8_low_reasoning`](../../renderers/qwen3_8.py) renderer
+* Qwen3.8-27B, using the Tinker [`qwen3_8_low_reasoning`](../../renderers/__init__.py) renderer
 * LoRA rank 32
 * learning rate `8e-5`
 
