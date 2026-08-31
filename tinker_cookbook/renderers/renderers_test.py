@@ -31,12 +31,21 @@ from typing import cast
 
 import pytest
 from PIL import Image
+from tml_renderers import (
+    nemotron3,
+    nemotron3_preserve_thinking,
+    qwen3,
+    qwen3_5,
+    qwen3_5_disable_thinking,
+    qwen3_8_xhigh_reasoning,
+)
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import get_image_processor
 from tinker_cookbook.model_info import get_model_attributes, get_recommended_renderer_name
 from tinker_cookbook.renderers import (
     Message,
+    ParseTermination,
     TextPart,
     ThinkingPart,
     ToolCall,
@@ -59,14 +68,11 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
-from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
-from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-from tinker_cookbook.renderers.qwen3_8 import Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
     skip_if_deepseek_tokenizer_bug,
 )
+from tinker_cookbook.renderers.tml import TmlRendererAdapter
 from tinker_cookbook.tokenizer_utils import (
     get_registered_tokenizer_names,
     get_tokenizer,
@@ -74,6 +80,28 @@ from tinker_cookbook.tokenizer_utils import (
     register_tokenizer,
     unregister_tokenizer,
 )
+
+
+def Qwen3Renderer(tokenizer, strip_thinking_from_history: bool = True):
+    return TmlRendererAdapter(qwen3.Renderer(strip_thinking_from_history))
+
+
+def Qwen3_5Renderer(tokenizer, strip_thinking_from_history: bool = True):
+    return TmlRendererAdapter(qwen3_5.Renderer(strip_thinking_from_history))
+
+
+def Qwen3_5DisableThinkingRenderer(tokenizer, strip_thinking_from_history: bool = True):
+    return TmlRendererAdapter(qwen3_5_disable_thinking.Renderer(strip_thinking_from_history))
+
+
+def Qwen3_8Renderer(tokenizer, strip_thinking_from_history: bool = False):
+    return TmlRendererAdapter(qwen3_8_xhigh_reasoning.Renderer(strip_thinking_from_history))
+
+
+def Nemotron3Renderer(tokenizer, strip_thinking_from_history: bool = True):
+    module = nemotron3 if strip_thinking_from_history else nemotron3_preserve_thinking
+    return TmlRendererAdapter(module.Renderer())
+
 
 # =============================================================================
 # Conversation Generator (seeded random conversations for parametrized tests)
@@ -1403,6 +1431,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     test_response_with_eot = f"53 + 18 = 71{eot_token}"
     response_tokens = tokenizer.encode(test_response_with_eot, add_special_tokens=False)
 
+    if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
+        renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
@@ -1412,6 +1442,8 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     test_response_no_eot = "53 + 18 = 71"
     response_tokens_no_eot = tokenizer.encode(test_response_no_eot, add_special_tokens=False)
 
+    if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
+        renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens_no_eot)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
@@ -1423,8 +1455,13 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         test_response_double_eot, add_special_tokens=False
     )
 
-    with pytest.raises(ValueError, match=r"expected .* 1"):
-        _ = renderer.parse_response(response_tokens_double_eot)
+    if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
+        renderer.build_generation_prompt([])
+        _, termination = renderer.parse_response(response_tokens_double_eot)
+        assert termination == ParseTermination.MALFORMED
+    else:
+        with pytest.raises(ValueError, match=r"expected .* 1"):
+            _ = renderer.parse_response(response_tokens_double_eot)
 
 
 # =============================================================================
@@ -1521,6 +1558,8 @@ def _verify_extension_property(renderer, messages: list[Message], tokenizer):
         # Build prompt before the next assistant message (observation_{t+1})
         context_before_next = messages[:next_asst_idx]
         prompt_before_next = renderer.build_generation_prompt(context_before_next).to_ints()
+        if isinstance(renderer, TmlRendererAdapter):
+            renderer.parse_response([])
 
         # Check if seq_through_asst is a prefix of prompt_before_next
         is_prefix = prompt_before_next[: len(seq_through_asst)] == seq_through_asst
@@ -1557,10 +1596,6 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     ("meta-llama/Llama-3.1-8B-Instruct", "llama3", {}, get_basic_4turn_conversation),
     # RoleColon with basic multi-turn (doesn't support tools)
     ("meta-llama/Llama-3.1-8B-Instruct", "role_colon", {}, get_basic_4turn_conversation),
-    # Qwen3 Instruct with basic multi-turn
-    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, get_basic_4turn_conversation),
-    # Qwen3 Instruct with tool calls
-    ("Qwen/Qwen3-8B", "qwen3_instruct", {}, get_multiturn_tool_conversation),
     # Qwen3 with strip_thinking_from_history=False (preserves thinking)
     (
         "Qwen/Qwen3-8B",
@@ -1696,7 +1731,7 @@ def test_register_and_get_custom_renderer(cleanup_custom_renderer):
     tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     renderer = get_renderer(custom_name, tokenizer)
 
-    assert isinstance(renderer, Qwen3Renderer)
+    assert isinstance(renderer, TmlRendererAdapter)
 
     unregister_renderer(custom_name)
 

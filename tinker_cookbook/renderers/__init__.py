@@ -162,7 +162,9 @@ def get_renderer(
             - ``"gpt_oss_high_reasoning"``: GPT-OSS with high reasoning
             - Custom renderers registered via ``register_renderer()``
         tokenizer (Tokenizer): The tokenizer to use.
-        image_processor (ImageProcessor | None): Required for VL renderers.
+        image_processor (ImageProcessor | None): Image processor for legacy VL renderers.
+            Public TML renderers, including Qwen3-VL, own their image tokenization and ignore
+            this compatibility argument.
         model_name (str | None): Model name for pickle metadata. If None,
             falls back to ``tokenizer.name_or_path``. Provide this explicitly
             when the tokenizer was loaded with a remapped name (e.g., Llama 3
@@ -183,8 +185,7 @@ def get_renderer(
         ])
 
     Raises:
-        RendererError: If the renderer name is unknown or if a VL renderer
-            is requested without an image_processor.
+        RendererError: If the renderer name is unknown.
     """
 
     def _stamp_pickle_metadata(renderer: Renderer) -> Renderer:
@@ -199,6 +200,28 @@ def get_renderer(
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
+    from tml_renderers import (
+        nemotron3,
+        nemotron3_disable_thinking,
+        nemotron3_low_thinking,
+        nemotron3_preserve_thinking,
+        nemotron3_ultra,
+        nemotron3_ultra_disable_thinking,
+        nemotron3_ultra_medium_thinking,
+        nemotron3_ultra_preserve_thinking,
+        qwen3,
+        qwen3_5,
+        qwen3_5_disable_thinking,
+        qwen3_8_disable_thinking,
+        qwen3_8_low_reasoning,
+        qwen3_8_medium_reasoning,
+        qwen3_8_xhigh_reasoning,
+        qwen3_disable_thinking,
+        qwen3_instruct,
+        qwen3_vl,
+        qwen3_vl_instruct,
+    )
+
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
@@ -208,26 +231,8 @@ def get_renderer(
     from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
     from tinker_cookbook.renderers.kimi_k26 import KimiK26PreserveThinkingRenderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
-    from tinker_cookbook.renderers.nemotron3 import (
-        Nemotron3DisableThinkingRenderer,
-        Nemotron3LowThinkingRenderer,
-        Nemotron3PreserveThinkingRenderer,
-        Nemotron3Renderer,
-        Nemotron3UltraDisableThinkingRenderer,
-        Nemotron3UltraMediumThinkingRenderer,
-        Nemotron3UltraPreserveThinkingRenderer,
-        Nemotron3UltraRenderer,
-    )
-    from tinker_cookbook.renderers.qwen3 import (
-        Qwen3DisableThinkingRenderer,
-        Qwen3InstructRenderer,
-        Qwen3Renderer,
-        Qwen3VLInstructRenderer,
-        Qwen3VLRenderer,
-    )
-    from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-    from tinker_cookbook.renderers.qwen3_8 import Qwen3_8DisableThinkingRenderer, Qwen3_8Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
+    from tinker_cookbook.renderers.tml import TmlRendererAdapter
     from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
     renderer: Renderer
@@ -236,31 +241,27 @@ def get_renderer(
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
     elif name == "qwen3":
-        renderer = Qwen3Renderer(tokenizer)
+        renderer = TmlRendererAdapter(qwen3.Renderer())
     elif name == "qwen3_vl":
-        renderer = Qwen3VLRenderer(tokenizer, image_processor)
+        renderer = TmlRendererAdapter(qwen3_vl.Renderer())
     elif name == "qwen3_vl_instruct":
-        renderer = Qwen3VLInstructRenderer(tokenizer, image_processor)
+        renderer = TmlRendererAdapter(qwen3_vl_instruct.Renderer())
     elif name == "qwen3_disable_thinking":
-        renderer = Qwen3DisableThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(qwen3_disable_thinking.Renderer())
     elif name == "qwen3_instruct":
-        renderer = Qwen3InstructRenderer(tokenizer)
+        renderer = TmlRendererAdapter(qwen3_instruct.Renderer())
     elif name == "qwen3_5":
-        renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
+        renderer = TmlRendererAdapter(qwen3_5.Renderer())
     elif name == "qwen3_5_disable_thinking":
-        renderer = Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+        renderer = TmlRendererAdapter(qwen3_5_disable_thinking.Renderer())
     elif name == "qwen3_8_xhigh_reasoning":
-        renderer = Qwen3_8Renderer(tokenizer, image_processor=image_processor)
+        renderer = TmlRendererAdapter(qwen3_8_xhigh_reasoning.Renderer())
     elif name == "qwen3_8_medium_reasoning":
-        renderer = Qwen3_8Renderer(
-            tokenizer, image_processor=image_processor, reasoning_effort="medium"
-        )
+        renderer = TmlRendererAdapter(qwen3_8_medium_reasoning.Renderer())
     elif name == "qwen3_8_low_reasoning":
-        renderer = Qwen3_8Renderer(
-            tokenizer, image_processor=image_processor, reasoning_effort="low"
-        )
+        renderer = TmlRendererAdapter(qwen3_8_low_reasoning.Renderer())
     elif name == "qwen3_8_disable_thinking":
-        renderer = Qwen3_8DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+        renderer = TmlRendererAdapter(qwen3_8_disable_thinking.Renderer())
     elif name == "deepseekv3":
         # Default to non-thinking mode (matches HF template default behavior)
         renderer = DeepSeekV3DisableThinkingRenderer(tokenizer)
@@ -282,21 +283,21 @@ def get_renderer(
     elif name == "kimi_k26_preserve_thinking":
         renderer = KimiK26PreserveThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "nemotron3":
-        renderer = Nemotron3Renderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3.Renderer())
     elif name == "nemotron3_low_thinking":
-        renderer = Nemotron3LowThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3_low_thinking.Renderer())
     elif name == "nemotron3_disable_thinking":
-        renderer = Nemotron3DisableThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3_disable_thinking.Renderer())
     elif name == "nemotron3_preserve_thinking":
-        renderer = Nemotron3PreserveThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3_preserve_thinking.Renderer())
     elif name == "nemotron3_ultra":
-        renderer = Nemotron3UltraRenderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3_ultra.Renderer())
     elif name == "nemotron3_ultra_disable_thinking":
-        renderer = Nemotron3UltraDisableThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3_ultra_disable_thinking.Renderer())
     elif name == "nemotron3_ultra_medium_thinking":
-        renderer = Nemotron3UltraMediumThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3_ultra_medium_thinking.Renderer())
     elif name == "nemotron3_ultra_preserve_thinking":
-        renderer = Nemotron3UltraPreserveThinkingRenderer(tokenizer)
+        renderer = TmlRendererAdapter(nemotron3_ultra_preserve_thinking.Renderer())
     elif name == "gpt_oss_no_sysprompt":
         renderer = GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":
