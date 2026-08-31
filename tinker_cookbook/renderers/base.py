@@ -1450,17 +1450,6 @@ class Renderer(ABC):
         """
         ...
 
-    def parse_responses(
-        self, responses: list[list[int]]
-    ) -> list[tuple[Message, ParseTermination]]:
-        """Parse independent responses sampled from the same prompt.
-
-        Stateless renderers can parse each response normally. Renderers whose
-        parsers carry per-completion state should override this method and
-        create an independent parser for every response.
-        """
-        return [self.parse_response(response) for response in responses]
-
     supports_streaming: bool = False
     """Whether this renderer supports streaming response parsing.
 
