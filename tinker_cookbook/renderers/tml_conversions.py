@@ -35,7 +35,7 @@ _SUPPORTED_AUDIO_FORMATS = ("wav", "mp3", "flac")
 def _native_messages(messages: object) -> list[tml_chat.Message] | None:
     if isinstance(messages, tml_chat.MessageList):
         return messages.messages
-    if isinstance(messages, Sequence) and all(
+    if isinstance(messages, Sequence) and messages and all(
         isinstance(message, (tml_chat.Message, tml_chat.OpenAIMessage)) for message in messages
     ):
         return tml_chat.MessageList.from_messages(messages).messages
@@ -137,11 +137,8 @@ def _audio_part_to_openai(part: AudioPart) -> dict[str, Any]:
     return {"type": "input_audio", "input_audio": input_audio}
 
 
-def _normalize_cookbook_media(messages: Sequence[Message]) -> Sequence[Mapping[str, Any]]:
-    if not isinstance(messages, list):
-        return messages
-
-    normalized: list[Any] = []
+def _normalize_cookbook_media(messages: Sequence[Message]) -> list[Mapping[str, Any]]:
+    normalized: list[Mapping[str, Any]] = []
     for message in messages:
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
