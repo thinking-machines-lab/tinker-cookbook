@@ -31,6 +31,14 @@ from typing import cast
 
 import pytest
 from PIL import Image
+from tml_renderers import (
+    nemotron3,
+    nemotron3_preserve_thinking,
+    qwen3,
+    qwen3_5,
+    qwen3_5_disable_thinking,
+    qwen3_8_xhigh_reasoning,
+)
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import get_image_processor
@@ -60,10 +68,6 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
-from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
-from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-from tinker_cookbook.renderers.qwen3_8 import Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
     skip_if_deepseek_tokenizer_bug,
@@ -76,6 +80,28 @@ from tinker_cookbook.tokenizer_utils import (
     register_tokenizer,
     unregister_tokenizer,
 )
+
+
+def Qwen3Renderer(tokenizer, strip_thinking_from_history: bool = True):
+    return TmlRendererAdapter(qwen3.Renderer(strip_thinking_from_history))
+
+
+def Qwen3_5Renderer(tokenizer, strip_thinking_from_history: bool = True):
+    return TmlRendererAdapter(qwen3_5.Renderer(strip_thinking_from_history))
+
+
+def Qwen3_5DisableThinkingRenderer(tokenizer, strip_thinking_from_history: bool = True):
+    return TmlRendererAdapter(qwen3_5_disable_thinking.Renderer(strip_thinking_from_history))
+
+
+def Qwen3_8Renderer(tokenizer, strip_thinking_from_history: bool = False):
+    return TmlRendererAdapter(qwen3_8_xhigh_reasoning.Renderer(strip_thinking_from_history))
+
+
+def Nemotron3Renderer(tokenizer, strip_thinking_from_history: bool = True):
+    module = nemotron3 if strip_thinking_from_history else nemotron3_preserve_thinking
+    return TmlRendererAdapter(module.Renderer())
+
 
 # =============================================================================
 # Conversation Generator (seeded random conversations for parametrized tests)
@@ -1705,7 +1731,7 @@ def test_register_and_get_custom_renderer(cleanup_custom_renderer):
     tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     renderer = get_renderer(custom_name, tokenizer)
 
-    assert isinstance(renderer, Qwen3Renderer)
+    assert isinstance(renderer, TmlRendererAdapter)
 
     unregister_renderer(custom_name)
 

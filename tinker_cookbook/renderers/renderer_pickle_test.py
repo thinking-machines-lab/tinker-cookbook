@@ -84,18 +84,6 @@ class TestRendererPickle:
         assert type(restored) is Llama3Renderer
         assert restored.get_stop_sequences() == renderer.get_stop_sequences()
 
-    def test_pickle_without_metadata_vl_renderer(self) -> None:
-        """VL renderers that bypass super().__init__() still raise clean PicklingError."""
-        tokenizer = get_tokenizer("Qwen/Qwen3-8B")
-
-        from tinker_cookbook.renderers.qwen3 import Qwen3VLRenderer
-
-        # Qwen3VLRenderer bypasses super().__init__(), so _renderer_name is never
-        # set via __init__. Class-level defaults + getattr in __reduce__ handle this.
-        renderer = Qwen3VLRenderer(tokenizer, image_processor=None)
-        with pytest.raises(pickle.PicklingError, match="not set"):
-            pickle.dumps(renderer)
-
     def test_pickle_with_explicit_model_name(self) -> None:
         """The model_name param in get_renderer() overrides tokenizer.name_or_path."""
         tokenizer = get_tokenizer("meta-llama/Llama-3.1-8B-Instruct")

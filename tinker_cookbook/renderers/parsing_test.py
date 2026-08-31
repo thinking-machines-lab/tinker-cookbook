@@ -1,6 +1,13 @@
 """Tests for shared parsing utilities and cross-renderer roundtrip behavior."""
 
 import pytest
+from tml_renderers import (
+    qwen3,
+    qwen3_5,
+    qwen3_5_disable_thinking,
+    qwen3_8_disable_thinking,
+    qwen3_8_xhigh_reasoning,
+)
 
 from tinker_cookbook.renderers import (
     ContentPart,
@@ -25,11 +32,30 @@ from tinker_cookbook.renderers.deepseek_v3 import (
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
-from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-from tinker_cookbook.renderers.qwen3_8 import Qwen3_8DisableThinkingRenderer, Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import skip_if_deepseek_tokenizer_bug
+from tinker_cookbook.renderers.tml import TmlRendererAdapter
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+
+def Qwen3Renderer(tokenizer):
+    return TmlRendererAdapter(qwen3.Renderer())
+
+
+def Qwen3_5Renderer(tokenizer):
+    return TmlRendererAdapter(qwen3_5.Renderer())
+
+
+def Qwen3_5DisableThinkingRenderer(tokenizer):
+    return TmlRendererAdapter(qwen3_5_disable_thinking.Renderer())
+
+
+def Qwen3_8Renderer(tokenizer):
+    return TmlRendererAdapter(qwen3_8_xhigh_reasoning.Renderer())
+
+
+def Qwen3_8DisableThinkingRenderer(tokenizer):
+    return TmlRendererAdapter(qwen3_8_disable_thinking.Renderer())
+
 
 # =============================================================================
 # parse_content_blocks Tests

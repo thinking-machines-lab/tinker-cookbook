@@ -41,7 +41,6 @@ from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 
 # ---------------------------------------------------------------------------
 # Type exports
@@ -143,7 +142,7 @@ class TestRendererRegistry:
         assert not is_renderer_registered(name)
 
         def factory(tokenizer, image_processor=None):  # type: ignore[no-untyped-def]
-            return Qwen3Renderer(tokenizer)
+            return renderers.get_renderer("qwen3", tokenizer)
 
         register_renderer(name, factory)
         assert is_renderer_registered(name)
@@ -311,9 +310,6 @@ class TestSignatures:
 class TestRendererClasses:
     def test_deepseekv3_thinking_renderer_importable(self):
         assert issubclass(DeepSeekV3ThinkingRenderer, Renderer)
-
-    def test_qwen3_renderer_importable(self):
-        assert issubclass(Qwen3Renderer, Renderer)
 
     def test_gpt_oss_renderer_importable(self):
         assert issubclass(GptOssRenderer, Renderer)
