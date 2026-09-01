@@ -6,6 +6,7 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 """
 
 from collections.abc import Callable
+from importlib import import_module
 from typing import Any
 
 from tinker_cookbook.exceptions import RendererError
@@ -47,6 +48,30 @@ from tinker_cookbook.tokenizer_utils import Tokenizer
 
 # Global registry for custom renderer factories
 _CUSTOM_RENDERER_REGISTRY: dict[str, Callable[[Tokenizer, Any], Renderer]] = {}
+
+_PUBLIC_TML_RENDERERS = frozenset(
+    {
+        "nemotron3",
+        "nemotron3_disable_thinking",
+        "nemotron3_low_thinking",
+        "nemotron3_preserve_thinking",
+        "nemotron3_ultra",
+        "nemotron3_ultra_disable_thinking",
+        "nemotron3_ultra_medium_thinking",
+        "nemotron3_ultra_preserve_thinking",
+        "qwen3",
+        "qwen3_5",
+        "qwen3_5_disable_thinking",
+        "qwen3_8_disable_thinking",
+        "qwen3_8_low_reasoning",
+        "qwen3_8_medium_reasoning",
+        "qwen3_8_xhigh_reasoning",
+        "qwen3_disable_thinking",
+        "qwen3_instruct",
+        "qwen3_vl",
+        "qwen3_vl_instruct",
+    }
+)
 
 
 def register_renderer(
@@ -199,29 +224,7 @@ def get_renderer(
     if (factory := _CUSTOM_RENDERER_REGISTRY.get(name)) is not None:
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
-    # Import renderer classes lazily to avoid circular imports and keep exports minimal
-    from tml_renderers import (
-        nemotron3,
-        nemotron3_disable_thinking,
-        nemotron3_low_thinking,
-        nemotron3_preserve_thinking,
-        nemotron3_ultra,
-        nemotron3_ultra_disable_thinking,
-        nemotron3_ultra_medium_thinking,
-        nemotron3_ultra_preserve_thinking,
-        qwen3,
-        qwen3_5,
-        qwen3_5_disable_thinking,
-        qwen3_8_disable_thinking,
-        qwen3_8_low_reasoning,
-        qwen3_8_medium_reasoning,
-        qwen3_8_xhigh_reasoning,
-        qwen3_disable_thinking,
-        qwen3_instruct,
-        qwen3_vl,
-        qwen3_vl_instruct,
-    )
-
+    # Import renderer classes lazily to avoid circular imports and keep exports minimal.
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
@@ -235,31 +238,9 @@ def get_renderer(
     from tinker_cookbook.renderers.tml import TmlRendererAdapter
     from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
-    public_renderer_types = {
-        "qwen3": qwen3.Renderer,
-        "qwen3_vl": qwen3_vl.Renderer,
-        "qwen3_vl_instruct": qwen3_vl_instruct.Renderer,
-        "qwen3_disable_thinking": qwen3_disable_thinking.Renderer,
-        "qwen3_instruct": qwen3_instruct.Renderer,
-        "qwen3_5": qwen3_5.Renderer,
-        "qwen3_5_disable_thinking": qwen3_5_disable_thinking.Renderer,
-        "qwen3_8_xhigh_reasoning": qwen3_8_xhigh_reasoning.Renderer,
-        "qwen3_8_medium_reasoning": qwen3_8_medium_reasoning.Renderer,
-        "qwen3_8_low_reasoning": qwen3_8_low_reasoning.Renderer,
-        "qwen3_8_disable_thinking": qwen3_8_disable_thinking.Renderer,
-        "nemotron3": nemotron3.Renderer,
-        "nemotron3_low_thinking": nemotron3_low_thinking.Renderer,
-        "nemotron3_disable_thinking": nemotron3_disable_thinking.Renderer,
-        "nemotron3_preserve_thinking": nemotron3_preserve_thinking.Renderer,
-        "nemotron3_ultra": nemotron3_ultra.Renderer,
-        "nemotron3_ultra_disable_thinking": nemotron3_ultra_disable_thinking.Renderer,
-        "nemotron3_ultra_medium_thinking": nemotron3_ultra_medium_thinking.Renderer,
-        "nemotron3_ultra_preserve_thinking": nemotron3_ultra_preserve_thinking.Renderer,
-    }
-
     renderer: Renderer
-    if public_renderer_type := public_renderer_types.get(name):
-        renderer = TmlRendererAdapter(public_renderer_type())
+    if name in _PUBLIC_TML_RENDERERS:
+        renderer = TmlRendererAdapter(import_module(f"tml_renderers.{name}").Renderer())
     elif name == "role_colon":
         renderer = RoleColonRenderer(tokenizer)
     elif name == "llama3":
