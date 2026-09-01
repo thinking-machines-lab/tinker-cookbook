@@ -1593,14 +1593,14 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     # Qwen3 with strip_thinking_from_history=False (preserves thinking)
     (
         "Qwen/Qwen3-8B",
-        TmlRendererAdapter(qwen3.Renderer(False)),
+        TmlRendererAdapter(qwen3.Renderer(False), has_extension_property=True),
         {},
         get_multiturn_thinking_conversation,
     ),
     # Qwen3.5 with strip_thinking_from_history=False (preserves thinking)
     (
         "Qwen/Qwen3.6-35B-A3B",
-        TmlRendererAdapter(qwen3_5.Renderer(False)),
+        TmlRendererAdapter(qwen3_5.Renderer(False), has_extension_property=True),
         {},
         get_multiturn_thinking_conversation,
     ),
@@ -1610,7 +1610,7 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     # ever got the empty block.
     pytest.param(
         "Qwen/Qwen3.6-35B-A3B",
-        TmlRendererAdapter(qwen3_5_disable_thinking.Renderer(False)),
+        TmlRendererAdapter(qwen3_5_disable_thinking.Renderer(False), has_extension_property=True),
         {},
         get_basic_4turn_conversation,
         marks=pytest.mark.xfail(

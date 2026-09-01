@@ -73,6 +73,14 @@ _PUBLIC_TML_RENDERERS = frozenset(
     }
 )
 
+_PUBLIC_TML_RENDERERS_WITH_EXTENSION_PROPERTY = frozenset(
+    {
+        "nemotron3_preserve_thinking",
+        "nemotron3_ultra_preserve_thinking",
+        "qwen3_instruct",
+    }
+)
+
 
 def register_renderer(
     name: str,
@@ -228,7 +236,12 @@ def get_renderer(
         from tinker_cookbook.renderers.tml import TmlRendererAdapter
 
         public_renderer = import_module(f"tml_renderers.{name}").Renderer()
-        return _stamp_pickle_metadata(TmlRendererAdapter(public_renderer))
+        return _stamp_pickle_metadata(
+            TmlRendererAdapter(
+                public_renderer,
+                has_extension_property=name in _PUBLIC_TML_RENDERERS_WITH_EXTENSION_PROPERTY,
+            )
+        )
 
     if name == "tml_v0":
         from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer

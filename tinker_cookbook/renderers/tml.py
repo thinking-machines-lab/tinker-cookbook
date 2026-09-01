@@ -44,9 +44,14 @@ TmlRenderInput: TypeAlias = (
 class TmlRendererAdapter(Renderer):
     supports_streaming = True
 
-    def __init__(self, renderer: PublicRenderer):
+    def __init__(self, renderer: PublicRenderer, *, has_extension_property: bool = False):
         self._tml_renderer = renderer
+        self._has_extension_property = has_extension_property
         super().__init__(TmlRenderersTokenizerAdapter(renderer.tokenizer))
+
+    @property
+    def has_extension_property(self) -> bool:
+        return self._has_extension_property
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         del message, ctx

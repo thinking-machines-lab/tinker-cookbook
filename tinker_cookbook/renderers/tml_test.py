@@ -322,25 +322,28 @@ def test_adapter_parses_responses_with_independent_parsers() -> None:
 
 
 @pytest.mark.parametrize(
-    ("renderer_name", "generation_suffix"),
+    ("renderer_name", "generation_suffix", "has_extension_property"),
     [
-        ("qwen3", "<|im_start|>assistant\n"),
+        ("qwen3", "<|im_start|>assistant\n", False),
         (
             "qwen3_disable_thinking",
             "<|im_start|>assistant\n<think>\n\n</think>\n\n",
+            False,
         ),
-        ("qwen3_instruct", "<|im_start|>assistant\n"),
+        ("qwen3_instruct", "<|im_start|>assistant\n", True),
     ],
 )
 def test_qwen3_builtins_use_public_renderer_behavior(
     renderer_name: str,
     generation_suffix: str,
+    has_extension_property: bool,
 ) -> None:
     caller_tokenizer = SimpleNamespace(name_or_path="Qwen/Qwen3-8B")
     adapter = renderers.get_renderer(renderer_name, cast(Tokenizer, caller_tokenizer))
     prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
 
     assert isinstance(adapter, tml.TmlRendererAdapter)
+    assert adapter.has_extension_property is has_extension_property
     assert adapter.tokenizer is not caller_tokenizer
     assert adapter.tokenizer.decode(prompt.to_ints()).endswith(generation_suffix)
 

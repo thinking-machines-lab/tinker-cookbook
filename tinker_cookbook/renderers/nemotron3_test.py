@@ -26,6 +26,7 @@ ULTRA_MODEL = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
 def test_nemotron_variants_use_public_renderer(name: str) -> None:
     renderer = get_renderer(name, get_tokenizer(NANO_MODEL))
     assert isinstance(renderer, TmlRendererAdapter)
+    assert renderer.has_extension_property is ("preserve_thinking" in name)
 
 
 @pytest.mark.parametrize(

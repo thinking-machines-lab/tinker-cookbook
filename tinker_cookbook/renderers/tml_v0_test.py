@@ -23,7 +23,7 @@ from tinker_cookbook.renderers import (
 )
 from tinker_cookbook.renderers.tml import TmlRenderInput
 from tinker_cookbook.supervised.data import conversation_to_datum
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.tokenizer_utils import SupportsTmlTokenizer, get_tokenizer
 
 
 def _messages() -> list[Message]:
@@ -36,7 +36,9 @@ def _messages() -> list[Message]:
 
 def _renderer() -> tml_v0.TmlV0Renderer:
     tokenizer = get_tokenizer("thinkingmachines/Inkling")
-    return cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
+    renderer = get_renderer("tml_v0", tokenizer)
+    assert isinstance(renderer, tml_v0.TmlV0Renderer)
+    return renderer
 
 
 def _input_len(model_input) -> int:
@@ -63,7 +65,7 @@ def test_inkling_tokenizer_resolves_to_tml_adapter() -> None:
     tokenizer = get_tokenizer("thinkingmachines/Inkling")
 
     assert tokenizer.name_or_path == "thinkingmachines/Inkling"
-    assert hasattr(tokenizer, "tml_tokenizer")
+    assert isinstance(tokenizer, SupportsTmlTokenizer)
     assert tokenizer.decode(tokenizer.encode("hello", add_special_tokens=False))
 
 
@@ -164,7 +166,7 @@ def test_last_assistant_message_masks_earlier_assistant_messages() -> None:
 def test_unsupported_content_fails_loudly() -> None:
     renderer = _renderer()
 
-    with pytest.raises(Exception, match="Unsupported content part type"):
+    with pytest.raises(ValueError, match="Unsupported content part type"):
         renderer.build_supervised_example(
             [
                 Message(
@@ -179,7 +181,7 @@ def test_unsupported_content_fails_loudly() -> None:
 def test_remote_image_url_fails_loudly() -> None:
     renderer = _renderer()
 
-    with pytest.raises(Exception, match="does not fetch remote image URLs"):
+    with pytest.raises(ValueError, match="does not fetch remote image URLs"):
         renderer.build_supervised_example(
             [
                 Message(
@@ -215,11 +217,6 @@ def test_image_path_builds_tinker_chunk() -> None:
 
 
 def test_openai_audio_path_builds_tinker_chunk(tmp_path: Path) -> None:
-    dmel_chunk_type = getattr(tinker.types, "DmelChunk", None)
-    if dmel_chunk_type is None:
-        pytest.skip("DmelChunk is unavailable; please upgrade the Tinker SDK")
-    assert dmel_chunk_type is not None
-
     sample_rate = 16_000
     num_frames = sample_rate // 10
     audio_path = tmp_path / "tone.wav"
@@ -242,11 +239,12 @@ def test_openai_audio_path_builds_tinker_chunk(tmp_path: Path) -> None:
             )
         ]
     )
-    dmel_chunks = [chunk for chunk in model_input.chunks if isinstance(chunk, dmel_chunk_type)]
+    dmel_chunks = [
+        chunk for chunk in model_input.chunks if isinstance(chunk, tinker.types.DmelChunk)
+    ]
     assert len(dmel_chunks) == 1
-    dmel_chunk = cast(Any, dmel_chunks[0])
-    assert dmel_chunk.dmel
-    assert int(dmel_chunk.length) > 0
+    assert dmel_chunks[0].dmel
+    assert int(dmel_chunks[0].length) > 0
 
 
 def test_partial_assistant_message_fails_loudly() -> None:
