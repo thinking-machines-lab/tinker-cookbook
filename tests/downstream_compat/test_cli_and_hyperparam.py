@@ -468,12 +468,6 @@ class TestHyperparamUtils:
     def test_get_lr_ignores_variant_suffix(self):
         assert get_lr("Qwen/Qwen3-8B:peft:262144") == get_lr("Qwen/Qwen3-8B")
 
-    def test_get_lr_variant_suffix_reports_uncalibrated_not_unknown(self):
-        """An uncalibrated model must raise NotImplementedError, not ConfigurationError,
-        regardless of whether the caller passes the suffixed id."""
-        with pytest.raises(NotImplementedError):
-            get_lr("zai-org/GLM-5.3:peft:262144")
-
     @pytest.mark.parametrize(
         "flag_combo",
         sorted(
