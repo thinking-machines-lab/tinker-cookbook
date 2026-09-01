@@ -27,10 +27,18 @@ import json
 import random
 import uuid
 from collections.abc import Callable
+from functools import partial
 from typing import cast
 
 import pytest
 from PIL import Image
+from tml_renderers import (
+    nemotron3_preserve_thinking,
+    qwen3,
+    qwen3_5,
+    qwen3_5_disable_thinking,
+    qwen3_8_xhigh_reasoning,
+)
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import get_image_processor
@@ -60,10 +68,6 @@ from tinker_cookbook.renderers.base import (
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
-from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
-from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-from tinker_cookbook.renderers.qwen3_8 import Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
     skip_if_deepseek_tokenizer_bug,
@@ -849,24 +853,24 @@ def test_tool_call_supervised_rendering(model_name: str):
 
 
 @pytest.mark.parametrize(
-    "model_name,renderer_class",
+    "model_name,renderer_name",
     [
-        ("Qwen/Qwen3-8B", Qwen3Renderer),
-        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
-        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
-        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
-        ("moonshotai/Kimi-K2.5", KimiK25Renderer),
-        ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", Nemotron3Renderer),
+        ("Qwen/Qwen3-8B", "qwen3"),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
+        ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
+        ("moonshotai/Kimi-K2.5", "kimi_k25"),
+        ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ],
 )
-def test_strip_thinking_from_history_default(model_name: str, renderer_class):
+def test_strip_thinking_from_history_default(model_name: str, renderer_name: str):
     """
     Test that renderers with strip_thinking_from_history=True (default) only preserve
     the last assistant message's thinking. Earlier assistant thinking blocks are stripped.
     """
     skip_if_deepseek_tokenizer_bug(model_name)
     tokenizer = get_tokenizer(model_name)
-    renderer = renderer_class(tokenizer)  # Default strip_thinking_from_history=True
+    renderer = get_renderer(renderer_name, tokenizer)
 
     messages = get_4turn_thinking_conversation()
     model_input, _ = renderer.build_supervised_example(messages)
@@ -881,20 +885,43 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
 
 
 @pytest.mark.parametrize(
+    "model_name,public_renderer_type,renderer_args",
+    [
+        ("Qwen/Qwen3-8B", qwen3.Renderer, (False,)),
+        ("Qwen/Qwen3.6-35B-A3B", qwen3_5.Renderer, (False,)),
+        ("Qwen/Qwen3.8-27B", qwen3_8_xhigh_reasoning.Renderer, (False,)),
+        (
+            "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+            nemotron3_preserve_thinking.Renderer,
+            (),
+        ),
+    ],
+)
+def test_public_renderer_strip_thinking_from_history_false(
+    model_name: str, public_renderer_type, renderer_args
+):
+    tokenizer = get_tokenizer(model_name)
+    renderer = TmlRendererAdapter(public_renderer_type(*renderer_args))
+
+    messages = get_4turn_thinking_conversation()
+    model_input, _ = renderer.build_supervised_example(messages)
+    decoded = tokenizer.decode(model_input.to_ints())
+
+    assert "First turn reasoning" in decoded, (
+        f"First thinking should be preserved with strip_thinking_from_history=False: {decoded}"
+    )
+    assert "Second turn reasoning" in decoded, f"Second thinking should be preserved: {decoded}"
+
+
+@pytest.mark.parametrize(
     "model_name,renderer_class",
     [
-        ("Qwen/Qwen3-8B", Qwen3Renderer),
-        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
-        # Qwen3.8 defaults to strip_thinking_from_history=False already; this
-        # confirms the explicit kwarg keeps working.
-        ("Qwen/Qwen3.8-27B", Qwen3_8Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
-        ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", Nemotron3Renderer),
     ],
 )
-def test_strip_thinking_from_history_false(model_name: str, renderer_class):
+def test_legacy_renderer_strip_thinking_from_history_false(model_name: str, renderer_class):
     """
     Test that strip_thinking_from_history=False preserves thinking in ALL messages.
     This mode is used for multi-turn RL where the extension property is needed.
@@ -1405,8 +1432,6 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     test_response_with_eot = f"53 + 18 = 71{eot_token}"
     response_tokens = tokenizer.encode(test_response_with_eot, add_special_tokens=False)
 
-    if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
-        renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
@@ -1416,8 +1441,6 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     test_response_no_eot = "53 + 18 = 71"
     response_tokens_no_eot = tokenizer.encode(test_response_no_eot, add_special_tokens=False)
 
-    if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
-        renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens_no_eot)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
@@ -1430,7 +1453,6 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     )
 
     if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
-        renderer.build_generation_prompt([])
         _, termination = renderer.parse_response(response_tokens_double_eot)
         assert termination == ParseTermination.MALFORMED
     else:
@@ -1532,8 +1554,6 @@ def _verify_extension_property(renderer, messages: list[Message], tokenizer):
         # Build prompt before the next assistant message (observation_{t+1})
         context_before_next = messages[:next_asst_idx]
         prompt_before_next = renderer.build_generation_prompt(context_before_next).to_ints()
-        if isinstance(renderer, TmlRendererAdapter):
-            renderer.parse_response([])
 
         # Check if seq_through_asst is a prefix of prompt_before_next
         is_prefix = prompt_before_next[: len(seq_through_asst)] == seq_through_asst
@@ -1573,15 +1593,15 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     # Qwen3 with strip_thinking_from_history=False (preserves thinking)
     (
         "Qwen/Qwen3-8B",
-        Qwen3Renderer,
-        {"strip_thinking_from_history": False},
+        TmlRendererAdapter(qwen3.Renderer(False), has_extension_property=True),
+        {},
         get_multiturn_thinking_conversation,
     ),
     # Qwen3.5 with strip_thinking_from_history=False (preserves thinking)
     (
         "Qwen/Qwen3.6-35B-A3B",
-        Qwen3_5Renderer,
-        {"strip_thinking_from_history": False},
+        TmlRendererAdapter(qwen3_5.Renderer(False), has_extension_property=True),
+        {},
         get_multiturn_thinking_conversation,
     ),
     # Qwen3.5 disable thinking, on a conversation with no reasoning: this check trains each
@@ -1590,8 +1610,8 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
     # ever got the empty block.
     pytest.param(
         "Qwen/Qwen3.6-35B-A3B",
-        Qwen3_5DisableThinkingRenderer,
-        {"strip_thinking_from_history": False},
+        TmlRendererAdapter(qwen3_5_disable_thinking.Renderer(False), has_extension_property=True),
+        {},
         get_basic_4turn_conversation,
         marks=pytest.mark.xfail(
             strict=True,
@@ -1641,7 +1661,9 @@ def test_extension_property_holds(
     """
     tokenizer = get_tokenizer(model_name)
 
-    if isinstance(renderer_name_or_class, str):
+    if isinstance(renderer_name_or_class, Renderer):
+        renderer = renderer_name_or_class
+    elif isinstance(renderer_name_or_class, str):
         renderer = get_renderer(renderer_name_or_class, tokenizer)
     else:
         renderer = renderer_name_or_class(tokenizer, **renderer_kwargs)
@@ -1660,9 +1682,9 @@ def test_extension_property_breaks_when_expected():
     This confirms our test helper can detect violations.
     """
     tokenizer = get_tokenizer("Qwen/Qwen3-8B")
-    renderer = Qwen3Renderer(tokenizer, strip_thinking_from_history=True)
+    renderer = TmlRendererAdapter(qwen3.Renderer(True))
 
-    assert not renderer.has_extension_property, "Default Qwen3Renderer should NOT have extension"
+    assert not renderer.has_extension_property, "Default Qwen3 renderer should NOT have extension"
 
     messages = get_multiturn_thinking_conversation()
 
@@ -1689,12 +1711,8 @@ def test_register_and_get_custom_renderer(cleanup_custom_renderer):
     # Should not be registered initially
     assert not is_renderer_registered(custom_name)
 
-    # Create a simple factory that returns a Qwen3Renderer
-    def custom_factory(tokenizer, image_processor=None):
-        return Qwen3Renderer(tokenizer)
-
-    # Register the custom renderer
-    register_renderer(custom_name, custom_factory)
+    # Alias a built-in renderer under a custom name.
+    register_renderer(custom_name, partial(get_renderer, "qwen3"))
 
     # Should now be registered
     assert is_renderer_registered(custom_name)
@@ -1705,7 +1723,7 @@ def test_register_and_get_custom_renderer(cleanup_custom_renderer):
     tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     renderer = get_renderer(custom_name, tokenizer)
 
-    assert isinstance(renderer, Qwen3Renderer)
+    assert isinstance(renderer, TmlRendererAdapter)
 
     unregister_renderer(custom_name)
 

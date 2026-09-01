@@ -1,4 +1,3 @@
-import sys
 from collections.abc import Sequence
 from unittest.mock import MagicMock, patch
 
@@ -83,29 +82,14 @@ def test_env_var_falsy_values_do_not_enable(
     )
 
 
-def test_tml_renderers_source_dir_rolls_back_failed_sys_path_insert(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    # Temporary regression coverage for the TML_RENDERERS_SOURCE_DIR import shim.
-    # Delete with ensure_tml_renderers_importable once tml-renderers is a normal dependency.
-    source_dir = tmp_path / "tml-renderers"
-    (source_dir / "tml_renderers").mkdir(parents=True)
-    source_str = str(source_dir)
-    monkeypatch.setenv("TML_RENDERERS_SOURCE_DIR", source_str)
-    monkeypatch.setattr(tokenizer_utils.importlib.util, "find_spec", lambda _name: None)
-    original_sys_path = list(sys.path)
-
-    with pytest.raises(ModuleNotFoundError):
-        tokenizer_utils.ensure_tml_renderers_importable()
-
-    assert sys.path == original_sys_path
-
-
 @patch("tinker_cookbook.tokenizer_utils.TmlRenderersTokenizerAdapter")
-def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -> None:
+@patch("tml_renderers.tokenizers.o200k_base_chat")
+def test_inkling_uses_tml_renderers_tokenizer_adapter(
+    mock_tokenizer: MagicMock, mock_adapter: MagicMock
+) -> None:
     tokenizer = tokenizer_utils.get_tokenizer("thinkingmachines/Inkling")
 
-    mock_adapter.assert_called_once_with("thinkingmachines/Inkling")
+    mock_adapter.assert_called_once_with(mock_tokenizer.return_value, "thinkingmachines/Inkling")
     assert tokenizer is mock_adapter.return_value
 
 
@@ -132,7 +116,7 @@ class _BrokenFullTmlTokenizer(_FullTmlTokenizer):
 
 
 def test_tml_tokenizer_adapter_exposes_full_tokenizer_special_tokens() -> None:
-    adapter = tokenizer_utils.TmlRenderersTokenizerAdapter.from_tokenizer(_FullTmlTokenizer())
+    adapter = tokenizer_utils.TmlRenderersTokenizerAdapter(tokenizer=_FullTmlTokenizer())
 
     assert adapter.bos_token == "<bos>"
     assert adapter.eos_token == "<eos>"
@@ -140,9 +124,7 @@ def test_tml_tokenizer_adapter_exposes_full_tokenizer_special_tokens() -> None:
 
 
 def test_tml_tokenizer_adapter_marks_minimal_tokenizer_special_tokens_unavailable() -> None:
-    adapter = tokenizer_utils.TmlRenderersTokenizerAdapter.from_tokenizer(
-        _MinimalTmlRendererTokenizer()
-    )
+    adapter = tokenizer_utils.TmlRenderersTokenizerAdapter(tokenizer=_MinimalTmlRendererTokenizer())
 
     assert adapter.bos_token is None
     assert adapter.eos_token is None
@@ -151,4 +133,4 @@ def test_tml_tokenizer_adapter_marks_minimal_tokenizer_special_tokens_unavailabl
 
 def test_tml_tokenizer_adapter_does_not_hide_special_token_errors() -> None:
     with pytest.raises(ValueError, match="unknown special token"):
-        tokenizer_utils.TmlRenderersTokenizerAdapter.from_tokenizer(_BrokenFullTmlTokenizer())
+        tokenizer_utils.TmlRenderersTokenizerAdapter(tokenizer=_BrokenFullTmlTokenizer())

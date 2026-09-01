@@ -96,7 +96,6 @@ weather in NYC
 </tool_call><|im_end|>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    renderer.build_generation_prompt([])
     message, success = renderer.parse_response(response_tokens)
 
     assert success.is_clean
@@ -152,7 +151,6 @@ LA
 </tool_call><|im_end|>"""
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    renderer.build_generation_prompt([])
     message, success = renderer.parse_response(response_tokens)
 
     assert success.is_clean
@@ -248,7 +246,6 @@ def test_qwen3_parse_invalid_tool_call_json(response_text: str, raw_fragments: t
     renderer = get_renderer("qwen3", tokenizer)
 
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    renderer.build_generation_prompt([])
     message, success = renderer.parse_response(response_tokens)
 
     assert success == ParseTermination.MALFORMED

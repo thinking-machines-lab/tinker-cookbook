@@ -101,12 +101,11 @@ register_renderer("my_renderer", my_renderer_factory)
 
 - `tinker_cookbook/renderers/__init__.py` — Factory, registry
 - `tinker_cookbook/renderers/base.py` — Renderer base class, Message, ContentPart types
-- `tinker_cookbook/renderers/qwen3.py` — Qwen3 renderers
-- `tinker_cookbook/renderers/qwen3_5.py` — Qwen3.5 renderers
+- `tml_renderers.qwen3` and related modules — Qwen3 renderers
 - `tinker_cookbook/renderers/llama3.py` — Llama3 renderer
 - `tinker_cookbook/renderers/deepseek_v3.py` — DeepSeek renderers
 - `tinker_cookbook/renderers/kimi_k2.py`, `kimi_k26.py` — Kimi renderers
-- `tinker_cookbook/renderers/nemotron3.py` — Nemotron renderer
+- `tml_renderers.nemotron3` and related modules — Nemotron renderers
 - `tinker_cookbook/renderers/gpt_oss.py` — GPT-OSS renderers
 
 ---

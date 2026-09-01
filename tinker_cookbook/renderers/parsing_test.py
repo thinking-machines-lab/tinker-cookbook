@@ -9,6 +9,7 @@ from tinker_cookbook.renderers import (
     TextPart,
     ThinkingPart,
     format_content_as_string,
+    get_renderer,
     parse_content_blocks,
 )
 from tinker_cookbook.renderers.base import (
@@ -18,16 +19,6 @@ from tinker_cookbook.renderers.base import (
     _longest_matching_suffix_prefix,
     ensure_list,
 )
-from tinker_cookbook.renderers.deepseek_v3 import (
-    DeepSeekV3DisableThinkingRenderer,
-    DeepSeekV3ThinkingRenderer,
-)
-from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
-from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
-from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
-from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
-from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
-from tinker_cookbook.renderers.qwen3_8 import Qwen3_8DisableThinkingRenderer, Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import skip_if_deepseek_tokenizer_bug
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -348,25 +339,21 @@ def test_utf8_decoder_mixed_ascii_and_emoji():
 
 
 @pytest.mark.parametrize(
-    "model_name,renderer_cls,renderer_kwargs",
+    "model_name,renderer_name,has_thinking",
     [
-        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer, {}),
-        ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3DisableThinkingRenderer, {}),
-        (
-            "openai/gpt-oss-20b",
-            GptOssRenderer,
-            {"use_system_prompt": True, "reasoning_effort": "medium"},
-        ),
-        ("Qwen/Qwen3-8B", Qwen3Renderer, {}),
-        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer, {}),
-        ("Qwen/Qwen3.6-35B-A3B", Qwen3_5DisableThinkingRenderer, {}),
-        ("Qwen/Qwen3.8-27B", Qwen3_8Renderer, {}),
-        ("Qwen/Qwen3.8-27B", Qwen3_8DisableThinkingRenderer, {}),
-        ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer, {}),
-        ("moonshotai/Kimi-K2.5", KimiK25Renderer, {}),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", True),
+        ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", False),
+        ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning", True),
+        ("Qwen/Qwen3-8B", "qwen3", True),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5", True),
+        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", False),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning", True),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking", False),
+        ("moonshotai/Kimi-K2-Thinking", "kimi_k2", True),
+        ("moonshotai/Kimi-K2.5", "kimi_k25", True),
     ],
 )
-def test_thinking_generation_parse_correspondence(model_name, renderer_cls, renderer_kwargs):
+def test_thinking_generation_parse_correspondence(model_name, renderer_name, has_thinking):
     """Test that parse_response handles sampled output after thinking prefill.
 
     Pattern for thinking model tests:
@@ -378,14 +365,14 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
     """
     skip_if_deepseek_tokenizer_bug(model_name)
     tokenizer = get_tokenizer(model_name)
-    renderer = renderer_cls(tokenizer, **renderer_kwargs)
+    renderer = get_renderer(renderer_name, tokenizer)
 
     # User message
     user_message: Message = {"role": "user", "content": "What is 2+2?"}
 
     # Expected parsed message (what we want parse_response to produce)
     thinking: list[ContentPart] = []
-    if "DisableThinking" not in renderer_cls.__name__:
+    if has_thinking:
         thinking = [ThinkingPart(type="thinking", thinking="Let me work through this.")]
     expected_content = thinking + [TextPart(type="text", text="The answer is 42.")]
     expected_message: Message = {"role": "assistant", "content": expected_content}
@@ -422,7 +409,7 @@ def test_thinking_generation_parse_correspondence(model_name, renderer_cls, rend
 
     # Should recover the expected message
     assert ensure_list(parsed_message["content"]) == ensure_list(expected_message["content"]), (
-        f"Roundtrip failed: parsed_message != expected_message for {model_name} {renderer_cls.__name__}"
+        f"Roundtrip failed: parsed_message != expected_message for {model_name} {renderer_name}"
     )
 
     # Roundtrip: full conversation should match prompt + continuation

@@ -8,11 +8,11 @@ framing and unshifted SFT masks; cookbook owns final Datum construction through
 from __future__ import annotations
 
 import math
-from importlib import import_module
-from typing import TYPE_CHECKING
 
 import tinker
 import torch
+from tml_renderers import chat as tml_chat
+from tml_renderers import v0 as tml_v0
 
 from tinker_cookbook.renderers.base import (
     Message,
@@ -20,19 +20,10 @@ from tinker_cookbook.renderers.base import (
     TrainOnWhat,
 )
 from tinker_cookbook.renderers.tml import TmlRendererAdapter
-from tinker_cookbook.renderers.tml_conversions import TmlRenderInput
 from tinker_cookbook.tokenizer_utils import (
     SupportsTmlTokenizer,
-    TmlTokenizer,
     Tokenizer,
-    ensure_tml_renderers_importable,
 )
-
-if TYPE_CHECKING:
-    # tml_renderers is imported lazily at runtime; import it here for
-    # annotations only. It ships py.typed stubs, so pyright checks these types.
-    from tml_renderers import chat as tml_chat  # pyright: ignore[reportMissingImports]
-    from tml_renderers import v0 as tml_v0  # pyright: ignore[reportMissingImports]
 
 _MINIMUM_TORCH_VERSION = (2, 10)
 
@@ -61,75 +52,6 @@ def _validate_effort(effort: float) -> None:
         raise ValueError(f"thinking effort must be a finite number in [0, 1), got {effort}")
 
 
-def _ensure_model_end_sampling(
-    messages: list[tml_chat.Message],
-) -> list[tml_chat.Message]:
-    """Terminate every model turn with ``ModelEndSampling``.
-
-    ``ModelEndSampling`` is the stop-token supervision: without it the model
-    never learns where to end its turn, and rendering silently drops that
-    weighted token. ``from_oss_messages`` adds the boundary for dict inputs;
-    this makes native-message SFT input behave the same. Idempotent, so
-    callers that already include the boundary are unchanged.
-    """
-    chat = import_module("tml_renderers.chat")
-    result: list[tml_chat.Message] = []
-    for i, message in enumerate(messages):
-        result.append(message)
-        if message.author.kind != chat.AuthorKind.Model or isinstance(
-            message.content, chat.ModelEndSampling
-        ):
-            continue
-        # A model turn can span several messages (thinking, text, tool calls);
-        # only close the turn when the run of model messages ends.
-        next_message = messages[i + 1] if i + 1 < len(messages) else None
-        if next_message is None or next_message.author.kind != chat.AuthorKind.Model:
-            result.append(
-                chat.Message(
-                    content=chat.ModelEndSampling(),
-                    author=chat.Author(chat.AuthorKind.Model),
-                )
-            )
-    return result
-
-
-def _prepare_sft_input(messages: TmlRenderInput, effort: float) -> list[tml_chat.Message]:
-    """Normalize SFT input to native messages ready for ``render_for_sft``.
-
-    Expands ``OpenAIMessage`` inputs, terminates model turns with
-    ``ModelEndSampling``, and inserts the same effort message used by
-    completion rendering.
-    """
-    _validate_effort(effort)
-    chat = import_module("tml_renderers.chat")
-
-    native_messages = _ensure_model_end_sampling(chat.MessageList.from_messages(messages).messages)
-
-    # ThinkingEffort stores thousandths; tml-renderers owns its display rounding.
-    effort_message = chat.Message(
-        content=chat.ThinkingEffort(round(effort * 1000)),
-        author=chat.Author(chat.AuthorKind.System),
-    )
-    insertion_index = 0
-    while (
-        insertion_index < len(native_messages)
-        and native_messages[insertion_index].author.kind == chat.AuthorKind.System
-    ):
-        insertion_index += 1
-    native_messages.insert(insertion_index, effort_message)
-    return native_messages
-
-
-def _unwrap_tml_tokenizer(tokenizer: Tokenizer) -> TmlTokenizer:
-    if isinstance(tokenizer, SupportsTmlTokenizer):
-        return tokenizer.tml_tokenizer
-    raise TypeError(
-        "TmlV0Renderer requires the TML tokenizer adapter. "
-        "Use get_tokenizer('thinkingmachines/Inkling') or another "
-        "tml-renderers-backed model name."
-    )
-
-
 class TmlV0Renderer(TmlRendererAdapter):
     """Renderer adapter for Inkling models."""
 
@@ -138,12 +60,50 @@ class TmlV0Renderer(TmlRendererAdapter):
 
     def __init__(self, tokenizer: Tokenizer):
         _validate_torch_version()
-        ensure_tml_renderers_importable()
-        renderer: tml_v0.Renderer = import_module("tml_renderers.v0").Renderer(
-            _unwrap_tml_tokenizer(tokenizer)
-        )
+        if not isinstance(tokenizer, SupportsTmlTokenizer):
+            raise TypeError(
+                "TmlV0Renderer requires the TML tokenizer adapter. "
+                "Use get_tokenizer('thinkingmachines/Inkling') or another "
+                "tml-renderers-backed model name."
+            )
+        renderer = tml_v0.Renderer(tokenizer.tml_tokenizer)
         super().__init__(renderer)
         self.tokenizer = tokenizer
+
+    @staticmethod
+    def _prepare_sft_input(
+        messages: list[tml_chat.Message], effort: float
+    ) -> list[tml_chat.Message]:
+        """Terminate native model turns and add v0 reasoning-effort conditioning."""
+        _validate_effort(effort)
+        render_input: list[tml_chat.Message] = []
+        for index, message in enumerate(messages):
+            render_input.append(message)
+            if message.author.kind != tml_chat.AuthorKind.Model or isinstance(
+                message.content, tml_chat.ModelEndSampling
+            ):
+                continue
+            next_message = messages[index + 1] if index + 1 < len(messages) else None
+            if next_message is None or next_message.author.kind != tml_chat.AuthorKind.Model:
+                render_input.append(
+                    tml_chat.Message(
+                        content=tml_chat.ModelEndSampling(),
+                        author=tml_chat.Author(tml_chat.AuthorKind.Model),
+                    )
+                )
+
+        effort_message = tml_chat.Message(
+            content=tml_chat.ThinkingEffort(round(effort * 1000)),
+            author=tml_chat.Author(tml_chat.AuthorKind.System),
+        )
+        insertion_index = 0
+        while (
+            insertion_index < len(render_input)
+            and render_input[insertion_index].author.kind == tml_chat.AuthorKind.System
+        ):
+            insertion_index += 1
+        render_input.insert(insertion_index, effort_message)
+        return render_input
 
     @property
     def has_extension_property(self) -> bool:
@@ -164,7 +124,7 @@ class TmlV0Renderer(TmlRendererAdapter):
 
     def build_generation_prompt(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         role: Role = "assistant",
         prefill: str | None = None,
         effort: float = DEFAULT_EFFORT,
@@ -187,7 +147,7 @@ class TmlV0Renderer(TmlRendererAdapter):
 
     def build_supervised_examples(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
         effort: float = DEFAULT_EFFORT,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
@@ -202,11 +162,11 @@ class TmlV0Renderer(TmlRendererAdapter):
         specific effort level.
         """
         render_input = self._sft_render_input(messages, train_on_what)
-        return self._build_supervised_examples(_prepare_sft_input(render_input, effort))
+        return self._build_supervised_examples(self._prepare_sft_input(render_input, effort))
 
     def build_supervised_example(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
         effort: float = DEFAULT_EFFORT,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:

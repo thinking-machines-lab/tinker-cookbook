@@ -7,46 +7,10 @@ Avoid importing AutoTokenizer and PreTrainedTokenizer until runtime, because the
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import os
-import sys
 from collections.abc import Callable, Sequence
 from functools import cache
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Self, TypeAlias, cast, runtime_checkable
-
-# ---------------------------------------------------------------------------
-# ``tml_renderers`` import shim.
-#
-# The ``TML_RENDERERS_SOURCE_DIR`` escape hatch allows a source checkout to be
-# used without installing.
-# ---------------------------------------------------------------------------
-
-
-def ensure_tml_renderers_importable() -> None:
-    """Make ``tml_renderers`` importable, falling back to ``TML_RENDERERS_SOURCE_DIR``."""
-    if importlib.util.find_spec("tml_renderers") is not None:
-        return
-
-    if env_path := os.environ.get("TML_RENDERERS_SOURCE_DIR"):
-        source_dir = Path(env_path).expanduser()
-        if (source_dir / "tml_renderers").exists():
-            source_str = str(source_dir)
-            inserted = False
-            if source_str not in sys.path:
-                sys.path.insert(0, source_str)
-                inserted = True
-            if importlib.util.find_spec("tml_renderers") is not None:
-                return
-            if inserted:
-                sys.path.remove(source_str)
-
-    raise ModuleNotFoundError(
-        "Could not import dependency 'tml_renderers'. Reinstall tinker-cookbook, "
-        "or set TML_RENDERERS_SOURCE_DIR to a directory containing the tml_renderers package."
-    )
-
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
 
 if TYPE_CHECKING:
     # this import takes a few seconds, so avoid it on the module import when possible
@@ -99,21 +63,7 @@ class TmlRenderersTokenizerAdapter:
     eos_token_id: int | None = None
     tml_tokenizer: TmlRendererTokenizer
 
-    def __init__(self, name_or_path: str):
-        ensure_tml_renderers_importable()
-        tokenizers = importlib.import_module("tml_renderers.tokenizers")
-
-        self._initialize(tokenizers.o200k_base_chat(), name_or_path)
-
-    @classmethod
-    def from_tokenizer(
-        cls, tokenizer: TmlRendererTokenizer, name_or_path: str = "tml-renderers"
-    ) -> Self:
-        adapter = cls.__new__(cls)
-        adapter._initialize(tokenizer, name_or_path)
-        return adapter
-
-    def _initialize(self, tokenizer: TmlRendererTokenizer, name_or_path: str) -> None:
+    def __init__(self, tokenizer: TmlRendererTokenizer, name_or_path: str = "tml-renderers"):
         self.name_or_path = name_or_path
         self.tml_tokenizer = tokenizer
         if isinstance(tokenizer, TmlTokenizer):
@@ -225,8 +175,13 @@ def get_tokenizer(model_name: str) -> Tokenizer:
 
     base_model_name = model_name.split(":", 1)[0]
     if base_model_name.startswith("thinkingmachines/Inkling"):
+        from tml_renderers import tokenizers
+
         # Duck-typed facade (encode/decode/eos_token_id); not a PreTrainedTokenizer.
-        return cast(Tokenizer, TmlRenderersTokenizerAdapter(model_name))
+        return cast(
+            Tokenizer,
+            TmlRenderersTokenizerAdapter(tokenizers.o200k_base_chat(), model_name),
+        )
 
     return _get_hf_tokenizer(model_name)
 

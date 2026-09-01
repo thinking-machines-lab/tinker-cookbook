@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
-from typing import cast
+from collections.abc import Callable, Iterator, Sequence
+from typing import TypeAlias
 
 import tinker
 import torch
@@ -29,23 +29,29 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     TrainOnWhat,
 )
-from tinker_cookbook.renderers.tml_conversions import (
-    TmlRenderInput,
-    _cookbook_messages_to_sft_input,
-    _messages_to_render_input,
-    _native_messages,
-    _parsed_messages_to_cookbook,
+from tinker_cookbook.third_party.openai_compat import (
+    openai_messages_to_tinker,
+    tinker_messages_to_openai,
+    tool_specs_to_openai_tools,
 )
-from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
 from tinker_cookbook.tokenizer_utils import TmlRenderersTokenizerAdapter
+
+TmlRenderInput: TypeAlias = (
+    Sequence[tml_chat.Message] | Sequence[tml_chat.OpenAIMessage] | tml_chat.MessageList
+)
 
 
 class TmlRendererAdapter(Renderer):
     supports_streaming = True
 
-    def __init__(self, renderer: PublicRenderer):
+    def __init__(self, renderer: PublicRenderer, *, has_extension_property: bool = False):
         self._tml_renderer = renderer
-        super().__init__(TmlRenderersTokenizerAdapter.from_tokenizer(renderer.tokenizer))
+        self._has_extension_property = has_extension_property
+        super().__init__(TmlRenderersTokenizerAdapter(renderer.tokenizer))
+
+    @property
+    def has_extension_property(self) -> bool:
+        return self._has_extension_property
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         del message, ctx
@@ -62,16 +68,19 @@ class TmlRendererAdapter(Renderer):
 
     def _build_generation_prompt(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         role: Role,
         prefill: str | None,
         render_for_completion: Callable[
-            [TmlRenderInput], tuple[list[tml_chat.TokenSpan], PublicParser]
+            [list[tml_chat.Message]], tuple[list[tml_chat.TokenSpan], PublicParser]
         ],
     ) -> tinker.ModelInput:
         self._validate_generation_options(role, prefill)
+        render_input = tml_chat.MessageList.from_oss_messages(
+            tinker_messages_to_openai(messages)
+        ).messages
         try:
-            spans, _parser = render_for_completion(_messages_to_render_input(messages))
+            spans, _parser = render_for_completion(render_input)
         except ValueError as error:
             raise RendererError(str(error)) from error
         return token_spans_to_tinker_model_input(spans)
@@ -90,7 +99,7 @@ class TmlRendererAdapter(Renderer):
         )
 
     def _build_supervised_examples(
-        self, render_input: TmlRenderInput
+        self, render_input: list[tml_chat.Message]
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         try:
             examples = self._tml_renderer.render_for_sft(render_input)
@@ -106,16 +115,9 @@ class TmlRendererAdapter(Renderer):
 
     def _sft_render_input(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat,
-    ) -> TmlRenderInput:
-        if (native := _native_messages(messages)) is not None:
-            if train_on_what != TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-                raise NotImplementedError(
-                    "native tml_renderers messages require train_on_what=ALL_ASSISTANT_MESSAGES"
-                )
-            return native
-
+    ) -> list[tml_chat.Message]:
         supported = {
             TrainOnWhat.ALL_ASSISTANT_MESSAGES,
             TrainOnWhat.LAST_ASSISTANT_MESSAGE,
@@ -128,19 +130,32 @@ class TmlRendererAdapter(Renderer):
                 f"got {train_on_what.value!r}"
             )
 
-        cookbook_messages = cast("list[Message]", messages)
         training_mask = [
-            should_train
-            for _ctx, should_train in self._training_plan(cookbook_messages, train_on_what)
+            should_train for _ctx, should_train in self._training_plan(messages, train_on_what)
         ]
         if any(
             should_train and message["role"] != "assistant"
-            for message, should_train in zip(cookbook_messages, training_mask, strict=True)
+            for message, should_train in zip(messages, training_mask, strict=True)
         ):
             raise NotImplementedError(
                 "TML renderers cannot train non-assistant messages with CUSTOMIZED"
             )
-        return _cookbook_messages_to_sft_input(cookbook_messages, training_mask)
+        openai_messages = tml_chat.OpenAIMessage.from_oss_messages(
+            tinker_messages_to_openai(messages)
+        )
+        zero_training = tml_chat.TrainingMetadata(0.0, False)
+        render_input: list[tml_chat.Message] = []
+        for should_train, openai_message in zip(training_mask, openai_messages, strict=True):
+            for message in openai_message.to_messages():
+                if not should_train and message.author.kind == tml_chat.AuthorKind.Model:
+                    metadata = (
+                        message.message_metadata.copy(training_metadata=zero_training)
+                        if message.message_metadata is not None
+                        else tml_chat.MessageMetadata(training_metadata=zero_training)
+                    )
+                    message = message.copy(message_metadata=metadata)
+                render_input.append(message)
+        return render_input
 
     def build_supervised_examples(
         self,
@@ -197,6 +212,13 @@ class TmlRendererAdapter(Renderer):
         except ValueError:
             return ""
 
+    @staticmethod
+    def _parsed_message(parsed: list[tml_chat.Message]) -> Message | None:
+        if not parsed:
+            return None
+        openai_messages = tml_chat.MessageList(parsed).to_oss_messages()
+        return openai_messages_to_tinker(openai_messages)[-1]
+
     def parse_response(self, response: list[int]) -> tuple[Message, ParseTermination]:
         try:
             parsed = self._tml_renderer.parser_for_completion().parse_tokens(response)
@@ -211,7 +233,7 @@ class TmlRendererAdapter(Renderer):
             if not isinstance(message.content, tml_chat.ModelEndSampling)
         ]
         saw_stop = len(content) != len(parsed)
-        message = _parsed_messages_to_cookbook(content) if content else None
+        message = self._parsed_message(content)
         return (
             message or Message(role="assistant", content=self._decode_or_empty(response)),
             ParseTermination.STOP_SEQUENCE if saw_stop else ParseTermination.MALFORMED,
@@ -253,7 +275,7 @@ class TmlRendererAdapter(Renderer):
 
         if not emitted_header:
             yield StreamingMessageHeader(role="assistant")
-        yield _parsed_messages_to_cookbook(parsed) or Message(
+        yield self._parsed_message(parsed) or Message(
             role="assistant", content=self._decode_or_empty(response)
         )
 

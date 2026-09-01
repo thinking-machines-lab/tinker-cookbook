@@ -169,7 +169,6 @@ def test_qwen3_unterminated_tool_block_is_structural(model_name: str, renderer_n
 <tool_call>
 {"name": "search", "arguments": {"query": "weather<|im_end|>"""
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
-    renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens)
 
     assert termination == ParseTermination.MALFORMED
