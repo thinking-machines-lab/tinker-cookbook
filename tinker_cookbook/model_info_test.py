@@ -112,6 +112,29 @@ class TestNemotron3:
         ]
 
 
+class TestGlm5_3:
+    def test_glm5_3_uses_glm5_3_renderer(self):
+        assert get_recommended_renderer_name("zai-org/GLM-5.3") == "glm5_3_max_reasoning"
+
+    def test_glm5_3_peft_suffix_uses_glm5_3_renderer(self):
+        assert (
+            get_recommended_renderer_name("zai-org/GLM-5.3:peft:262144") == "glm5_3_max_reasoning"
+        )
+
+    def test_glm5_3_attributes(self):
+        attrs = get_model_attributes("zai-org/GLM-5.3")
+        assert attrs.organization == "zai-org"
+        assert attrs.version_str == "5.3"
+        assert attrs.size_str == "744B-A40B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("zai-org/GLM-5.3") == [
+            "glm5_3_max_reasoning",
+            "glm5_3_low_reasoning",
+            "glm5_3_high_reasoning",
+        ]
+
+
 class TestTmlModels:
     @pytest.mark.parametrize(
         "model_name",

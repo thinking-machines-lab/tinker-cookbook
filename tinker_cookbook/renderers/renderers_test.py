@@ -57,6 +57,7 @@ from tinker_cookbook.renderers.base import (
     has_thinking,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
+from tinker_cookbook.renderers.glm5_3 import Glm5_3Renderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
@@ -473,6 +474,7 @@ TOOL_CAPABLE_MODELS = {
     "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     "openai/gpt-oss-20b",
+    "zai-org/GLM-5.3",
 }
 
 
@@ -513,6 +515,8 @@ _HF_TEST_MODELS = [
         "nemotron3_disable_thinking",
         {"enable_thinking": False},
     ),
+    ("zai-org/GLM-5.3", None, {}),
+    ("zai-org/GLM-5.3", "glm5_3_low_reasoning", {"reasoning_effort": "low"}),
 ]
 
 # Models whose tool call format matches HF's apply_chat_template exactly.
@@ -529,6 +533,7 @@ _HF_TOOL_COMPATIBLE_MODELS = {
     "moonshotai/Kimi-K2-Thinking",
     "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+    "zai-org/GLM-5.3",
 }
 
 # Conversations for generation tests (end with user message or tool response)
@@ -626,6 +631,9 @@ def test_generation_against_hf_chat_templates(
 # Excluded:
 # - gpt-oss: analysis channel diverges from HF template
 # - Qwen/Qwen3-8B: HF template adds empty <think> blocks to non-thinking messages
+# - zai-org/GLM-5.3: supervised examples intentionally end with the turn terminator
+#   (<|user|>/<|observation|>), which the HF template does not emit; supervised HF
+#   comparisons live in glm5_3_test.py with explicit terminator handling
 # Format: (model_name, renderer_override, hf_kwargs) - same as _HF_TEST_MODELS
 _SUPERVISED_TEST_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct", None, {}),
@@ -855,6 +863,8 @@ def test_tool_call_supervised_rendering(model_name: str):
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", Nemotron3Renderer),
+        # GLM-5.3 is absent: its default preserves thinking (HF clear_thinking=False
+        # default); stripping is covered in glm5_3_test.py with an explicit True.
     ],
 )
 def test_strip_thinking_from_history_default(model_name: str, renderer_class):
@@ -890,6 +900,7 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", Nemotron3Renderer),
+        ("zai-org/GLM-5.3", Glm5_3Renderer),
     ],
 )
 def test_strip_thinking_from_history_false(model_name: str, renderer_class):
@@ -982,6 +993,8 @@ _CONSISTENCY_RENDERERS = [
     ("moonshotai/Kimi-K2.5", "kimi_k25"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
+    ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
+    ("zai-org/GLM-5.3", "glm5_3_low_reasoning"),
 ]
 
 # Conversations for the consistency test
@@ -1369,6 +1382,8 @@ def test_supervised_generation_parse_consistency(
         ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
+        ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
+        ("zai-org/GLM-5.3", "glm5_3_low_reasoning"),
     ],
 )
 def test_eot_parsing(model_name: str, renderer_name: str):
@@ -1394,6 +1409,10 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "kimi_k2": "<|im_end|>",
         "nemotron3": "<|im_end|>",
         "nemotron3_disable_thinking": "<|im_end|>",
+        # GLM-5.3 has no dedicated end-of-turn token; the model emits the next
+        # role token (<|user|> after a normal reply).
+        "glm5_3_max_reasoning": "<|user|>",
+        "glm5_3_low_reasoning": "<|user|>",
     }
     eot_token = eot_tokens.get(renderer_name)
     if eot_token is None:
@@ -1441,6 +1460,7 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
         ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
+        ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
     ],
 )
 def test_supervised_example_no_user_messages(model_name: str, renderer_name: str):
@@ -1613,6 +1633,20 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         "deepseek-ai/DeepSeek-V3.1",
         DeepSeekV3ThinkingRenderer,
         {"strip_thinking_from_history": False},
+        get_multiturn_thinking_and_tool_conversation,
+    ),
+    # GLM-5.3 default (strip_thinking_from_history=False) preserves thinking
+    (
+        "zai-org/GLM-5.3",
+        Glm5_3Renderer,
+        {},
+        get_multiturn_thinking_conversation,
+    ),
+    # GLM-5.3 default + tool calls
+    (
+        "zai-org/GLM-5.3",
+        Glm5_3Renderer,
+        {},
         get_multiturn_thinking_and_tool_conversation,
     ),
 ]

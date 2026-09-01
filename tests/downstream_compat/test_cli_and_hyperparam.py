@@ -18,6 +18,7 @@ from tinker_cookbook.model_info import (
     get_moonshot_info,
     get_nvidia_info,
     get_qwen_info,
+    get_zai_info,
 )
 
 
@@ -31,6 +32,7 @@ def _all_model_info_names() -> list[str]:
         get_gpt_oss_info,
         get_moonshot_info,
         get_nvidia_info,
+        get_zai_info,
     ):
         for name, attrs in getter().items():
             names.append(f"{attrs.organization}/{name}")
@@ -387,6 +389,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 3_424_256,
         (False, False, True): 207_168,
     },
+    "zai-org/GLM-5.3": {
+        (True, True, True): 124_437_632,
+        (True, True, False): 124_276_608,
+        (True, False, True): 121_517_312,
+        (True, False, False): 121_356_288,
+        (False, True, True): 3_081_344,
+        (False, True, False): 2_920_320,
+        (False, False, True): 161_024,
+    },
 }
 
 _TEST_RANKS = (1, 2, 4, 8, 16, 32, 64)
@@ -440,6 +451,22 @@ class TestHyperparamUtils:
         is added to the registry without measuring its LoRA param counts.
         """
         assert get_lora_param_count(model_name, lora_rank=1) > 0
+
+    @pytest.mark.parametrize("model_name", _all_model_info_names())
+    @pytest.mark.parametrize("suffix", [":peft:262144", ":peft:131072"])
+    def test_get_lora_param_count_ignores_variant_suffix(self, model_name: str, suffix: str):
+        """Variant-suffixed ids must resolve like the base name.
+
+        Some models are only served under a suffixed id (e.g.
+        ``zai-org/GLM-5.3:peft:262144``), so the suffixed name is the only one a
+        user can pass.
+        """
+        assert get_lora_param_count(model_name + suffix, lora_rank=1) == get_lora_param_count(
+            model_name, lora_rank=1
+        )
+
+    def test_get_lr_ignores_variant_suffix(self):
+        assert get_lr("Qwen/Qwen3-8B:peft:262144") == get_lr("Qwen/Qwen3-8B")
 
     @pytest.mark.parametrize(
         "flag_combo",

@@ -33,6 +33,7 @@ _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 _KIMI_K26 = ("kimi_k26", "kimi_k26_disable_thinking", "kimi_k26_preserve_thinking")
+_GLM5_3 = ("glm5_3_max_reasoning", "glm5_3_low_reasoning", "glm5_3_high_reasoning")
 _NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking", "nemotron3_preserve_thinking")
 _NEMOTRON3_SUPER = _NEMOTRON3 + ("nemotron3_low_thinking",)
 _NEMOTRON3_ULTRA = (
@@ -188,6 +189,20 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
 
 
 @cache
+def get_zai_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported Z.ai GLM models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"GLM-5.3"``) to its attributes.
+    """
+    org = "zai-org"
+    return {
+        "GLM-5.3": ModelAttributes(org, "5.3", "744B-A40B", True, _GLM5_3),
+    }
+
+
+@cache
 def get_nvidia_info() -> dict[str, ModelAttributes]:
     """Return model attributes for all supported NVIDIA Nemotron models.
 
@@ -247,6 +262,8 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_gpt_oss_info()[model_version_full]
     elif org == "moonshotai":
         return get_moonshot_info()[model_version_full]
+    elif org == "zai-org":
+        return get_zai_info()[model_version_full]
     elif org == "nvidia":
         return get_nvidia_info()[model_version_full]
     elif model_name.startswith("thinkingmachines/Inkling"):

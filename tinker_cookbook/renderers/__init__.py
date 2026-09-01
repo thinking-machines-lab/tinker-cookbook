@@ -142,6 +142,9 @@ def get_renderer(
             - ``"deepseekv3"``: DeepSeek V3 (defaults to non-thinking mode)
             - ``"deepseekv3_disable_thinking"``: DeepSeek V3 non-thinking (alias)
             - ``"deepseekv3_thinking"``: DeepSeek V3 thinking mode
+            - ``"glm5_3_max_reasoning"``: GLM-5.3 with max reasoning effort (HF default)
+            - ``"glm5_3_low_reasoning"``: GLM-5.3 with low reasoning effort (thinking cannot be disabled)
+            - ``"glm5_3_high_reasoning"``: GLM-5.3 with high reasoning effort
             - ``"kimi_k2"``: Kimi K2 Thinking format
             - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
             - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
@@ -202,6 +205,11 @@ def get_renderer(
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
+    )
+    from tinker_cookbook.renderers.glm5_3 import (
+        Glm5_3HighReasoningRenderer,
+        Glm5_3LowReasoningRenderer,
+        Glm5_3Renderer,
     )
     from tinker_cookbook.renderers.gpt_oss import GptOssRenderer
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
@@ -269,6 +277,12 @@ def get_renderer(
         renderer = DeepSeekV3DisableThinkingRenderer(tokenizer)
     elif name == "deepseekv3_thinking":
         renderer = DeepSeekV3ThinkingRenderer(tokenizer)
+    elif name == "glm5_3_max_reasoning":
+        renderer = Glm5_3Renderer(tokenizer)
+    elif name == "glm5_3_low_reasoning":
+        renderer = Glm5_3LowReasoningRenderer(tokenizer)
+    elif name == "glm5_3_high_reasoning":
+        renderer = Glm5_3HighReasoningRenderer(tokenizer)
     elif name == "kimi_k2":
         renderer = KimiK2Renderer(tokenizer)
     elif name == "kimi_k25":

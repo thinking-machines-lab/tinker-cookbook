@@ -76,7 +76,19 @@ def get_lora_lr_over_full_finetune_lr(model_name: str, lora_alpha: int = 32) -> 
     return 10.0
 
 
+def _base_model_name(model_name: str) -> str:
+    """Strip Tinker's variant suffix (e.g. ``:peft:262144``) from a model id.
+
+    The lookup tables below and HuggingFace repo ids are both keyed by the base
+    name, but callers pass whatever identifier the service accepts. Some models
+    are only served under a suffixed id (e.g. ``zai-org/GLM-5.3:peft:262144``),
+    so there is no bare name to fall back on. Mirrors ``model_info``.
+    """
+    return model_name.split(":", 1)[0]
+
+
 def _get_hidden_size(model_name: str) -> int:
+    model_name = _base_model_name(model_name)
     # Known hidden sizes for models in the lineup. This avoids network lookups and
     # works around configs that nest hidden_size under text_config (Qwen3.5/3.6,
     # Kimi-K2.6).
@@ -126,6 +138,8 @@ def _get_hidden_size(model_name: str) -> int:
         # OpenAI
         "openai/gpt-oss-120b": 2880,
         "openai/gpt-oss-20b": 2880,
+        # Z.ai GLM
+        "zai-org/GLM-5.3": 6144,
         # NVIDIA Nemotron
         "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": 8192,
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 4096,
@@ -223,6 +237,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "openai/gpt-oss-120b": {"mlp": 40_124_160, "attn": 746_496, "unembed": 203_968},
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
     "thinkingmachines/Inkling": {"mlp": 154_705_920, "attn": 3_424_256, "unembed": 207_168},
+    "zai-org/GLM-5.3": {"mlp": 121_356_288, "attn": 2_920_320, "unembed": 161_024},
 }
 
 
@@ -253,6 +268,7 @@ def get_lora_param_count(
     """
     if not (train_mlp or train_attn or train_unembed):
         raise ValueError("At least one of train_mlp, train_attn, or train_unembed must be True.")
+    model_name = _base_model_name(model_name)
     if model_name not in _LORA_PARAMS_PER_RANK_BY_COMPONENT:
         raise ConfigurationError(
             f"No LoRA parameter count baked in for {model_name!r}. "
@@ -285,6 +301,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     base_lr = 5e-05
     lora_multiplier = 10.0
 
+    model_name = _base_model_name(model_name)
     lr = base_lr * lora_multiplier if is_lora else base_lr
     if "llama" in model_name.lower():
         exponent_model = 0.781
@@ -295,6 +312,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
         "moonshotai/Kimi-K2.6",
+        "zai-org/GLM-5.3",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
@@ -323,7 +341,9 @@ def get_full_finetune_param_count(model_name: str) -> float:
         Total number of parameters as a float.
     """
     count = 0
-    for _name, shape in _list_param_shapes_from_safetensors_remote(model_name).items():
+    for _name, shape in _list_param_shapes_from_safetensors_remote(
+        _base_model_name(model_name)
+    ).items():
         count += np.prod(shape)
     return float(count)
 
