@@ -18,6 +18,7 @@ from tinker_cookbook.model_info import (
     get_moonshot_info,
     get_nvidia_info,
     get_qwen_info,
+    get_thinkingmachines_info,
     get_zai_info,
 )
 
@@ -32,6 +33,7 @@ def _all_model_info_names() -> list[str]:
         get_gpt_oss_info,
         get_moonshot_info,
         get_nvidia_info,
+        get_thinkingmachines_info,
         get_zai_info,
     ):
         for name, attrs in getter().items():
@@ -389,6 +391,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 3_424_256,
         (False, False, True): 207_168,
     },
+    "thinkingmachines/Inkling-Small": {
+        (True, True, True): 66_020_672,
+        (True, True, False): 65_815_552,
+        (True, False, True): 64_708_928,
+        (True, False, False): 64_503_808,
+        (False, True, True): 1_516_864,
+        (False, True, False): 1_311_744,
+        (False, False, True): 205_120,
+    },
     "zai-org/GLM-5.3": {
         (True, True, True): 124_437_632,
         (True, True, False): 124_276_608,
@@ -430,14 +441,14 @@ class TestHyperparamUtils:
         )
 
     def test_get_lr_returns_float(self):
-        lr = get_lr("Qwen/Qwen3.6-27B", is_lora=True)
+        lr = get_lr("Qwen/Qwen3-8B", is_lora=True)
         assert isinstance(lr, float)
         assert lr > 0
 
     def test_get_lora_param_count_rejects_all_false(self):
         with pytest.raises(ValueError):
             get_lora_param_count(
-                "Qwen/Qwen3.6-27B",
+                "Qwen/Qwen3-8B",
                 lora_rank=32,
                 train_mlp=False,
                 train_attn=False,

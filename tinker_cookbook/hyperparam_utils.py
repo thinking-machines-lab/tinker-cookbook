@@ -127,9 +127,6 @@ def _get_hidden_size(model_name: str) -> int:
         "Qwen/Qwen3.5-9B": 4096,
         "Qwen/Qwen3.5-9B-Base": 4096,
         "Qwen/Qwen3.5-4B": 2560,
-        # Qwen/Qwen3.5-9B and Qwen/Qwen3.5-9B-Base intentionally omitted —
-        # the values weren't independently verified. The fallback path fetches
-        # hidden_size from HF AutoConfig, which works for non-gated Qwen repos.
         # Qwen3.6 (same architecture family as Qwen3.5, hidden_size under text_config)
         "Qwen/Qwen3.6-27B": 5120,
         "Qwen/Qwen3.6-35B-A3B": 2048,
@@ -237,6 +234,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "openai/gpt-oss-120b": {"mlp": 40_124_160, "attn": 746_496, "unembed": 203_968},
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
     "thinkingmachines/Inkling": {"mlp": 154_705_920, "attn": 3_424_256, "unembed": 207_168},
+    "thinkingmachines/Inkling-Small": {"mlp": 64_503_808, "attn": 1_311_744, "unembed": 205_120},
     "zai-org/GLM-5.3": {"mlp": 121_356_288, "attn": 2_920_320, "unembed": 161_024},
 }
 
