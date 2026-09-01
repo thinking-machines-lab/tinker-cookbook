@@ -21,7 +21,6 @@ from tinker_cookbook.renderers import (
     get_renderer,
     tml_v0,
 )
-from tinker_cookbook.renderers.tml import TmlRenderInput
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import SupportsTmlTokenizer, get_tokenizer
 
@@ -344,54 +343,6 @@ def test_tool_declarations_emit_tool_declare_prefix() -> None:
     )
 
     assert _input_len(model_input) > 0
-
-
-def test_native_tml_renderers_inputs_are_accepted_and_terminated() -> None:
-    renderer = _renderer()
-    native_messages = [
-        tml_chat.Message(
-            content=tml_chat.Text("Say hello."),
-            author=tml_chat.Author(tml_chat.AuthorKind.User),
-            channel_enum=tml_chat.MessageChannel.Main,
-        ),
-        tml_chat.Message(
-            content=tml_chat.Text("Hello."),
-            author=tml_chat.Author(tml_chat.AuthorKind.Model),
-            channel_enum=tml_chat.MessageChannel.Main,
-        ),
-    ]
-    native_inputs: list[TmlRenderInput] = [
-        native_messages,
-        tml_chat.MessageList(native_messages),
-        tml_chat.OpenAIMessage.from_oss_messages(_messages()),
-    ]
-
-    for native_input in native_inputs:
-        model_input, weights = renderer.build_supervised_example(native_input)
-        assert _input_len(model_input) == len(weights)
-        assert float(weights.sum()) > 0
-
-    stop = tml_chat.Message(
-        content=tml_chat.ModelEndSampling(),
-        author=tml_chat.Author(tml_chat.AuthorKind.Model),
-    )
-    bare_input, bare_weights = renderer.build_supervised_example(native_messages)
-    explicit_input, explicit_weights = renderer.build_supervised_example([*native_messages, stop])
-
-    # The cookbook terminates model turns automatically, so omitting the
-    # explicit ModelEndSampling renders token-identically (including the
-    # weighted stop token).
-    assert bare_input.to_ints() == explicit_input.to_ints()
-    assert bare_weights.tolist() == explicit_weights.tolist()
-    assert float(bare_weights.sum()) > 0
-
-
-def test_selective_sft_modes_require_cookbook_dict_messages_for_masking() -> None:
-    renderer = _renderer()
-    openai_messages = tml_chat.OpenAIMessage.from_oss_messages(_messages())
-
-    with pytest.raises(NotImplementedError, match="selective train_on_what"):
-        renderer.build_supervised_example(openai_messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
 
 
 def test_extension_property_holds_multiturn() -> None:

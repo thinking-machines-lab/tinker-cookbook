@@ -247,19 +247,6 @@ def test_adapter_rejects_training_non_assistant_messages() -> None:
         )
 
 
-def test_adapter_rejects_selective_training_for_native_messages() -> None:
-    adapter = tml.TmlRendererAdapter(_Renderer())
-    native_messages = [
-        tml_chat.Message(
-            tml_chat.Text("answer"),
-            tml_chat.Author(tml_chat.AuthorKind.Model),
-        )
-    ]
-
-    with pytest.raises(NotImplementedError, match="native tml_renderers messages"):
-        adapter.build_supervised_example(native_messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
-
-
 def test_adapter_rejects_context_free_message_rendering() -> None:
     adapter = tml.TmlRendererAdapter(_Renderer())
 

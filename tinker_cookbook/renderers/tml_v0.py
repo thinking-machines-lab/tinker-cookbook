@@ -19,7 +19,7 @@ from tinker_cookbook.renderers.base import (
     Role,
     TrainOnWhat,
 )
-from tinker_cookbook.renderers.tml import TmlRendererAdapter, TmlRenderInput
+from tinker_cookbook.renderers.tml import TmlRendererAdapter
 from tinker_cookbook.tokenizer_utils import (
     SupportsTmlTokenizer,
     Tokenizer,
@@ -71,10 +71,11 @@ class TmlV0Renderer(TmlRendererAdapter):
         self.tokenizer = tokenizer
 
     @staticmethod
-    def _prepare_sft_input(messages: TmlRenderInput, effort: float) -> list[tml_chat.Message]:
+    def _prepare_sft_input(
+        messages: list[tml_chat.Message], effort: float
+    ) -> list[tml_chat.Message]:
         """Terminate native model turns and add v0 reasoning-effort conditioning."""
         _validate_effort(effort)
-        messages = tml_chat.MessageList.from_messages(messages).messages
         render_input: list[tml_chat.Message] = []
         for index, message in enumerate(messages):
             render_input.append(message)
@@ -123,7 +124,7 @@ class TmlV0Renderer(TmlRendererAdapter):
 
     def build_generation_prompt(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         role: Role = "assistant",
         prefill: str | None = None,
         effort: float = DEFAULT_EFFORT,
@@ -146,7 +147,7 @@ class TmlV0Renderer(TmlRendererAdapter):
 
     def build_supervised_examples(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
         effort: float = DEFAULT_EFFORT,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
@@ -165,7 +166,7 @@ class TmlV0Renderer(TmlRendererAdapter):
 
     def build_supervised_example(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
         effort: float = DEFAULT_EFFORT,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:

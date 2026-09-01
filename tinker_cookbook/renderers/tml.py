@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator, Sequence
-from typing import TypeAlias, cast
+from typing import TypeAlias
 
 import tinker
 import torch
@@ -68,43 +68,26 @@ class TmlRendererAdapter(Renderer):
 
     def _build_generation_prompt(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         role: Role,
         prefill: str | None,
         render_for_completion: Callable[
-            [TmlRenderInput], tuple[list[tml_chat.TokenSpan], PublicParser]
+            [list[tml_chat.Message]], tuple[list[tml_chat.TokenSpan], PublicParser]
         ],
     ) -> tinker.ModelInput:
         self._validate_generation_options(role, prefill)
-        render_input = self._native_messages(messages)
-        if render_input is None:
-            render_input = tml_chat.MessageList.from_oss_messages(
-                tinker_messages_to_openai(cast("list[Message]", messages))
-            ).messages
+        render_input = tml_chat.MessageList.from_oss_messages(
+            tinker_messages_to_openai(messages)
+        ).messages
         try:
             spans, _parser = render_for_completion(render_input)
         except ValueError as error:
             raise RendererError(str(error)) from error
         return token_spans_to_tinker_model_input(spans)
 
-    @staticmethod
-    def _native_messages(messages: object) -> list[tml_chat.Message] | None:
-        if isinstance(messages, tml_chat.MessageList):
-            return messages.messages
-        if (
-            isinstance(messages, Sequence)
-            and messages
-            and all(
-                isinstance(message, (tml_chat.Message, tml_chat.OpenAIMessage))
-                for message in messages
-            )
-        ):
-            return tml_chat.MessageList.from_messages(messages).messages
-        return None
-
     def build_generation_prompt(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         role: Role = "assistant",
         prefill: str | None = None,
     ) -> tinker.ModelInput:
@@ -116,7 +99,7 @@ class TmlRendererAdapter(Renderer):
         )
 
     def _build_supervised_examples(
-        self, render_input: TmlRenderInput
+        self, render_input: list[tml_chat.Message]
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         try:
             examples = self._tml_renderer.render_for_sft(render_input)
@@ -132,16 +115,9 @@ class TmlRendererAdapter(Renderer):
 
     def _sft_render_input(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat,
-    ) -> TmlRenderInput:
-        if (native := self._native_messages(messages)) is not None:
-            if train_on_what != TrainOnWhat.ALL_ASSISTANT_MESSAGES:
-                raise NotImplementedError(
-                    "native tml_renderers messages require train_on_what=ALL_ASSISTANT_MESSAGES"
-                )
-            return native
-
+    ) -> list[tml_chat.Message]:
         supported = {
             TrainOnWhat.ALL_ASSISTANT_MESSAGES,
             TrainOnWhat.LAST_ASSISTANT_MESSAGE,
@@ -154,20 +130,18 @@ class TmlRendererAdapter(Renderer):
                 f"got {train_on_what.value!r}"
             )
 
-        cookbook_messages = cast("list[Message]", messages)
         training_mask = [
-            should_train
-            for _ctx, should_train in self._training_plan(cookbook_messages, train_on_what)
+            should_train for _ctx, should_train in self._training_plan(messages, train_on_what)
         ]
         if any(
             should_train and message["role"] != "assistant"
-            for message, should_train in zip(cookbook_messages, training_mask, strict=True)
+            for message, should_train in zip(messages, training_mask, strict=True)
         ):
             raise NotImplementedError(
                 "TML renderers cannot train non-assistant messages with CUSTOMIZED"
             )
         openai_messages = tml_chat.OpenAIMessage.from_oss_messages(
-            tinker_messages_to_openai(cookbook_messages)
+            tinker_messages_to_openai(messages)
         )
         zero_training = tml_chat.TrainingMetadata(0.0, False)
         render_input: list[tml_chat.Message] = []
@@ -185,7 +159,7 @@ class TmlRendererAdapter(Renderer):
 
     def build_supervised_examples(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         return self._build_supervised_examples(self._sft_render_input(messages, train_on_what))
@@ -202,7 +176,7 @@ class TmlRendererAdapter(Renderer):
 
     def build_supervised_example(
         self,
-        messages: list[Message] | TmlRenderInput,
+        messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
         return self._single_supervised_example(
