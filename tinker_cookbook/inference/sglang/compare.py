@@ -50,7 +50,7 @@ import logging
 import math
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import aiohttp
 import tinker
@@ -58,7 +58,7 @@ import tinker
 from tinker_cookbook import model_info, renderers
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.inference.sglang.common import parse_adapter_spec
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ async def _tinker_score(
     return list(logprobs[: prompt.length + len(out_ids)])
 
 
-def _generation_prompt(base_model: str, tokenizer: object, prompt: str) -> tinker.ModelInput:
+def _generation_prompt(base_model: str, tokenizer: Tokenizer, prompt: str) -> tinker.ModelInput:
     """Tokenize one user turn, ready for generation.
 
     Prefers the cookbook renderer. Models the cookbook has no renderer for —
@@ -172,7 +172,7 @@ def _generation_prompt(base_model: str, tokenizer: object, prompt: str) -> tinke
     off-distribution — equally for Tinker and SGLang, so the distance between
     them stays meaningful.
     """
-    messages = [{"role": "user", "content": prompt}]
+    messages: list[renderers.Message] = [{"role": "user", "content": prompt}]
     try:
         renderer = renderers.get_renderer(
             model_info.get_recommended_renderer_name(base_model), tokenizer
@@ -182,7 +182,9 @@ def _generation_prompt(base_model: str, tokenizer: object, prompt: str) -> tinke
             "No cookbook renderer for %s; using the tokenizer's chat template instead.",
             base_model,
         )
-        encoded = tokenizer.apply_chat_template(  # type: ignore[attr-defined]
+        # This branch exists for tokenizers outside the cookbook's typed
+        # surface, so the call is deliberately untyped.
+        encoded = cast(Any, tokenizer).apply_chat_template(
             messages, tokenize=True, add_generation_prompt=True
         )
         ids = encoded if isinstance(encoded, list) else encoded["input_ids"]
@@ -398,7 +400,7 @@ async def run(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--base-model", required=True, help="HF model name or local directory")
     parser.add_argument(
         "--url", required=True, help="SGLang server URL, e.g. http://localhost:30000"

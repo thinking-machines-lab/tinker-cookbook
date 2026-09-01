@@ -144,7 +144,7 @@ def _declare_serving_targets(adapter_path: str) -> int:
     """Put the names SGLang resolves into target_modules, leaving weights alone."""
     config_file = Path(adapter_path) / "adapter_config.json"
     config = json.loads(config_file.read_text())
-    modules = list(config.get("target_modules") or [])
+    modules: list[str] = list(config.get("target_modules") or [])
     mapped = sorted({_SERVING_TARGET_NAMES.get(m, m) for m in modules})
     if mapped == sorted(modules):
         return 0
@@ -182,7 +182,7 @@ def prepare_adapter(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--base-model", required=True, help="HF model name or local directory")
     parser.add_argument(
         "--adapter",
