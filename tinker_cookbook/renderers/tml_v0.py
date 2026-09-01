@@ -21,10 +21,7 @@ from tinker_cookbook.renderers.base import (
     TrainOnWhat,
 )
 from tinker_cookbook.renderers.tml import TmlRendererAdapter
-from tinker_cookbook.renderers.tml_conversions import (
-    TmlRenderInput,
-    _cookbook_messages_to_sft_input,
-)
+from tinker_cookbook.renderers.tml_conversions import TmlRenderInput
 from tinker_cookbook.tokenizer_utils import (
     SupportsTmlTokenizer,
     TmlTokenizer,
@@ -217,7 +214,7 @@ class TmlV0Renderer(TmlRendererAdapter):
         until then, call this method directly to render a conversation at a
         specific effort level.
         """
-        render_input = _cookbook_messages_to_sft_input(messages, train_on_what)
+        render_input = self._sft_render_input(messages, train_on_what)
         return self._build_supervised_examples(_prepare_sft_input(render_input, effort))
 
     def build_supervised_example(

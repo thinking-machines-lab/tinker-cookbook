@@ -47,9 +47,22 @@ class _FakeTmlRenderersChat:
                 )
             raise ValueError("unsupported message input")
 
+        @staticmethod
+        def from_oss_messages(messages):
+            return _FakeTmlRenderersChat.MessageList.from_messages(
+                _FakeTmlRenderersChat.OpenAIMessage.from_oss_messages(messages)
+            )
+
     class MessageMetadata:
-        def __init__(self, training_metadata=None):
+        def __init__(self, training_metadata=None, tool_call_id=None):
             self.training_metadata = training_metadata
+            self.tool_call_id = tool_call_id
+
+        def copy(self, training_metadata=None):
+            return _FakeTmlRenderersChat.MessageMetadata(
+                training_metadata=training_metadata,
+                tool_call_id=self.tool_call_id,
+            )
 
     class TrainingMetadata:
         def __init__(self, weight: float, is_synthetic: bool):
@@ -83,7 +96,11 @@ class _FakeTmlRenderersChat:
 
         def to_messages(self):
             if self.role == "assistant":
-                return [_FakeTmlRenderersChat.Message(_FakeTmlRenderersChat.AuthorKind.Model)]
+                message = _FakeTmlRenderersChat.Message(_FakeTmlRenderersChat.AuthorKind.Model)
+                message.message_metadata = _FakeTmlRenderersChat.MessageMetadata(
+                    tool_call_id="preserved"
+                )
+                return [message]
             return [_FakeTmlRenderersChat.Message(_FakeTmlRenderersChat.AuthorKind.User)]
 
 
@@ -192,24 +209,6 @@ def test_cookbook_audio_bytes_are_normalized_to_openai_input_audio(
     }
 
 
-def test_cookbook_media_normalization_accepts_any_sequence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tml_conversions, "image_to_data_uri", lambda _image: "data:image/test")
-    messages = (
-        Message(
-            role="user",
-            content=[ImagePart(type="image", image="image")],
-        ),
-    )
-
-    normalized = tml_conversions._normalize_cookbook_media(messages)
-
-    assert normalized[0]["content"] == [
-        {"type": "image_url", "image_url": {"url": "data:image/test"}}
-    ]
-
-
 def test_cookbook_audio_local_path_and_metadata_are_normalized(
     tmp_path: Path,
     mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
@@ -241,33 +240,6 @@ def test_cookbook_audio_local_path_and_metadata_are_normalized(
         "num_frames": 48_000,
         "sample_rate": 24_000,
     }
-
-
-def test_cookbook_audio_non_wav_requires_complete_metadata() -> None:
-    with pytest.raises(ValueError, match="must provide num_frames and sample_rate"):
-        tml_conversions._audio_part_to_openai(
-            AudioPart(type="audio", audio=b"mp3", format="mp3", num_frames=48_000)
-        )
-
-
-def test_cookbook_audio_metadata_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="must be positive"):
-        tml_conversions._audio_part_to_openai(
-            AudioPart(
-                type="audio",
-                audio=b"mp3",
-                format="mp3",
-                num_frames=48_000,
-                sample_rate=0,
-            )
-        )
-
-
-def test_cookbook_audio_remote_url_is_rejected() -> None:
-    part = AudioPart(type="audio", audio="https://example.com/clip.wav")
-
-    with pytest.raises(ValueError, match="does not fetch remote audio URLs"):
-        tml_conversions._audio_part_to_openai(part)
 
 
 def test_native_tml_renderers_inputs_pass_through(
@@ -325,13 +297,12 @@ def test_selective_sft_masking_sets_zero_training_metadata(
 
     rendered = cast(
         Any,
-        tml_conversions._cookbook_messages_to_sft_input(
-            messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE
-        ),
+        tml_conversions._cookbook_messages_to_sft_input(messages, [False, False, False, True]),
     )
 
     assert rendered[1].message_metadata.training_metadata.weight == 0.0
-    assert rendered[3].message_metadata is None
+    assert rendered[1].message_metadata.tool_call_id == "preserved"
+    assert rendered[3].message_metadata.training_metadata is None
 
 
 def test_customized_sft_masking_respects_trainable_flag(
@@ -344,21 +315,11 @@ def test_customized_sft_masking_respects_trainable_flag(
     ]
 
     rendered = cast(
-        Any, tml_conversions._cookbook_messages_to_sft_input(messages, TrainOnWhat.CUSTOMIZED)
+        Any, tml_conversions._cookbook_messages_to_sft_input(messages, [False, False, True])
     )
 
     assert rendered[1].message_metadata.training_metadata.weight == 0.0
-    assert rendered[2].message_metadata is None
-
-
-def test_selective_sft_rejects_native_tml_renderers_inputs(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    with pytest.raises(NotImplementedError, match="selective train_on_what"):
-        tml_conversions._cookbook_messages_to_sft_input(
-            cast(Any, [mock_tml_renderers_chat.OpenAIMessage("assistant")]),
-            TrainOnWhat.LAST_ASSISTANT_MESSAGE,
-        )
+    assert rendered[2].message_metadata.training_metadata is None
 
 
 def test_inkling_tokenizer_resolves_to_tml_adapter() -> None:

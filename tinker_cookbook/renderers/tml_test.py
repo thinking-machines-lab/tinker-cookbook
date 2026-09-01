@@ -18,6 +18,7 @@ from tinker_cookbook.renderers.base import (
     StreamingThinkingDelta,
     TextPart,
     ThinkingPart,
+    TrainOnWhat,
 )
 from tinker_cookbook.renderers.tml_conversions import TmlRenderInput
 
@@ -185,6 +186,81 @@ def test_adapter_uses_public_sft_examples() -> None:
         tml_chat.AuthorKind.Model,
     ]
     assert isinstance(sft_input[-1].content, tml_chat.ModelEndSampling)
+
+
+def test_adapter_requires_explicit_customized_flags_on_every_message() -> None:
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+
+    with pytest.raises(ValueError, match="requires every message"):
+        adapter.build_supervised_example(
+            [
+                Message(role="user", content="question"),
+                Message(role="assistant", content="answer", trainable=True),
+            ],
+            TrainOnWhat.CUSTOMIZED,
+        )
+
+
+def test_adapter_rejects_trainable_flags_outside_customized() -> None:
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+
+    with pytest.raises(ValueError, match="require train_on_what"):
+        adapter.build_supervised_example(
+            [
+                Message(role="user", content="question", trainable=False),
+                Message(role="assistant", content="answer", trainable=True),
+            ]
+        )
+
+
+def test_adapter_last_assistant_requires_assistant_to_be_final_message() -> None:
+    public_renderer = _Renderer()
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
+
+    adapter.build_supervised_example(
+        [
+            Message(role="assistant", content="answer"),
+            Message(role="user", content="follow-up"),
+        ],
+        TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+    )
+
+    native_messages = cast(Sequence[tml_chat.Message], public_renderer.sft_input)
+    model_message = next(
+        message for message in native_messages if message.author.kind == tml_chat.AuthorKind.Model
+    )
+    assert model_message.message_metadata is not None
+    assert model_message.message_metadata.training_metadata is not None
+    assert model_message.message_metadata.training_metadata.weight == 0.0
+
+
+def test_adapter_rejects_training_non_assistant_messages() -> None:
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+
+    with pytest.raises(NotImplementedError, match="cannot train non-assistant"):
+        adapter.build_supervised_example(
+            [
+                Message(role="user", content="question", trainable=True),
+                Message(role="assistant", content="answer", trainable=False),
+            ],
+            TrainOnWhat.CUSTOMIZED,
+        )
+
+
+def test_adapter_rejects_selective_training_for_native_messages() -> None:
+    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    native_messages = [
+        tml_chat.Message(
+            tml_chat.Text("answer"),
+            tml_chat.Author(tml_chat.AuthorKind.Model),
+        )
+    ]
+
+    with pytest.raises(NotImplementedError, match="native tml_renderers messages"):
+        adapter.build_supervised_example(
+            cast(list[Message], native_messages),
+            TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+        )
 
 
 def test_adapter_rejects_context_free_message_rendering() -> None:

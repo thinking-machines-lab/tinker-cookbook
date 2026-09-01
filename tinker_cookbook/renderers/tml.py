@@ -33,6 +33,7 @@ from tinker_cookbook.renderers.tml_conversions import (
     TmlRenderInput,
     _cookbook_messages_to_sft_input,
     _messages_to_render_input,
+    _native_messages,
     _parsed_messages_to_cookbook,
 )
 from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
@@ -103,15 +104,50 @@ class TmlRendererAdapter(Renderer):
             for model_input, weights in converted
         ]
 
+    def _sft_render_input(
+        self,
+        messages: list[Message] | TmlRenderInput,
+        train_on_what: TrainOnWhat,
+    ) -> TmlRenderInput:
+        if (native := _native_messages(messages)) is not None:
+            if train_on_what != TrainOnWhat.ALL_ASSISTANT_MESSAGES:
+                raise NotImplementedError(
+                    "native tml_renderers messages require train_on_what=ALL_ASSISTANT_MESSAGES"
+                )
+            return native
+
+        supported = {
+            TrainOnWhat.ALL_ASSISTANT_MESSAGES,
+            TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+            TrainOnWhat.CUSTOMIZED,
+        }
+        if train_on_what not in supported:
+            raise NotImplementedError(
+                "TML renderer adapters support ALL_ASSISTANT_MESSAGES, "
+                "LAST_ASSISTANT_MESSAGE, and CUSTOMIZED; "
+                f"got {train_on_what.value!r}"
+            )
+
+        cookbook_messages = cast("list[Message]", messages)
+        training_mask = [
+            should_train
+            for _ctx, should_train in self._training_plan(cookbook_messages, train_on_what)
+        ]
+        if any(
+            should_train and message["role"] != "assistant"
+            for message, should_train in zip(cookbook_messages, training_mask, strict=True)
+        ):
+            raise NotImplementedError(
+                "TML renderers cannot train non-assistant messages with CUSTOMIZED"
+            )
+        return _cookbook_messages_to_sft_input(cookbook_messages, training_mask)
+
     def build_supervised_examples(
         self,
         messages: list[Message],
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
-        render_input = cast(
-            TmlRenderInput, _cookbook_messages_to_sft_input(messages, train_on_what)
-        )
-        return self._build_supervised_examples(render_input)
+        return self._build_supervised_examples(self._sft_render_input(messages, train_on_what))
 
     @staticmethod
     def _single_supervised_example(

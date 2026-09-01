@@ -94,6 +94,8 @@ class SupportsTmlTokenizer(Protocol):
 class TmlRenderersTokenizerAdapter:
     """Small tokenizer facade for ``tml_renderers`` models used through cookbook."""
 
+    bos_token: str | None
+    eos_token: str | None
     eos_token_id: int | None = None
     tml_tokenizer: TmlRendererTokenizer
 
@@ -114,14 +116,14 @@ class TmlRenderersTokenizerAdapter:
     def _initialize(self, tokenizer: TmlRendererTokenizer, name_or_path: str) -> None:
         self.name_or_path = name_or_path
         self.tml_tokenizer = tokenizer
-        self.bos_token = getattr(tokenizer, "bos_token", None)
-        self.eos_token = getattr(tokenizer, "eos_token", None)
-        self.eos_token_id = None
         if isinstance(tokenizer, TmlTokenizer):
-            try:
-                self.eos_token_id = int(tokenizer.encode_special(tokenizer.eos_token))
-            except Exception:
-                self.eos_token_id = None
+            self.bos_token = tokenizer.bos_token
+            self.eos_token = tokenizer.eos_token
+            self.eos_token_id = int(tokenizer.encode_special(tokenizer.eos_token))
+        else:
+            self.bos_token = None
+            self.eos_token = None
+            self.eos_token_id = None
 
     def encode(self, text: str, add_special_tokens: bool = False, **_: Any) -> list[int]:
         if add_special_tokens:
