@@ -15,19 +15,21 @@ from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
 # Models that don't require special access / are commonly available in CI.
 # Each entry is (renderer_name, model_name).
-_TEXT_RENDERERS = [
+_PICKLE_RENDERERS = [
     ("role_colon", "Qwen/Qwen3.5-9B-Base"),
     ("llama3", "meta-llama/Llama-3.1-8B-Instruct"),
     ("qwen3", "Qwen/Qwen3-8B"),
     ("qwen3_disable_thinking", "Qwen/Qwen3-8B"),
     ("qwen3_instruct", "Qwen/Qwen3-8B"),
+    ("qwen3_vl", "Qwen/Qwen3-8B"),
+    ("qwen3_vl_instruct", "Qwen/Qwen3-8B"),
     ("deepseekv3", "deepseek-ai/DeepSeek-V3-0324"),
     ("deepseekv3_disable_thinking", "deepseek-ai/DeepSeek-V3-0324"),
     ("deepseekv3_thinking", "deepseek-ai/DeepSeek-V3-0324"),
 ]
 
 
-@pytest.fixture(params=_TEXT_RENDERERS, ids=[r[0] for r in _TEXT_RENDERERS])
+@pytest.fixture(params=_PICKLE_RENDERERS, ids=[r[0] for r in _PICKLE_RENDERERS])
 def renderer_and_model(request: pytest.FixtureRequest) -> tuple[str, str]:
     return request.param
 
