@@ -135,23 +135,54 @@ class TestGlm5_3:
         ]
 
 
-class TestTmlModels:
-    @pytest.mark.parametrize(
-        "model_name",
-        [
-            "thinkingmachines/Inkling",
-            "thinkingmachines/Inkling:peft:131072",
-        ],
-    )
-    def test_tml_renderers_models_use_tml_v0_renderer(self, model_name: str):
-        assert get_recommended_renderer_name(model_name) == "tml_v0"
+class TestInkling:
+    """Inkling models are rendered by the standalone tml-renderers package rather
+    than a cookbook renderer, and are the only lineup members taking audio input."""
 
-    def test_inkling_attributes_route_to_tml_renderers(self):
+    def test_inkling_uses_tml_v0_renderer(self):
+        assert get_recommended_renderer_name("thinkingmachines/Inkling") == "tml_v0"
+
+    def test_inkling_peft_suffix_uses_tml_v0_renderer(self):
+        assert get_recommended_renderer_name("thinkingmachines/Inkling:peft:262144") == "tml_v0"
+
+    def test_inkling_attributes(self):
         attrs = get_model_attributes("thinkingmachines/Inkling")
+        assert attrs.organization == "thinkingmachines"
+        assert attrs.version_str == "1"
+        assert attrs.size_str == "975B-A41B"
         assert attrs.is_chat is True
         assert attrs.is_vl is True
         assert attrs.is_audio_in is True
-        assert attrs.recommended_renderers == ("tml_v0",)
+        assert get_recommended_renderer_names("thinkingmachines/Inkling") == ["tml_v0"]
+
+    def test_inkling_small_uses_tml_v0_renderer(self):
+        assert get_recommended_renderer_name("thinkingmachines/Inkling-Small") == "tml_v0"
+
+    def test_inkling_small_peft_suffix_uses_tml_v0_renderer(self):
+        assert (
+            get_recommended_renderer_name("thinkingmachines/Inkling-Small:peft:262144") == "tml_v0"
+        )
+
+    def test_inkling_small_attributes(self):
+        attrs = get_model_attributes("thinkingmachines/Inkling-Small")
+        assert attrs.organization == "thinkingmachines"
+        assert attrs.version_str == "1"
+        assert attrs.size_str == "276B-A12B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is True
+        assert get_recommended_renderer_names("thinkingmachines/Inkling-Small") == ["tml_v0"]
+
+    def test_untabled_inkling_id_falls_back_to_prefix_defaults(self):
+        """An Inkling id with no table entry still resolves, so a later addition
+        to the lineup works before it is tabled instead of raising.
+        """
+        attrs = get_model_attributes("thinkingmachines/Inkling-2")
+        assert attrs.organization == "thinkingmachines"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is True
+        assert get_recommended_renderer_names("thinkingmachines/Inkling-2") == ["tml_v0"]
 
 
 class TestWarnIfRendererNotRecommended:

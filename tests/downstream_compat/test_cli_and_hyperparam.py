@@ -18,17 +18,14 @@ from tinker_cookbook.model_info import (
     get_moonshot_info,
     get_nvidia_info,
     get_qwen_info,
+    get_thinkingmachines_info,
     get_zai_info,
 )
-
-# Inkling models have no ``model_info`` getter — ``get_model_attributes`` matches
-# them by prefix — so they have to be listed here to get the same coverage.
-_INKLING_NAMES = ["thinkingmachines/Inkling", "thinkingmachines/Inkling-Small"]
 
 
 def _all_model_info_names() -> list[str]:
     """Every model registered in ``model_info``, as ``org/name`` HF IDs."""
-    names: list[str] = list(_INKLING_NAMES)
+    names: list[str] = []
     for getter in (
         get_llama_info,
         get_qwen_info,
@@ -36,6 +33,7 @@ def _all_model_info_names() -> list[str]:
         get_gpt_oss_info,
         get_moonshot_info,
         get_nvidia_info,
+        get_thinkingmachines_info,
         get_zai_info,
     ):
         for name, attrs in getter().items():

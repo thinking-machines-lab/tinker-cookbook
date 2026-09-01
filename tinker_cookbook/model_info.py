@@ -227,6 +227,25 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
     }
 
 
+@cache
+def get_thinkingmachines_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported Thinking Machines Inkling models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"Inkling-Small"``) to its attributes.
+    """
+    org = "thinkingmachines"
+    return {
+        "Inkling": ModelAttributes(
+            org, "1", "975B-A41B", True, _TML_V0, is_vl=True, is_audio_in=True
+        ),
+        "Inkling-Small": ModelAttributes(
+            org, "1", "276B-A12B", True, _TML_V0, is_vl=True, is_audio_in=True
+        ),
+    }
+
+
 def get_model_attributes(model_name: str) -> ModelAttributes:
     """Get model metadata by name.
 
@@ -268,7 +287,11 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_nvidia_info()[model_version_full]
     elif model_name.startswith("thinkingmachines/Inkling"):
         # Inkling models are rendered by the standalone tml-renderers package.
-        # Version/size parsing is TBD; use the full model version for now.
+        if model_version_full in get_thinkingmachines_info():
+            return get_thinkingmachines_info()[model_version_full]
+        # Any ``Inkling*`` id without a table entry is assumed to share the renderer
+        # and modality support, so fall back to defaults rather than raising. Size
+        # and version are unknown in that case; use the model version for both.
         return ModelAttributes(
             organization=org,
             version_str=model_version_full,
