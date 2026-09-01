@@ -2,12 +2,121 @@
 
 from __future__ import annotations
 
-from tinker_cookbook.renderers.base import ToolCall, ToolSpec
+from pathlib import Path
+
+import pytest
+
+from tinker_cookbook.renderers.base import (
+    AudioPart,
+    ImagePart,
+    Message,
+    ToolCall,
+    ToolSpec,
+)
 from tinker_cookbook.third_party.openai_compat import (
     openai_messages_to_tinker,
     openai_tools_to_tinker,
+    tinker_messages_to_openai,
     tool_specs_to_openai_tools,
 )
+
+
+class TestTinkerMessagesToOpenAI:
+    def test_serializes_typed_tool_calls(self) -> None:
+        messages = [
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        id="call_weather",
+                        function=ToolCall.FunctionBody(
+                            name="get_weather", arguments='{"city": "SF"}'
+                        ),
+                    )
+                ],
+            )
+        ]
+
+        converted = tinker_messages_to_openai(messages)
+
+        assert converted[0]["tool_calls"] == [
+            {
+                "type": "function",
+                "id": "call_weather",
+                "function": {"name": "get_weather", "arguments": '{"city": "SF"}'},
+            }
+        ]
+
+    def test_converts_images_in_any_message_sequence(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "tinker_cookbook.third_party.openai_compat.image_to_data_uri",
+            lambda _image: "data:image/test",
+        )
+        messages = (Message(role="user", content=[ImagePart(type="image", image="image")]),)
+
+        converted = tinker_messages_to_openai(messages)
+
+        assert converted[0]["content"] == [
+            {"type": "image_url", "image_url": {"url": "data:image/test"}}
+        ]
+
+    def test_reads_local_audio_and_preserves_metadata(self, tmp_path: Path) -> None:
+        audio = b"not-really-mp3"
+        path = tmp_path / "clip.mp3"
+        path.write_bytes(audio)
+        messages = [
+            Message(
+                role="user",
+                content=[
+                    AudioPart(
+                        type="audio",
+                        audio=str(path),
+                        num_frames=48_000,
+                        sample_rate=24_000,
+                    )
+                ],
+            )
+        ]
+
+        converted = tinker_messages_to_openai(messages)
+
+        assert converted[0]["content"][0]["input_audio"] == {
+            "data": "bm90LXJlYWxseS1tcDM=",
+            "format": "mp3",
+            "num_frames": 48_000,
+            "sample_rate": 24_000,
+        }
+
+    @pytest.mark.parametrize(
+        ("part", "error"),
+        [
+            (
+                AudioPart(type="audio", audio=b"mp3", format="mp3", num_frames=48_000),
+                "must provide num_frames and sample_rate",
+            ),
+            (
+                AudioPart(
+                    type="audio",
+                    audio=b"mp3",
+                    format="mp3",
+                    num_frames=48_000,
+                    sample_rate=0,
+                ),
+                "must be positive",
+            ),
+            (
+                AudioPart(type="audio", audio="https://example.com/clip.wav"),
+                "does not fetch remote audio URLs",
+            ),
+        ],
+    )
+    def test_rejects_invalid_audio(self, part: AudioPart, error: str) -> None:
+        messages = [Message(role="user", content=[part])]
+
+        with pytest.raises(ValueError, match=error):
+            tinker_messages_to_openai(messages)
+
 
 # ---------------------------------------------------------------------------
 # openai_messages_to_tinker
