@@ -8,9 +8,8 @@ framing and unshifted SFT masks; cookbook owns final Datum construction through
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 from importlib import import_module
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import tinker
 import torch
@@ -104,20 +103,7 @@ def _prepare_sft_input(messages: TmlRenderInput, effort: float) -> list[tml_chat
     _validate_effort(effort)
     chat = import_module("tml_renderers.chat")
 
-    # isinstance against the lazily imported classes can't narrow for pyright,
-    # so the checked branches restate the types with casts.
-    source: Sequence[tml_chat.Message | tml_chat.OpenAIMessage]
-    if isinstance(messages, chat.MessageList):
-        source = cast("tml_chat.MessageList", messages).messages
-    else:
-        source = cast("Sequence[tml_chat.Message | tml_chat.OpenAIMessage]", messages)
-    native_messages: list[tml_chat.Message] = []
-    for message in source:
-        if isinstance(message, chat.OpenAIMessage):
-            native_messages.extend(cast("tml_chat.OpenAIMessage", message).to_messages())
-        else:
-            native_messages.append(cast("tml_chat.Message", message))
-    native_messages = _ensure_model_end_sampling(native_messages)
+    native_messages = _ensure_model_end_sampling(chat.MessageList.from_messages(messages).messages)
 
     # ThinkingEffort stores thousandths; tml-renderers owns its display rounding.
     effort_message = chat.Message(
@@ -148,13 +134,13 @@ class TmlV0Renderer(TmlRendererAdapter):
     """Renderer adapter for Inkling models."""
 
     supports_streaming = False
+    _tml_renderer: tml_v0.Renderer
 
     def __init__(self, tokenizer: Tokenizer):
         _validate_torch_version()
         ensure_tml_renderers_importable()
-        renderer = cast(
-            "tml_v0.Renderer",
-            import_module("tml_renderers.v0").Renderer(_unwrap_tml_tokenizer(tokenizer)),
+        renderer: tml_v0.Renderer = import_module("tml_renderers.v0").Renderer(
+            _unwrap_tml_tokenizer(tokenizer)
         )
         super().__init__(renderer)
         self.tokenizer = tokenizer
@@ -190,12 +176,13 @@ class TmlV0Renderer(TmlRendererAdapter):
         ``tml-renderers``.
         """
         _validate_effort(effort)
-        renderer = cast("tml_v0.Renderer", self._tml_renderer)
         return self._build_generation_prompt(
             messages,
             role,
             prefill,
-            lambda render_input: renderer.render_for_completion_with_effort(render_input, effort),
+            lambda render_input: self._tml_renderer.render_for_completion_with_effort(
+                render_input, effort
+            ),
         )
 
     def build_supervised_examples(

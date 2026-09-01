@@ -9,13 +9,12 @@ from __future__ import annotations
 import base64
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from urllib.parse import unquote, urlparse
 
 from tinker_cookbook.image_processing_utils import image_to_data_uri
 from tinker_cookbook.renderers.base import (
     AudioPart,
-    ImagePart,
     Message,
     ToolCall,
     ToolSpec,
@@ -130,12 +129,14 @@ def tinker_messages_to_openai(messages: Sequence[Message]) -> list[dict[str, Any
             converted_content: list[Any] = []
             for part in content:
                 if part["type"] == "image":
-                    image = cast(ImagePart, part)["image"]
                     converted_content.append(
-                        {"type": "image_url", "image_url": {"url": image_to_data_uri(image)}}
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_to_data_uri(part["image"])},
+                        }
                     )
                 elif part["type"] == "audio":
-                    converted_content.append(_audio_part_to_openai(cast(AudioPart, part)))
+                    converted_content.append(_audio_part_to_openai(part))
                 else:
                     converted_content.append(part)
             converted["content"] = converted_content

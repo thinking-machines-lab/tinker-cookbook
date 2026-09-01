@@ -5,11 +5,11 @@ from typing import TypeAlias, cast
 
 from tml_renderers import chat as tml_chat
 
-from tinker_cookbook.renderers.base import (
-    Message,
-    ToolCall,
+from tinker_cookbook.renderers.base import Message
+from tinker_cookbook.third_party.openai_compat import (
+    openai_messages_to_tinker,
+    tinker_messages_to_openai,
 )
-from tinker_cookbook.third_party.openai_compat import tinker_messages_to_openai
 
 TmlRenderInput: TypeAlias = (
     Sequence[tml_chat.Message] | Sequence[tml_chat.OpenAIMessage] | tml_chat.MessageList
@@ -69,16 +69,4 @@ def _parsed_messages_to_cookbook(parsed: list[tml_chat.Message]) -> Message | No
     if not parsed:
         return None
     openai_dicts = tml_chat.MessageList(parsed).to_oss_messages()
-    message = dict(openai_dicts[-1])
-    if tool_calls := message.get("tool_calls"):
-        message["tool_calls"] = [
-            ToolCall(
-                id=tool_call.get("id"),
-                function=ToolCall.FunctionBody(
-                    name=tool_call["function"]["name"],
-                    arguments=tool_call["function"]["arguments"],
-                ),
-            )
-            for tool_call in tool_calls
-        ]
-    return Message(**message)
+    return openai_messages_to_tinker(openai_dicts)[-1]
