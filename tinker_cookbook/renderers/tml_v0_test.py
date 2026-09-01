@@ -7,6 +7,9 @@ from typing import Any, cast
 import pytest
 import tinker
 from PIL import Image
+from tml_renderers import chat as tml_chat
+from tml_renderers import v0 as public_tml_v0
+from tml_renderers.tinker import token_spans_to_tinker_model_input
 
 from tinker_cookbook.renderers import (
     AudioPart,
@@ -19,15 +22,7 @@ from tinker_cookbook.renderers import (
     tml_v0,
 )
 from tinker_cookbook.supervised.data import conversation_to_datum
-from tinker_cookbook.tokenizer_utils import ensure_tml_renderers_importable, get_tokenizer
-
-
-def _require_tml_renderers() -> None:
-    ensure_tml_renderers_importable()
-    chat = tml_v0.import_module("tml_renderers.chat")
-    __import__("tml_renderers.v0")
-    __import__("tml_renderers.tinker")
-    assert hasattr(chat, "OpenAIMessage")
+from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 
 def _messages() -> list[Message]:
@@ -39,7 +34,6 @@ def _messages() -> list[Message]:
 
 
 def _renderer() -> tml_v0.TmlV0Renderer:
-    _require_tml_renderers()
     tokenizer = get_tokenizer("thinkingmachines/Inkling")
     return cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
 
@@ -65,7 +59,6 @@ def test_validate_torch_version_rejects_unsupported_version(
 
 
 def test_inkling_tokenizer_resolves_to_tml_adapter() -> None:
-    _require_tml_renderers()
     tokenizer = get_tokenizer("thinkingmachines/Inkling")
 
     assert tokenizer.name_or_path == "thinkingmachines/Inkling"
@@ -222,7 +215,6 @@ def test_image_path_builds_tinker_chunk() -> None:
 
 
 def test_openai_audio_path_builds_tinker_chunk(tmp_path: Path) -> None:
-    _require_tml_renderers()
     dmel_chunk_type = getattr(tinker.types, "DmelChunk", None)
     if dmel_chunk_type is None:
         pytest.skip("DmelChunk is unavailable; please upgrade the Tinker SDK")
@@ -295,33 +287,27 @@ def test_tool_calls_are_accepted_through_oss_messages() -> None:
 
 
 def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
-    _require_tml_renderers()
-    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
-    tml_v0_module = cast(Any, tml_v0.import_module("tml_renderers.v0"))
-
     renderer = _renderer()
-    tml_renderer = tml_v0_module.Renderer(renderer.tokenizer.tml_tokenizer)
-    tool_message = chat.Message(
-        content=chat.InvokeTool(
-            chat.StructuredToolCall(
+    tml_renderer = public_tml_v0.Renderer(renderer.tokenizer.tml_tokenizer)
+    tool_message = tml_chat.Message(
+        content=tml_chat.InvokeTool(
+            tml_chat.StructuredToolCall(
                 name="get_weather",
-                args=[chat.ToolArg("city", '"San Francisco"')],
+                args=[tml_chat.ToolArg("city", '"San Francisco"')],
                 tool_call_id="call_weather",
             )
         ),
-        author=chat.Author(chat.AuthorKind.Model),
-        channel_enum=chat.MessageChannel.Commentary,
+        author=tml_chat.Author(tml_chat.AuthorKind.Model),
+        channel_enum=tml_chat.MessageChannel.Commentary,
     )
 
-    stop_message = chat.Message(
-        content=chat.ModelEndSampling(),
-        author=chat.Author(chat.AuthorKind.Model),
-        channel_enum=chat.MessageChannel.Main,
+    stop_message = tml_chat.Message(
+        content=tml_chat.ModelEndSampling(),
+        author=tml_chat.Author(tml_chat.AuthorKind.Model),
+        channel_enum=tml_chat.MessageChannel.Main,
     )
     spans, _ = tml_renderer.render_for_completion([tool_message, stop_message])
-    model_input = tml_v0.import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(
-        spans
-    )
+    model_input = token_spans_to_tinker_model_input(spans)
     renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(model_input.to_ints())
 
@@ -364,20 +350,17 @@ def test_tool_declarations_emit_tool_declare_prefix() -> None:
 
 
 def test_native_tml_renderers_messages_are_accepted_directly() -> None:
-    _require_tml_renderers()
-    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
-
     renderer = _renderer()
     messages = [
-        chat.Message(
-            content=chat.Text("Say hello."),
-            author=chat.Author(chat.AuthorKind.User),
-            channel_enum=chat.MessageChannel.Main,
+        tml_chat.Message(
+            content=tml_chat.Text("Say hello."),
+            author=tml_chat.Author(tml_chat.AuthorKind.User),
+            channel_enum=tml_chat.MessageChannel.Main,
         ),
-        chat.Message(
-            content=chat.Text("Hello."),
-            author=chat.Author(chat.AuthorKind.Model),
-            channel_enum=chat.MessageChannel.Main,
+        tml_chat.Message(
+            content=tml_chat.Text("Hello."),
+            author=tml_chat.Author(tml_chat.AuthorKind.Model),
+            channel_enum=tml_chat.MessageChannel.Main,
         ),
     ]
 
@@ -388,25 +371,22 @@ def test_native_tml_renderers_messages_are_accepted_directly() -> None:
 
 
 def test_native_sft_input_gets_model_end_sampling_by_default() -> None:
-    _require_tml_renderers()
-    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
-
     renderer = _renderer()
     native = [
-        chat.Message(
-            content=chat.Text("Say hello."),
-            author=chat.Author(chat.AuthorKind.User),
-            channel_enum=chat.MessageChannel.Main,
+        tml_chat.Message(
+            content=tml_chat.Text("Say hello."),
+            author=tml_chat.Author(tml_chat.AuthorKind.User),
+            channel_enum=tml_chat.MessageChannel.Main,
         ),
-        chat.Message(
-            content=chat.Text("Hello."),
-            author=chat.Author(chat.AuthorKind.Model),
-            channel_enum=chat.MessageChannel.Main,
+        tml_chat.Message(
+            content=tml_chat.Text("Hello."),
+            author=tml_chat.Author(tml_chat.AuthorKind.Model),
+            channel_enum=tml_chat.MessageChannel.Main,
         ),
     ]
-    stop = chat.Message(
-        content=chat.ModelEndSampling(),
-        author=chat.Author(chat.AuthorKind.Model),
+    stop = tml_chat.Message(
+        content=tml_chat.ModelEndSampling(),
+        author=tml_chat.Author(tml_chat.AuthorKind.Model),
     )
 
     bare_input, bare_weights = renderer.build_supervised_example(native)
@@ -421,11 +401,8 @@ def test_native_sft_input_gets_model_end_sampling_by_default() -> None:
 
 
 def test_native_tml_renderers_openai_messages_are_accepted_directly() -> None:
-    _require_tml_renderers()
-    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
-
     renderer = _renderer()
-    openai_messages = chat.OpenAIMessage.from_oss_messages(_messages())
+    openai_messages = tml_chat.OpenAIMessage.from_oss_messages(_messages())
 
     model_input, weights = renderer.build_supervised_example(openai_messages)
 
@@ -434,21 +411,18 @@ def test_native_tml_renderers_openai_messages_are_accepted_directly() -> None:
 
 
 def test_native_tml_renderers_message_list_is_accepted_directly() -> None:
-    _require_tml_renderers()
-    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
-
     renderer = _renderer()
-    messages = chat.MessageList(
+    messages = tml_chat.MessageList(
         [
-            chat.Message(
-                content=chat.Text("Say hello."),
-                author=chat.Author(chat.AuthorKind.User),
-                channel_enum=chat.MessageChannel.Main,
+            tml_chat.Message(
+                content=tml_chat.Text("Say hello."),
+                author=tml_chat.Author(tml_chat.AuthorKind.User),
+                channel_enum=tml_chat.MessageChannel.Main,
             ),
-            chat.Message(
-                content=chat.Text("Hello."),
-                author=chat.Author(chat.AuthorKind.Model),
-                channel_enum=chat.MessageChannel.Main,
+            tml_chat.Message(
+                content=tml_chat.Text("Hello."),
+                author=tml_chat.Author(tml_chat.AuthorKind.Model),
+                channel_enum=tml_chat.MessageChannel.Main,
             ),
         ]
     )
@@ -460,11 +434,8 @@ def test_native_tml_renderers_message_list_is_accepted_directly() -> None:
 
 
 def test_selective_sft_modes_require_cookbook_dict_messages_for_masking() -> None:
-    _require_tml_renderers()
-    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
-
     renderer = _renderer()
-    openai_messages = chat.OpenAIMessage.from_oss_messages(_messages())
+    openai_messages = tml_chat.OpenAIMessage.from_oss_messages(_messages())
 
     with pytest.raises(NotImplementedError, match="selective train_on_what"):
         renderer.build_supervised_example(openai_messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)

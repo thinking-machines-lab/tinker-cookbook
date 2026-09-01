@@ -25,7 +25,7 @@ from tinker_cookbook.renderers.base import (
     ThinkingPart,
     TrainOnWhat,
 )
-from tinker_cookbook.renderers.tml_conversions import TmlRenderInput
+from tinker_cookbook.renderers.tml import TmlRenderInput
 from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
