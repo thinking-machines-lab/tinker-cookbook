@@ -224,7 +224,18 @@ def get_renderer(
     if (factory := _CUSTOM_RENDERER_REGISTRY.get(name)) is not None:
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
-    # Import renderer classes lazily to avoid circular imports and keep exports minimal.
+    if name in _PUBLIC_TML_RENDERERS:
+        from tinker_cookbook.renderers.tml import TmlRendererAdapter
+
+        public_renderer = import_module(f"tml_renderers.{name}").Renderer()
+        return _stamp_pickle_metadata(TmlRendererAdapter(public_renderer))
+
+    if name == "tml_v0":
+        from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
+
+        return _stamp_pickle_metadata(TmlV0Renderer(tokenizer))
+
+    # Import only the legacy renderer family after direct TML dispatch misses.
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
@@ -235,13 +246,9 @@ def get_renderer(
     from tinker_cookbook.renderers.kimi_k26 import KimiK26PreserveThinkingRenderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
-    from tinker_cookbook.renderers.tml import TmlRendererAdapter
-    from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
     renderer: Renderer
-    if name in _PUBLIC_TML_RENDERERS:
-        renderer = TmlRendererAdapter(import_module(f"tml_renderers.{name}").Renderer())
-    elif name == "role_colon":
+    if name == "role_colon":
         renderer = RoleColonRenderer(tokenizer)
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
@@ -273,8 +280,6 @@ def get_renderer(
         renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="medium")
     elif name == "gpt_oss_high_reasoning":
         renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
-    elif name == "tml_v0":
-        renderer = TmlV0Renderer(tokenizer)
     else:
         raise RendererError(
             f"Unknown renderer: {name}. If this is a custom renderer, please register it via register_renderer()."

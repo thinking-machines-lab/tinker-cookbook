@@ -132,8 +132,8 @@ def test_adapter_takes_only_the_public_renderer() -> None:
     ) == [{"role": "user", "content": "hello"}]
     assert parsed == Message(role="assistant", content="answer")
     assert termination == ParseTermination.STOP_SEQUENCE
-    assert len(public_renderer.parsers) == 1
-    assert public_renderer.parsers[0].parsed_tokens == [[7, 42]]
+    assert len(public_renderer.parsers) == 2
+    assert public_renderer.parsers[-1].parsed_tokens == [[7, 42]]
     assert adapter.get_stop_sequences() == [42]
 
 
@@ -348,7 +348,6 @@ def test_qwen3_builtins_use_public_renderer_behavior(
     assert isinstance(adapter, tml.TmlRendererAdapter)
     assert adapter.tokenizer is not caller_tokenizer
     assert adapter.tokenizer.decode(prompt.to_ints()).endswith(generation_suffix)
-    adapter.parse_response([])
 
 
 @pytest.mark.parametrize("renderer_name", ["qwen3_vl", "qwen3_vl_instruct"])
@@ -381,7 +380,6 @@ def test_qwen3_vl_builtins_use_public_renderer_for_images(renderer_name: str) ->
     assert image_chunk.format == "jpeg"
     assert image_chunk.data.startswith(b"\xff\xd8")
     assert image_chunk.expected_tokens == 64
-    adapter.parse_response([])
 
     model_input, weights = adapter.build_supervised_example(
         [*prompt_messages, Message(role="assistant", content="It is red.")]

@@ -1432,8 +1432,6 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     test_response_with_eot = f"53 + 18 = 71{eot_token}"
     response_tokens = tokenizer.encode(test_response_with_eot, add_special_tokens=False)
 
-    if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
-        renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
@@ -1443,8 +1441,6 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     test_response_no_eot = "53 + 18 = 71"
     response_tokens_no_eot = tokenizer.encode(test_response_no_eot, add_special_tokens=False)
 
-    if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
-        renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(response_tokens_no_eot)
     assert message["role"] == "assistant"
     assert message["content"] == "53 + 18 = 71"
@@ -1457,7 +1453,6 @@ def test_eot_parsing(model_name: str, renderer_name: str):
     )
 
     if renderer_name in {"qwen3", "qwen3_disable_thinking"}:
-        renderer.build_generation_prompt([])
         _, termination = renderer.parse_response(response_tokens_double_eot)
         assert termination == ParseTermination.MALFORMED
     else:
@@ -1559,8 +1554,6 @@ def _verify_extension_property(renderer, messages: list[Message], tokenizer):
         # Build prompt before the next assistant message (observation_{t+1})
         context_before_next = messages[:next_asst_idx]
         prompt_before_next = renderer.build_generation_prompt(context_before_next).to_ints()
-        if isinstance(renderer, TmlRendererAdapter):
-            renderer.parse_response([])
 
         # Check if seq_through_asst is a prefix of prompt_before_next
         is_prefix = prompt_before_next[: len(seq_through_asst)] == seq_through_asst

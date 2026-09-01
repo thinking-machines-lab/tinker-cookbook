@@ -21,6 +21,7 @@ from tinker_cookbook.renderers import (
     get_renderer,
     tml_v0,
 )
+from tinker_cookbook.renderers.tml import TmlRenderInput
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -89,7 +90,6 @@ def test_build_generation_prompt_defaults_to_high_effort() -> None:
     renderer = _renderer()
 
     default_prompt = renderer.build_generation_prompt(_messages())
-    renderer.parse_response([])
     high_prompt = renderer.build_generation_prompt(_messages(), effort=0.9)
 
     assert default_prompt.to_ints() == high_prompt.to_ints()
@@ -308,7 +308,6 @@ def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
     )
     spans, _ = tml_renderer.render_for_completion([tool_message, stop_message])
     model_input = token_spans_to_tinker_model_input(spans)
-    renderer.build_generation_prompt([])
     message, termination = renderer.parse_response(model_input.to_ints())
 
     assert termination.is_clean
@@ -349,9 +348,9 @@ def test_tool_declarations_emit_tool_declare_prefix() -> None:
     assert _input_len(model_input) > 0
 
 
-def test_native_tml_renderers_messages_are_accepted_directly() -> None:
+def test_native_tml_renderers_inputs_are_accepted_and_terminated() -> None:
     renderer = _renderer()
-    messages = [
+    native_messages = [
         tml_chat.Message(
             content=tml_chat.Text("Say hello."),
             author=tml_chat.Author(tml_chat.AuthorKind.User),
@@ -363,34 +362,23 @@ def test_native_tml_renderers_messages_are_accepted_directly() -> None:
             channel_enum=tml_chat.MessageChannel.Main,
         ),
     ]
-
-    model_input, weights = renderer.build_supervised_example(messages)
-
-    assert _input_len(model_input) == len(weights)
-    assert float(weights.sum()) > 0
-
-
-def test_native_sft_input_gets_model_end_sampling_by_default() -> None:
-    renderer = _renderer()
-    native = [
-        tml_chat.Message(
-            content=tml_chat.Text("Say hello."),
-            author=tml_chat.Author(tml_chat.AuthorKind.User),
-            channel_enum=tml_chat.MessageChannel.Main,
-        ),
-        tml_chat.Message(
-            content=tml_chat.Text("Hello."),
-            author=tml_chat.Author(tml_chat.AuthorKind.Model),
-            channel_enum=tml_chat.MessageChannel.Main,
-        ),
+    native_inputs: list[TmlRenderInput] = [
+        native_messages,
+        tml_chat.MessageList(native_messages),
+        tml_chat.OpenAIMessage.from_oss_messages(_messages()),
     ]
+
+    for native_input in native_inputs:
+        model_input, weights = renderer.build_supervised_example(native_input)
+        assert _input_len(model_input) == len(weights)
+        assert float(weights.sum()) > 0
+
     stop = tml_chat.Message(
         content=tml_chat.ModelEndSampling(),
         author=tml_chat.Author(tml_chat.AuthorKind.Model),
     )
-
-    bare_input, bare_weights = renderer.build_supervised_example(native)
-    explicit_input, explicit_weights = renderer.build_supervised_example(native + [stop])
+    bare_input, bare_weights = renderer.build_supervised_example(native_messages)
+    explicit_input, explicit_weights = renderer.build_supervised_example([*native_messages, stop])
 
     # The cookbook terminates model turns automatically, so omitting the
     # explicit ModelEndSampling renders token-identically (including the
@@ -398,39 +386,6 @@ def test_native_sft_input_gets_model_end_sampling_by_default() -> None:
     assert bare_input.to_ints() == explicit_input.to_ints()
     assert bare_weights.tolist() == explicit_weights.tolist()
     assert float(bare_weights.sum()) > 0
-
-
-def test_native_tml_renderers_openai_messages_are_accepted_directly() -> None:
-    renderer = _renderer()
-    openai_messages = tml_chat.OpenAIMessage.from_oss_messages(_messages())
-
-    model_input, weights = renderer.build_supervised_example(openai_messages)
-
-    assert _input_len(model_input) == len(weights)
-    assert float(weights.sum()) > 0
-
-
-def test_native_tml_renderers_message_list_is_accepted_directly() -> None:
-    renderer = _renderer()
-    messages = tml_chat.MessageList(
-        [
-            tml_chat.Message(
-                content=tml_chat.Text("Say hello."),
-                author=tml_chat.Author(tml_chat.AuthorKind.User),
-                channel_enum=tml_chat.MessageChannel.Main,
-            ),
-            tml_chat.Message(
-                content=tml_chat.Text("Hello."),
-                author=tml_chat.Author(tml_chat.AuthorKind.Model),
-                channel_enum=tml_chat.MessageChannel.Main,
-            ),
-        ]
-    )
-
-    model_input, weights = renderer.build_supervised_example(messages)
-
-    assert _input_len(model_input) == len(weights)
-    assert float(weights.sum()) > 0
 
 
 def test_selective_sft_modes_require_cookbook_dict_messages_for_masking() -> None:
@@ -454,7 +409,6 @@ def test_extension_property_holds_multiturn() -> None:
 
     assert renderer.has_extension_property
     sequence_through_first_assistant = renderer.build_generation_prompt(messages[:3]).to_ints()
-    renderer.parse_response([])
     prompt_before_second_assistant = renderer.build_generation_prompt(messages[:4]).to_ints()
     assert (
         prompt_before_second_assistant[: len(sequence_through_first_assistant)]

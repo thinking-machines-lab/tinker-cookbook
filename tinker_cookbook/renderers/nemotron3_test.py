@@ -1,6 +1,7 @@
 import pytest
 
 from tinker_cookbook.renderers import Message, get_renderer
+from tinker_cookbook.renderers.testing_utils import extract_token_ids
 from tinker_cookbook.renderers.tml import TmlRendererAdapter
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
@@ -58,9 +59,7 @@ def test_nemotron_generation_matches_hf(
         add_generation_prompt=True,
         **template_args,
     )
-    if hasattr(expected, "input_ids"):
-        expected = expected.input_ids
-    assert rendered == expected
+    assert rendered == extract_token_ids(expected)
 
 
 @pytest.mark.parametrize(
@@ -99,6 +98,4 @@ def test_nemotron_history_matches_hf(
         enable_thinking=True,
         truncate_history_thinking=truncate_history_thinking,
     )
-    if hasattr(expected, "input_ids"):
-        expected = expected.input_ids
-    assert rendered == expected
+    assert rendered == extract_token_ids(expected)
