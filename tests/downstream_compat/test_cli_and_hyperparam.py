@@ -21,10 +21,14 @@ from tinker_cookbook.model_info import (
     get_zai_info,
 )
 
+# Inkling models have no ``model_info`` getter — ``get_model_attributes`` matches
+# them by prefix — so they have to be listed here to get the same coverage.
+_INKLING_NAMES = ["thinkingmachines/Inkling", "thinkingmachines/Inkling-Small"]
+
 
 def _all_model_info_names() -> list[str]:
     """Every model registered in ``model_info``, as ``org/name`` HF IDs."""
-    names: list[str] = []
+    names: list[str] = list(_INKLING_NAMES)
     for getter in (
         get_llama_info,
         get_qwen_info,
@@ -389,6 +393,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 3_424_256,
         (False, False, True): 207_168,
     },
+    "thinkingmachines/Inkling-Small": {
+        (True, True, True): 66_020_672,
+        (True, True, False): 65_815_552,
+        (True, False, True): 64_708_928,
+        (True, False, False): 64_503_808,
+        (False, True, True): 1_516_864,
+        (False, True, False): 1_311_744,
+        (False, False, True): 205_120,
+    },
     "zai-org/GLM-5.3": {
         (True, True, True): 124_437_632,
         (True, True, False): 124_276_608,
@@ -430,14 +443,14 @@ class TestHyperparamUtils:
         )
 
     def test_get_lr_returns_float(self):
-        lr = get_lr("Qwen/Qwen3.6-27B", is_lora=True)
+        lr = get_lr("Qwen/Qwen3-8B", is_lora=True)
         assert isinstance(lr, float)
         assert lr > 0
 
     def test_get_lora_param_count_rejects_all_false(self):
         with pytest.raises(ValueError):
             get_lora_param_count(
-                "Qwen/Qwen3.6-27B",
+                "Qwen/Qwen3-8B",
                 lora_rank=32,
                 train_mlp=False,
                 train_attn=False,
