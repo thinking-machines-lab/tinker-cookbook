@@ -8,7 +8,6 @@ import pytest
 import tinker
 from PIL import Image
 from tml_renderers import chat as tml_chat
-from tml_renderers.renderer import Renderer as PublicRenderer
 
 import tinker_cookbook.renderers as renderers
 from tinker_cookbook.exceptions import RendererError
@@ -117,7 +116,7 @@ class _StopRenderer(_Renderer):
 def test_adapter_takes_only_the_public_renderer() -> None:
     public_renderer = _Renderer()
 
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
+    adapter = tml.TmlRendererAdapter(public_renderer)
     prompt = adapter.build_generation_prompt([Message(role="user", content="hello")])
     parsed, termination = adapter.parse_response([7, 42])
 
@@ -125,11 +124,10 @@ def test_adapter_takes_only_the_public_renderer() -> None:
     assert adapter.tokenizer.encode("prefix") == [9]
     assert adapter.tokenizer.decode([9]) == "decoded:9"
     assert prompt.to_ints() == [1, 2, 3]
-    assert tml_chat.OpenAIMessage.to_oss_messages(
-        tml_chat.OpenAIMessage.from_messages(
-            cast(Sequence[tml_chat.Message], public_renderer.rendered)
-        )
-    ) == [{"role": "user", "content": "hello"}]
+    assert public_renderer.rendered is not None
+    assert tml_chat.MessageList.from_messages(public_renderer.rendered).to_oss_messages() == [
+        {"role": "user", "content": "hello"}
+    ]
     assert parsed == Message(role="assistant", content="answer")
     assert termination == ParseTermination.STOP_SEQUENCE
     assert len(public_renderer.parsers) == 2
@@ -152,7 +150,7 @@ def test_adapter_normalizes_public_stop_condition(
 ) -> None:
     renderer = _StopRenderer(stop)
 
-    actual = tml.TmlRendererAdapter(cast(PublicRenderer, renderer)).get_stop_sequences()
+    actual = tml.TmlRendererAdapter(renderer).get_stop_sequences()
 
     assert actual == expected
     if isinstance(stop, list):
@@ -160,7 +158,7 @@ def test_adapter_normalizes_public_stop_condition(
 
 
 def test_adapter_rejects_caller_prefill() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    adapter = tml.TmlRendererAdapter(_Renderer())
 
     with pytest.raises(NotImplementedError, match="caller-provided prefill"):
         adapter.build_generation_prompt([Message(role="user", content="hello")], prefill="prefix")
@@ -168,7 +166,7 @@ def test_adapter_rejects_caller_prefill() -> None:
 
 def test_adapter_uses_public_sft_examples() -> None:
     public_renderer = _Renderer()
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
+    adapter = tml.TmlRendererAdapter(public_renderer)
 
     model_input, weights = adapter.build_supervised_example(
         [
@@ -179,7 +177,8 @@ def test_adapter_uses_public_sft_examples() -> None:
 
     assert model_input.to_ints() == [4, 5]
     assert weights.tolist() == [0.0, 1.0]
-    sft_input = cast(Sequence[tml_chat.Message], public_renderer.sft_input)
+    assert public_renderer.sft_input is not None
+    sft_input = tml_chat.MessageList.from_messages(public_renderer.sft_input).messages
     assert [message.author.kind for message in sft_input] == [
         tml_chat.AuthorKind.User,
         tml_chat.AuthorKind.Model,
@@ -189,7 +188,7 @@ def test_adapter_uses_public_sft_examples() -> None:
 
 
 def test_adapter_requires_explicit_customized_flags_on_every_message() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    adapter = tml.TmlRendererAdapter(_Renderer())
 
     with pytest.raises(ValueError, match="requires every message"):
         adapter.build_supervised_example(
@@ -202,7 +201,7 @@ def test_adapter_requires_explicit_customized_flags_on_every_message() -> None:
 
 
 def test_adapter_rejects_trainable_flags_outside_customized() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    adapter = tml.TmlRendererAdapter(_Renderer())
 
     with pytest.raises(ValueError, match="require train_on_what"):
         adapter.build_supervised_example(
@@ -215,7 +214,7 @@ def test_adapter_rejects_trainable_flags_outside_customized() -> None:
 
 def test_adapter_last_assistant_requires_assistant_to_be_final_message() -> None:
     public_renderer = _Renderer()
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
+    adapter = tml.TmlRendererAdapter(public_renderer)
 
     adapter.build_supervised_example(
         [
@@ -225,7 +224,8 @@ def test_adapter_last_assistant_requires_assistant_to_be_final_message() -> None
         TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     )
 
-    native_messages = cast(Sequence[tml_chat.Message], public_renderer.sft_input)
+    assert public_renderer.sft_input is not None
+    native_messages = tml_chat.MessageList.from_messages(public_renderer.sft_input).messages
     model_message = next(
         message for message in native_messages if message.author.kind == tml_chat.AuthorKind.Model
     )
@@ -235,7 +235,7 @@ def test_adapter_last_assistant_requires_assistant_to_be_final_message() -> None
 
 
 def test_adapter_rejects_training_non_assistant_messages() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    adapter = tml.TmlRendererAdapter(_Renderer())
 
     with pytest.raises(NotImplementedError, match="cannot train non-assistant"):
         adapter.build_supervised_example(
@@ -248,7 +248,7 @@ def test_adapter_rejects_training_non_assistant_messages() -> None:
 
 
 def test_adapter_rejects_selective_training_for_native_messages() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    adapter = tml.TmlRendererAdapter(_Renderer())
     native_messages = [
         tml_chat.Message(
             tml_chat.Text("answer"),
@@ -257,14 +257,11 @@ def test_adapter_rejects_selective_training_for_native_messages() -> None:
     ]
 
     with pytest.raises(NotImplementedError, match="native tml_renderers messages"):
-        adapter.build_supervised_example(
-            cast(list[Message], native_messages),
-            TrainOnWhat.LAST_ASSISTANT_MESSAGE,
-        )
+        adapter.build_supervised_example(native_messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
 
 
 def test_adapter_rejects_context_free_message_rendering() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    adapter = tml.TmlRendererAdapter(_Renderer())
 
     with pytest.raises(NotImplementedError, match="complete conversations"):
         adapter.render_message(
@@ -281,18 +278,16 @@ def test_adapter_translates_public_render_errors(monkeypatch: pytest.MonkeyPatch
     completion_renderer = _Renderer()
     monkeypatch.setattr(completion_renderer, "render_for_completion", fail)
     with pytest.raises(RendererError, match="bad messages"):
-        tml.TmlRendererAdapter(cast(PublicRenderer, completion_renderer)).build_generation_prompt(
-            []
-        )
+        tml.TmlRendererAdapter(completion_renderer).build_generation_prompt([])
 
     sft_renderer = _Renderer()
     monkeypatch.setattr(sft_renderer, "render_for_sft", fail)
     with pytest.raises(RendererError, match="bad messages"):
-        tml.TmlRendererAdapter(cast(PublicRenderer, sft_renderer)).build_supervised_examples([])
+        tml.TmlRendererAdapter(sft_renderer).build_supervised_examples([])
 
 
 def test_adapter_translates_public_streaming_updates() -> None:
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, _Renderer()))
+    adapter = tml.TmlRendererAdapter(_Renderer())
     adapter.build_generation_prompt([Message(role="user", content="hello")])
 
     events = list(adapter.parse_response_streaming([7, 42]))
@@ -311,7 +306,7 @@ def test_adapter_translates_public_streaming_updates() -> None:
 
 def test_adapter_parses_responses_with_independent_parsers() -> None:
     public_renderer = _Renderer()
-    adapter = tml.TmlRendererAdapter(cast(PublicRenderer, public_renderer))
+    adapter = tml.TmlRendererAdapter(public_renderer)
     adapter.build_generation_prompt([Message(role="user", content="hello")])
 
     parsed = [adapter.parse_response([7, 42]), adapter.parse_response([8, 42])]

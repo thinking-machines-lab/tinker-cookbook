@@ -99,7 +99,7 @@ class TmlRendererAdapter(Renderer):
 
     def build_generation_prompt(
         self,
-        messages: list[Message],
+        messages: list[Message] | TmlRenderInput,
         role: Role = "assistant",
         prefill: str | None = None,
     ) -> tinker.ModelInput:
@@ -180,7 +180,7 @@ class TmlRendererAdapter(Renderer):
 
     def build_supervised_examples(
         self,
-        messages: list[Message],
+        messages: list[Message] | TmlRenderInput,
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         return self._build_supervised_examples(self._sft_render_input(messages, train_on_what))
@@ -197,7 +197,7 @@ class TmlRendererAdapter(Renderer):
 
     def build_supervised_example(
         self,
-        messages: list[Message],
+        messages: list[Message] | TmlRenderInput,
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
         return self._single_supervised_example(
