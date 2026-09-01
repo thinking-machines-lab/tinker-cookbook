@@ -47,6 +47,9 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 | `moonshotai/Kimi-K2.6` | Hybrid + Vision | MoE | Large |
 | `zai-org/GLM-5.3` | Reasoning | MoE | Large |
 
+GLM-5.3 is served only as the long-context variant `zai-org/GLM-5.3:peft:262144`.
+Pass that id to `ServiceClient`; the cookbook's own helpers accept either form.
+
 ## Model types explained
 
 - **Base**: Pre-trained on raw text. For research or full post-training pipelines.
