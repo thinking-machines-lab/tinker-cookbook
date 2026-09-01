@@ -41,12 +41,14 @@ def _(mo):
 
 @app.cell
 def _():
+    from functools import partial
+
     from tinker_cookbook import renderers, tokenizer_utils
 
     tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
     renderer = renderers.get_renderer("qwen3_5", tokenizer)
     renderer  # noqa: B018
-    return renderer, renderers, tokenizer, tokenizer_utils
+    return partial, renderer, renderers, tokenizer, tokenizer_utils
 
 
 @app.cell(hide_code=True)
@@ -356,15 +358,10 @@ def _(mo):
 
 
 @app.cell
-def _(renderers):
-    # Define a factory function that creates your renderer
-    def my_renderer_factory(tokenizer, image_processor=None):
-        # In practice, you would return a custom Renderer subclass here.
-        # For demonstration, we just return the Qwen3.5 renderer.
-        return renderers.get_renderer("qwen3_5", tokenizer)
-
-    # Register it under a namespaced name
-    renderers.register_renderer("MyOrg/custom_format", my_renderer_factory)
+def _(partial, renderers):
+    # Alias a built-in renderer under a namespaced name. Pass your custom
+    # Renderer class here when implementing a genuinely new format.
+    renderers.register_renderer("MyOrg/custom_format", partial(renderers.get_renderer, "qwen3_5"))
 
     # Now you can use it via get_renderer
     print(f"Registered renderers: {renderers.get_registered_renderer_names()}")

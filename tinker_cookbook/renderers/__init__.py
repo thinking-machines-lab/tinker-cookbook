@@ -235,33 +235,35 @@ def get_renderer(
     from tinker_cookbook.renderers.tml import TmlRendererAdapter
     from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
+    public_renderer_types = {
+        "qwen3": qwen3.Renderer,
+        "qwen3_vl": qwen3_vl.Renderer,
+        "qwen3_vl_instruct": qwen3_vl_instruct.Renderer,
+        "qwen3_disable_thinking": qwen3_disable_thinking.Renderer,
+        "qwen3_instruct": qwen3_instruct.Renderer,
+        "qwen3_5": qwen3_5.Renderer,
+        "qwen3_5_disable_thinking": qwen3_5_disable_thinking.Renderer,
+        "qwen3_8_xhigh_reasoning": qwen3_8_xhigh_reasoning.Renderer,
+        "qwen3_8_medium_reasoning": qwen3_8_medium_reasoning.Renderer,
+        "qwen3_8_low_reasoning": qwen3_8_low_reasoning.Renderer,
+        "qwen3_8_disable_thinking": qwen3_8_disable_thinking.Renderer,
+        "nemotron3": nemotron3.Renderer,
+        "nemotron3_low_thinking": nemotron3_low_thinking.Renderer,
+        "nemotron3_disable_thinking": nemotron3_disable_thinking.Renderer,
+        "nemotron3_preserve_thinking": nemotron3_preserve_thinking.Renderer,
+        "nemotron3_ultra": nemotron3_ultra.Renderer,
+        "nemotron3_ultra_disable_thinking": nemotron3_ultra_disable_thinking.Renderer,
+        "nemotron3_ultra_medium_thinking": nemotron3_ultra_medium_thinking.Renderer,
+        "nemotron3_ultra_preserve_thinking": nemotron3_ultra_preserve_thinking.Renderer,
+    }
+
     renderer: Renderer
-    if name == "role_colon":
+    if public_renderer_type := public_renderer_types.get(name):
+        renderer = TmlRendererAdapter(public_renderer_type())
+    elif name == "role_colon":
         renderer = RoleColonRenderer(tokenizer)
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
-    elif name == "qwen3":
-        renderer = TmlRendererAdapter(qwen3.Renderer())
-    elif name == "qwen3_vl":
-        renderer = TmlRendererAdapter(qwen3_vl.Renderer())
-    elif name == "qwen3_vl_instruct":
-        renderer = TmlRendererAdapter(qwen3_vl_instruct.Renderer())
-    elif name == "qwen3_disable_thinking":
-        renderer = TmlRendererAdapter(qwen3_disable_thinking.Renderer())
-    elif name == "qwen3_instruct":
-        renderer = TmlRendererAdapter(qwen3_instruct.Renderer())
-    elif name == "qwen3_5":
-        renderer = TmlRendererAdapter(qwen3_5.Renderer())
-    elif name == "qwen3_5_disable_thinking":
-        renderer = TmlRendererAdapter(qwen3_5_disable_thinking.Renderer())
-    elif name == "qwen3_8_xhigh_reasoning":
-        renderer = TmlRendererAdapter(qwen3_8_xhigh_reasoning.Renderer())
-    elif name == "qwen3_8_medium_reasoning":
-        renderer = TmlRendererAdapter(qwen3_8_medium_reasoning.Renderer())
-    elif name == "qwen3_8_low_reasoning":
-        renderer = TmlRendererAdapter(qwen3_8_low_reasoning.Renderer())
-    elif name == "qwen3_8_disable_thinking":
-        renderer = TmlRendererAdapter(qwen3_8_disable_thinking.Renderer())
     elif name == "deepseekv3":
         # Default to non-thinking mode (matches HF template default behavior)
         renderer = DeepSeekV3DisableThinkingRenderer(tokenizer)
@@ -282,22 +284,6 @@ def get_renderer(
         renderer = KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "kimi_k26_preserve_thinking":
         renderer = KimiK26PreserveThinkingRenderer(tokenizer, image_processor=image_processor)
-    elif name == "nemotron3":
-        renderer = TmlRendererAdapter(nemotron3.Renderer())
-    elif name == "nemotron3_low_thinking":
-        renderer = TmlRendererAdapter(nemotron3_low_thinking.Renderer())
-    elif name == "nemotron3_disable_thinking":
-        renderer = TmlRendererAdapter(nemotron3_disable_thinking.Renderer())
-    elif name == "nemotron3_preserve_thinking":
-        renderer = TmlRendererAdapter(nemotron3_preserve_thinking.Renderer())
-    elif name == "nemotron3_ultra":
-        renderer = TmlRendererAdapter(nemotron3_ultra.Renderer())
-    elif name == "nemotron3_ultra_disable_thinking":
-        renderer = TmlRendererAdapter(nemotron3_ultra_disable_thinking.Renderer())
-    elif name == "nemotron3_ultra_medium_thinking":
-        renderer = TmlRendererAdapter(nemotron3_ultra_medium_thinking.Renderer())
-    elif name == "nemotron3_ultra_preserve_thinking":
-        renderer = TmlRendererAdapter(nemotron3_ultra_preserve_thinking.Renderer())
     elif name == "gpt_oss_no_sysprompt":
         renderer = GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":
