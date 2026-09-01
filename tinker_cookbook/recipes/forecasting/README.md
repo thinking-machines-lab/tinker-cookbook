@@ -4,17 +4,21 @@ Fine-tune a model (Qwen3.8-27B in this example) with Tinker on binary markets fr
 [Prophet Arena subset](https://huggingface.co/datasets/prophetarena/Prophet-Arena-Subset-1200)
 using a chronological split and Brier reward.
 
-
 ## Run
 
 ```bash
 export TINKER_API_KEY=...
 
-# optionally download, verify, and inspect the data split
+# Optionally download, verify, and inspect the data split
 python -m tinker_cookbook.recipes.forecasting.data
 
-# train forecasting model
+# Train the forecasting model
 python -m tinker_cookbook.recipes.forecasting.train
+
+# Or train with GLM-5.3 instead
+python -m tinker_cookbook.recipes.forecasting.train \
+    model_name=zai-org/GLM-5.3:peft:262144 \
+    renderer_name=glm5_3_high_reasoning
 ```
 
 ## Prompt
@@ -22,6 +26,7 @@ python -m tinker_cookbook.recipes.forecasting.train
 Task: Given a binary prediction-market question and information available at a historical snapshot, forecast the probability that the market will resolve YES. The model does not use tools or live search in this recipe.
 
 Here is the exact prompt template we use:
+
 ```text
 Forecast whether this market will resolve YES using information available through {snapshot time}.
 
@@ -102,37 +107,44 @@ and 1,180 questions, which the default caps trim to 1,024 and 256.
 The recipe downloads a fixed published version and verifies the CSV contents,
 so later dataset updates do not change a rerun.
 
-
 ### Temporal split methodology
+
 This cookbook specifically uses a cutoff of October 20, 2025 UTC, but feel free to adjust based on the model you are using.
 
-* Knowledge cutoff: Try to find the knowledge cutoff for the model you are post-training. Ideally its pretraining cutoff predates the forecasting questions. Qwen3.8 has been reported to self-identify an [early-2025 cutoff](https://huggingface.co/Qwen/Qwen3.8-27B-FP8/discussions/8), although this is not publisher-verified. Adjust the model or split date to reduce outcome contamination.
-* Training split: Events whose markets all closed before the cutoff.
-* Validation split: Events first observed on or after the cutoff.
+- Knowledge cutoff: Try to find the knowledge cutoff for the model you are post-training. Ideally its pretraining cutoff predates the forecasting questions. Qwen3.8 has been reported to self-identify an [early-2025 cutoff](https://huggingface.co/Qwen/Qwen3.8-27B-FP8/discussions/8), although this is not publisher-verified. Adjust the model or split date to reduce outcome contamination.
+- Training split: Events whose markets all closed before the cutoff.
+- Validation split: Events first observed on or after the cutoff.
 
 We further refine our data via:
-* Boundary events: Events open across the cutoff are excluded.
-* Deduplication: Each event-market pair becomes one question using its earliest snapshot, and all markets from the same event remain in the same split.
+
+- Boundary events: Events open across the cutoff are excluded.
+- Deduplication: Each event-market pair becomes one question using its earliest snapshot, and all markets from the same event remain in the same split.
 
 ## Configuration
 
 **Model**
-* Qwen3.8-27B, using the Tinker [`qwen3_8_low_reasoning`](../../renderers/qwen3_8.py) renderer
-* LoRA rank 32
-* learning rate `8e-5`
 
-When switching models, use that model's recommended renderer and rerun the relevant hyperparameter ablations.
+Either:
+
+- Qwen3.8-27B (the default), with the Tinker [`qwen3_8_low_reasoning`](../../renderers/qwen3_8.py) renderer
+- GLM-5.3, with the Tinker [`glm5_3_high_reasoning`](../../renderers/glm5_3.py) renderer
+
+Both use LoRA rank 32, a `1e-4` learning rate, and 32 training forecasts per
+question. When switching to another model, use that model's recommended
+renderer and rerun the relevant hyperparameter ablations.
 
 **Training loop**
 
-* 16 questions per step
-* 32 forecasts per question
-* 100 training steps
+- 16 questions per step
+- 128 training steps (two passes over the 1,024 training questions)
+
+One epoch is 64 steps. Most of the improvement comes with the first epoch, so
+setting `max_steps=64` is a reasonable way to shorten the training time.
 
 **Validation**
 
-* every 20 steps and after the final update
-* 8 forecasts per question
+- every 16 steps and after the final update
+- 8 forecasts per question
 
 ## Reward
 
@@ -152,12 +164,29 @@ With Qwen3.8-27B, we produced the following for reference:
 
 | Step | Validation Brier reward | Validation accuracy | Valid format |
 |---:|---:|---:|---:|
-| 0 | 0.8013 | 73.10% | 99.90% |
-| 20 | 0.8076 | 73.75% | 100.00% |
-| 40 | 0.8132 | 73.36% | 100.00% |
-| 60 | 0.8198 | 74.49% | 99.95% |
-| 80 | 0.8223 | 74.24% | 100.00% |
-| 100 | 0.8252 | 74.15% | 100.00% |
+| 0 | 0.7998 | 72.92% | 99.80% |
+| 16 | 0.8166 | 74.32% | 100.00% |
+| 32 | 0.8207 | 73.88% | 100.00% |
+| 48 | 0.8222 | 73.97% | 100.00% |
+| 64 | 0.8262 | 74.54% | 100.00% |
+| 80 | 0.8202 | 73.61% | 100.00% |
+| 96 | 0.8071 | 72.22% | 99.90% |
+| 112 | 0.8288 | 74.78% | 100.00% |
+| 128 | 0.8294 | 75.34% | 100.00% |
+
+With GLM-5.3:
+
+| Step | Validation Brier reward | Validation accuracy | Valid format |
+|---:|---:|---:|---:|
+| 0 | 0.7952 | 72.53% | 98.63% |
+| 16 | 0.8254 | 74.78% | 99.95% |
+| 32 | 0.8224 | 74.41% | 99.95% |
+| 48 | 0.8058 | 72.36% | 100.00% |
+| 64 | 0.8413 | 77.32% | 100.00% |
+| 80 | 0.8373 | 76.32% | 100.00% |
+| 96 | 0.8309 | 75.32% | 100.00% |
+| 112 | 0.8387 | 77.05% | 100.00% |
+| 128 | 0.8475 | 78.30% | 100.00% |
 
 This shows consistent improvement on temporally **held-out** validation questions and suggests that the learned forecasting behavior generalizes beyond the training events.
 
