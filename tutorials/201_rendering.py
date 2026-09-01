@@ -361,9 +361,7 @@ def _(renderers):
     def my_renderer_factory(tokenizer, image_processor=None):
         # In practice, you would return a custom Renderer subclass here.
         # For demonstration, we just return the Qwen3.5 renderer.
-        from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
-
-        return Qwen3_5Renderer(tokenizer)
+        return renderers.get_renderer("qwen3_5", tokenizer)
 
     # Register it under a namespaced name
     renderers.register_renderer("MyOrg/custom_format", my_renderer_factory)
