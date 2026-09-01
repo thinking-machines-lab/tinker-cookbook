@@ -452,6 +452,28 @@ class TestHyperparamUtils:
         """
         assert get_lora_param_count(model_name, lora_rank=1) > 0
 
+    @pytest.mark.parametrize("model_name", _all_model_info_names())
+    @pytest.mark.parametrize("suffix", [":peft:262144", ":peft:131072"])
+    def test_get_lora_param_count_ignores_variant_suffix(self, model_name: str, suffix: str):
+        """Variant-suffixed ids must resolve like the base name.
+
+        Some models are only served under a suffixed id (e.g.
+        ``zai-org/GLM-5.3:peft:262144``), so the suffixed name is the only one a
+        user can pass.
+        """
+        assert get_lora_param_count(model_name + suffix, lora_rank=1) == get_lora_param_count(
+            model_name, lora_rank=1
+        )
+
+    def test_get_lr_ignores_variant_suffix(self):
+        assert get_lr("Qwen/Qwen3-8B:peft:262144") == get_lr("Qwen/Qwen3-8B")
+
+    def test_get_lr_variant_suffix_reports_uncalibrated_not_unknown(self):
+        """An uncalibrated model must raise NotImplementedError, not ConfigurationError,
+        regardless of whether the caller passes the suffixed id."""
+        with pytest.raises(NotImplementedError):
+            get_lr("zai-org/GLM-5.3:peft:262144")
+
     @pytest.mark.parametrize(
         "flag_combo",
         sorted(
