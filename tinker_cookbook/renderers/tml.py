@@ -46,7 +46,7 @@ class TmlRendererAdapter(Renderer):
 
     def __init__(self, renderer: PublicRenderer):
         self._tml_renderer = renderer
-        super().__init__(TmlRenderersTokenizerAdapter.from_tokenizer(renderer.tokenizer))
+        super().__init__(TmlRenderersTokenizerAdapter(renderer.tokenizer))
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         del message, ctx
