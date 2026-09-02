@@ -67,7 +67,7 @@ class CLIConfig:
     stream_minibatch_config: StreamMinibatchConfig | None = None
 
     # Loss function and configuration.
-    # See https://tinker-docs.thinkingmachines.ai/losses
+    # See https://tinker-docs.thinkingmachines.ai/tinker/losses
     loss_fn: LossFnType = "importance_sampling"
     loss_fn_config: dict[str, Any] | None = None
 
