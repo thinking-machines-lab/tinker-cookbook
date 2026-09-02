@@ -61,6 +61,12 @@ from tinker_cookbook.eval.evaluators import (
     SamplingClientEvaluatorBuilder,
     TrainingClientEvaluator,
 )
+from tinker_cookbook.stores.eval_comparison import (
+    BenchmarkComparison,
+    ExampleClassification,
+    ExampleComparison,
+    RunComparison,
+)
 from tinker_cookbook.stores.eval_store import EvalStore, RunMetadata
 
 __all__ = [
@@ -83,6 +89,10 @@ __all__ = [
     # Benchmark-to-evaluator bridge
     "BenchmarkEvaluator",
     # Eval store — persistent storage and querying
+    "BenchmarkComparison",
     "EvalStore",
+    "ExampleClassification",
+    "ExampleComparison",
+    "RunComparison",
     "RunMetadata",
 ]
