@@ -25,8 +25,16 @@ Key format properties:
 - There is no per-message end token. An assistant turn is terminated by the
   next role token: ``<|user|>`` after a normal reply, ``<|observation|>`` after
   tool calls, or ``<|endoftext|>``. These are exactly the model's eos tokens in
-  generation_config.json. Supervised examples append the appropriate terminator
-  to the final assistant message via ``RenderedMessage.stop_overlap``.
+  generation_config.json. Each assistant message owns its terminator: it is
+  rendered as that message's output (so it carries the message's loss weight)
+  and the following message drops the matching role token from its header. The
+  last assistant message has no follower, so it gets one via
+  ``RenderedMessage.stop_overlap`` instead. For every message but the last this
+  changes only the chunk boundary: the token was already there as the next
+  message's role token, so the sequence is exactly what the HF template
+  produces. For the last message it appends one token the HF template does not
+  emit -- the template stops after the assistant content -- which the model
+  must nonetheless learn to produce.
 - Assistant messages always begin with a ``<think>...</think>`` block. The HF
   template's ``clear_thinking`` defaults to False, so thinking content is
   preserved for ALL assistant messages by default (this renderer's
@@ -50,10 +58,11 @@ Key format properties:
   duplicates, or unknown ids) falls back to as-given message order. GLM-5.2
   always rendered tool responses in message order.
 
-Generation prompts always end with ``<|assistant|><think>``. For the
-supervised target (last assistant message), the same prefill tokens are placed
-in the zero-weight header so the observation matches ``build_generation_prompt``
-exactly.
+Generation prompts always end with ``<|assistant|><think>``. Because sampling
+supplies that prefill at every turn, the same tokens are placed in the
+zero-weight header of every assistant message rather than being trained on. For
+the last assistant message this additionally makes the observation part of a
+supervised example match ``build_generation_prompt`` exactly.
 
 Reference: https://huggingface.co/zai-org/GLM-5.3/blob/main/chat_template.jinja
 """
@@ -394,28 +403,84 @@ class Glm5_3Renderer(Renderer):
         """
         return super().build_supervised_example(_reorder_tool_results(messages), train_on_what)
 
+    def _turn_terminator_token(self, message: Message, next_message: Message | None) -> int | None:
+        """The token the model must emit to end this assistant turn.
+
+        ``<|observation|>`` when handing off to tools, ``<|user|>`` otherwise.
+
+        For a message that is followed by another, this is only meaningful when
+        the next message's role token is the one the model would have had to
+        produce. A mid-conversation ``system`` message, or a tool response after
+        a turn that made no tool calls, is not something the model ends its turn
+        with, so ``None`` is returned and the token stays where it was -- on the
+        next message's header. That keeps the token sequence identical in every
+        case; only which chunk owns the token changes.
+
+        Args:
+            message (Message): The assistant message being terminated.
+            next_message (Message | None): The message that follows it, or None
+                when it is the last one.
+
+        Returns:
+            int | None: The terminator token id, or None when the next message
+                does not consume one.
+        """
+        expected = self._observation_token if message.get("tool_calls") else self._user_token
+        if next_message is None:
+            return expected
+        next_header = {"user": self._user_token, "tool": self._observation_token}.get(
+            next_message["role"]
+        )
+        return expected if next_header == expected else None
+
+    def _header_supplied_by_previous_turn(self, message: Message, ctx: RenderContext) -> bool:
+        """Whether the preceding assistant turn already emitted this message's role token.
+
+        Mirrors :meth:`_turn_terminator_token` exactly, so the token is written
+        once and only once.
+        """
+        prev = ctx.prev_message
+        if prev is None or prev["role"] != "assistant":
+            return False
+        return self._turn_terminator_token(prev, message) is not None
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """Render a chat message into GLM-5.3 role-token chunks.
+
+        GLM-5.3 has no per-message end token: an assistant turn ends when the
+        next role token appears. That token is part of what the model must
+        generate, so it is emitted as the assistant message's own output rather
+        than as the next message's (zero-weight) header -- otherwise only the
+        final turn of a multi-turn supervised example would ever be trained to
+        stop. The following message then suppresses its header, leaving the
+        token sequence unchanged.
+
+        For the same reason the ``<think>`` prefill is moved into the zero-weight
+        header of *every* assistant message, not just the last: sampling always
+        supplies it, at every turn.
 
         Args:
             message (Message): The chat message to render.
             ctx (RenderContext): Positional context. ``last_user_index`` controls
                 thinking preservation, ``prev_message`` controls ``<|observation|>``
-                grouping for consecutive tool responses, and ``is_last`` moves the
-                thinking prefill into the header for the supervised target.
+                grouping for consecutive tool responses and header suppression,
+                and ``next_message`` selects the turn terminator.
 
         Returns:
-            RenderedMessage: Header, output, and (for assistant messages)
+            RenderedMessage: Header, output, and (for the last assistant message)
                 stop_overlap token chunks.
         """
         role = message["role"]
         stop_overlap: tinker.types.EncodedTextChunk | None = None
+        trailing_tokens: list[int] = []
 
         if role == "system":
             header_tokens = [self._system_token]
             output_str = self._visible_text(message["content"])
         elif role == "user":
-            header_tokens = [self._user_token]
+            header_tokens = (
+                [] if self._header_supplied_by_previous_turn(message, ctx) else [self._user_token]
+            )
             output_str = self._visible_text(message["content"])
         elif role == "assistant":
             reasoning, text = self._split_reasoning_and_text(message)
@@ -427,29 +492,39 @@ class Glm5_3Renderer(Renderer):
             output_str = think_block + text.strip()
 
             tool_calls = message.get("tool_calls")
-            has_tool_calls = bool(tool_calls)
             if tool_calls:
                 output_str += "".join(_format_glm_tool_call(tool_call) for tool_call in tool_calls)
 
             header_tokens = [self._assistant_token]
-            # For the supervised target (last message), move the sampling prefill
-            # into the zero-weight header so the observation part of a supervised
-            # example matches build_generation_prompt exactly.
-            if ctx.is_last and output_str.startswith(_THINK_PREFILL):
+            # Sampling always prefills <think>, at every turn, so move it into the
+            # zero-weight header rather than training the model to produce a token
+            # it is always given. For the last message this also makes the
+            # observation part of a supervised example match build_generation_prompt.
+            if output_str.startswith(_THINK_PREFILL):
                 header_tokens += self.tokenizer.encode(_THINK_PREFILL, add_special_tokens=False)
                 output_str = output_str[len(_THINK_PREFILL) :]
 
-            # The terminator the model must emit to end this turn: <|observation|>
-            # when handing off to tools, <|user|> otherwise. Appended by
-            # build_supervised_example only for the last message; for earlier
-            # messages the next message's role token plays this part.
-            stop_overlap = tinker.types.EncodedTextChunk(
-                tokens=[self._observation_token if has_tool_calls else self._user_token]
-            )
+            terminator = self._turn_terminator_token(message, ctx.next_message)
+            if ctx.is_last:
+                # No following message to carry the terminator; build_supervised_example
+                # appends it via stop_overlap.
+                stop_overlap = (
+                    tinker.types.EncodedTextChunk(tokens=[terminator])
+                    if terminator is not None
+                    else None
+                )
+            elif terminator is not None:
+                # Own the terminator so it carries this message's loss weight; the
+                # next message drops the matching header.
+                trailing_tokens = [terminator]
         elif role == "tool":
-            # Consecutive tool responses share a single <|observation|> role token.
+            # Consecutive tool responses share a single <|observation|> role token,
+            # as does a tool response following the turn that called it.
             follows_tool = ctx.prev_message is not None and ctx.prev_message["role"] == "tool"
-            header_tokens = [] if follows_tool else [self._observation_token]
+            if follows_tool or self._header_supplied_by_previous_turn(message, ctx):
+                header_tokens = []
+            else:
+                header_tokens = [self._observation_token]
             output_str = (
                 "<tool_response>" + self._visible_text(message["content"]) + "</tool_response>"
             )
@@ -457,6 +532,7 @@ class Glm5_3Renderer(Renderer):
             raise RendererError(f"Unsupported role: {role}")
 
         output_tokens = self.tokenizer.encode(output_str, add_special_tokens=False)
+        output_tokens += trailing_tokens
         output: list[tinker.ModelInputChunk] = (
             [tinker.types.EncodedTextChunk(tokens=output_tokens)] if output_tokens else []
         )
