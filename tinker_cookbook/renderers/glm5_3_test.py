@@ -745,6 +745,134 @@ def test_supervised_ending_with_tool_call_uses_observation_terminator(glm_tokeni
 
 
 # =============================================================================
+# Turn Terminator Weighting Tests
+# =============================================================================
+
+
+def _weighted_tokens(renderer, tokenizer, messages, train_on_what):
+    """Decode only the tokens that carry loss."""
+    model_input, weights = renderer.build_supervised_example(messages, train_on_what=train_on_what)
+    tokens = model_input.to_ints()
+    return [t for t, w in zip(tokens, weights.tolist()) if w > 0]
+
+
+def test_every_assistant_turn_trains_its_terminator(glm_tokenizer, glm_renderer):
+    """GLM has no per-message end token, so the terminator is the next role token.
+
+    It must still carry loss on every trained turn -- otherwise a multi-turn
+    supervised example only ever teaches the model to stop once, at the end.
+    """
+    messages = [
+        Message(role="user", content="q1"),
+        Message(role="assistant", content="<think>t1</think>a1"),
+        Message(role="user", content="q2"),
+        Message(role="assistant", content="<think>t2</think>a2"),
+        Message(role="user", content="q3"),
+        Message(role="assistant", content="<think>t3</think>a3"),
+    ]
+    user_token = glm_tokenizer.encode("<|user|>", add_special_tokens=False)[0]
+    trained = _weighted_tokens(
+        glm_renderer, glm_tokenizer, messages, TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+    assert trained.count(user_token) == 3
+
+    # LAST_ASSISTANT_MESSAGE trains exactly the one turn it targets.
+    trained_last = _weighted_tokens(
+        glm_renderer, glm_tokenizer, messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE
+    )
+    assert trained_last.count(user_token) == 1
+
+
+def test_tool_calling_turn_trains_observation_terminator(glm_tokenizer, glm_renderer):
+    """A turn that hands off to tools is terminated by <|observation|>."""
+    messages = [
+        Message(role="user", content="weather?"),
+        Message(
+            role="assistant",
+            content="<think>t1</think>",
+            tool_calls=[
+                ToolCall(
+                    id="c1",
+                    function=ToolCall.FunctionBody(
+                        name="get_weather", arguments=json.dumps({"city": "SF"})
+                    ),
+                )
+            ],
+        ),
+        Message(role="tool", content="sunny", tool_call_id="c1"),
+        Message(role="assistant", content="<think>t2</think>It is sunny."),
+    ]
+    observation_token = glm_tokenizer.encode("<|observation|>", add_special_tokens=False)[0]
+    user_token = glm_tokenizer.encode("<|user|>", add_special_tokens=False)[0]
+    trained = _weighted_tokens(
+        glm_renderer, glm_tokenizer, messages, TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+    assert trained.count(observation_token) == 1
+    assert trained.count(user_token) == 1
+
+
+def test_think_prefill_never_trained(glm_tokenizer, glm_renderer):
+    """Sampling always supplies <think>, at every turn, so it must never carry loss."""
+    messages = [
+        Message(role="user", content="q1"),
+        Message(role="assistant", content="<think>t1</think>a1"),
+        Message(role="user", content="q2"),
+        Message(role="assistant", content="<think>t2</think>a2"),
+    ]
+    think_token = glm_tokenizer.encode("<think>", add_special_tokens=False)[0]
+    for train_on_what in (
+        TrainOnWhat.ALL_ASSISTANT_MESSAGES,
+        TrainOnWhat.LAST_ASSISTANT_MESSAGE,
+    ):
+        trained = _weighted_tokens(glm_renderer, glm_tokenizer, messages, train_on_what)
+        assert think_token not in trained, train_on_what
+
+
+def test_terminator_left_alone_when_next_message_does_not_consume_it(glm_tokenizer, glm_renderer):
+    """A mid-conversation system message is not something the model ends a turn with.
+
+    The assistant keeps no terminator, the system message keeps its own header,
+    and the token sequence is unchanged.
+    """
+    messages = [
+        Message(role="user", content="q1"),
+        Message(role="assistant", content="<think>t1</think>a1"),
+        Message(role="system", content="new rules"),
+        Message(role="user", content="q2"),
+        Message(role="assistant", content="<think>t2</think>a2"),
+    ]
+    user_token = glm_tokenizer.encode("<|user|>", add_special_tokens=False)[0]
+    trained = _weighted_tokens(
+        glm_renderer, glm_tokenizer, messages, TrainOnWhat.ALL_ASSISTANT_MESSAGES
+    )
+    # Only the final turn's terminator; the first turn hands off to <|system|>.
+    assert trained.count(user_token) == 1
+    rendered = glm_tokenizer.decode(
+        glm_renderer.build_supervised_example(
+            messages, train_on_what=TrainOnWhat.ALL_ASSISTANT_MESSAGES
+        )[0].to_ints()
+    )
+    assert "a1<|system|>new rules<|user|>q2" in rendered
+
+
+@pytest.mark.parametrize(
+    "train_on_what",
+    [TrainOnWhat.ALL_ASSISTANT_MESSAGES, TrainOnWhat.LAST_ASSISTANT_MESSAGE],
+)
+def test_terminator_ownership_does_not_change_tokens(glm_tokenizer, glm_renderer, train_on_what):
+    """Moving the terminator between chunks must leave the rendering byte-identical to HF."""
+    messages = get_multiturn_thinking_conversation()
+    cookbook = glm_renderer.build_supervised_example(messages, train_on_what=train_on_what)[
+        0
+    ].to_ints()
+    hf_messages = [glm_renderer.to_openai_message(m) for m in messages]
+    hf = _hf_supervised_tokens(glm_tokenizer, hf_messages)
+    assert cookbook == hf, (
+        f"Cookbook: {glm_tokenizer.decode(cookbook)}\nHF: {glm_tokenizer.decode(hf)}"
+    )
+
+
+# =============================================================================
 # Tool Declaration Tests
 # =============================================================================
 
