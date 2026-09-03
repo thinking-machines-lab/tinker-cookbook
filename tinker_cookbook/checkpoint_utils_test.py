@@ -220,6 +220,20 @@ class TestCheckpointManagerShouldSave:
         assert not mgr._should_save_rolling(5)
         assert not mgr._should_save_rolling(10)
 
+    def test_skips_step_of_last_periodic_save(self):
+        """A periodic save at a step suppresses the rolling save for that step.
+
+        This covers token- and wall-clock-triggered periodic saves, which fire
+        on steps the ``save_every`` modulo check can't predict. Without the
+        suppression, both saves would race to create the same checkpoint name
+        and the loser would poison the TrainingClient.
+        """
+        mgr = self._make_mgr(rolling_save_every=10, save_every=0)
+        assert mgr._should_save_rolling(50)
+        mgr._last_periodic_step = 50  # e.g. a token-triggered periodic save
+        assert not mgr._should_save_rolling(50)
+        assert mgr._should_save_rolling(60)
+
 
 class TestCheckpointManagerShouldSavePeriodic:
     """Tests for should_save_periodic logic."""
@@ -672,3 +686,115 @@ async def test_sync_periodic_saves_still_work():
         assert result["state_path"] == "tinker://run/state/000005"
         assert result["sampler_path"] == "tinker://run/sampler/000005"
         assert mgr._pending_periodic_task is None
+
+
+# ---------------------------------------------------------------------------
+# Periodic/rolling same-step collision tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_token_periodic_and_rolling_same_step_saves_once():
+    """Regression: a token-triggered periodic save must suppress the rolling save.
+
+    With save_every=0 + save_every_tokens set, a token-threshold crossing can
+    land on a rolling-cadence step. Both saves used to fire with the same
+    checkpoint name; the server rejects the duplicate ("Checkpoint already
+    exists") and the failed request poisons the TrainingClient, killing the
+    run. Only the periodic save (state + sampler) should happen.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        state_mock, sampler_mock = _make_both_save_mocks(
+            ["tinker://run/state/000050"], ["tinker://run/sampler/000050"]
+        )
+        mock_training_client.save_state_async = state_mock
+        mock_training_client.save_weights_for_sampler_async = sampler_mock
+
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            save_every=0,
+            save_every_tokens=2_000_000,
+            rolling_save_every=10,
+            async_periodic_saves=True,
+        )
+
+        # Step 50 crosses the token threshold AND is a rolling-cadence step.
+        await mgr.maybe_save_async(step=50, loop_state={"batch": 50}, elapsed_tokens=2_100_000)
+        await mgr.finalize_async()
+
+        # Exactly one state save (the periodic one), under the periodic name.
+        assert mock_training_client.save_state_async.call_count == 1
+        assert mock_training_client.save_state_async.call_args.args[0] == "000050"
+        assert mock_training_client.save_weights_for_sampler_async.call_count == 1
+
+        ckpts = [
+            CheckpointRecord.from_dict(json.loads(line))
+            for line in (Path(tmpdir) / "checkpoints.jsonl").read_text().strip().split("\n")
+        ]
+        assert len(ckpts) == 1
+        assert ckpts[0].name == "000050"
+        assert ckpts[0].extra.get("rolling") is None
+
+
+@pytest.mark.asyncio
+async def test_rolling_checkpoints_use_distinct_names():
+    """Rolling checkpoints get a '-rolling' suffix so they can never collide
+    with a periodic checkpoint saved at the same step."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        mock_service_client = MagicMock()
+        mock_rest_client = MagicMock()
+        mock_service_client.create_rest_client.return_value = mock_rest_client
+        mock_rest_client.delete_checkpoint_from_tinker_path_async = AsyncMock()
+
+        mock_training_client.save_state_async = _make_save_state_mock(
+            ["tinker://run/state/000001-rolling", "tinker://run/state/000002-rolling"]
+        )
+
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=mock_service_client,
+            log_path=tmpdir,
+            rolling_save_every=1,
+        )
+
+        await mgr.maybe_save_async(step=1, loop_state={"batch": 1})
+        await mgr.maybe_save_async(step=2, loop_state={"batch": 2})
+        await mgr.finalize_async()
+
+        names = [c.args[0] for c in mock_training_client.save_state_async.call_args_list]
+        assert names == ["000001-rolling", "000002-rolling"]
+
+
+@pytest.mark.asyncio
+async def test_direct_save_periodic_suppresses_same_step_rolling():
+    """The RL loop calls save_periodic_async directly (not via maybe_save_async);
+    a later rolling check for the same step must still be suppressed."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        state_mock, sampler_mock = _make_both_save_mocks(
+            ["tinker://run/state/000010"], ["tinker://run/sampler/000010"]
+        )
+        mock_training_client.save_state_async = state_mock
+        mock_training_client.save_weights_for_sampler_async = sampler_mock
+
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=MagicMock(),
+            log_path=tmpdir,
+            save_every=0,
+            save_every_tokens=1_000_000,
+            rolling_save_every=10,
+        )
+
+        await mgr.save_periodic_async(step=10, loop_state={"batch": 10})
+        # Same step: rolling must not fire on top of the periodic save.
+        await mgr.maybe_save_rolling_async(step=10, loop_state={"batch": 10})
+        await mgr.finalize_async()
+        assert mock_training_client.save_state_async.call_count == 1
+
+        # A later rolling-cadence step still fires normally.
+        assert mgr._should_save_rolling(20)
