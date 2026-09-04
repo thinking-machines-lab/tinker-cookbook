@@ -51,15 +51,15 @@ class Config:
     group_size: int = 32
     groups_per_batch: int = 16
     validation_group_size: int = 8
-    learning_rate: float = 8e-5
+    learning_rate: float = 1e-4
     max_tokens: int = 24_576
     temperature: float = 1.0
     loss_fn: LossFnType = "importance_sampling"
-    max_steps: int | None = 100
+    max_steps: int | None = 128
 
     # Evaluation and logging
-    eval_every: int = 20
-    save_every: int = 20
+    eval_every: int = 16
+    save_every: int = 64
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
