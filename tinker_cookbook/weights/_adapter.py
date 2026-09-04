@@ -223,8 +223,8 @@ def _warn_experimental_moe(profile: MergeProfile) -> None:
 
     if profile.model_family not in stable_moe_families:
         logger.warning(
-            "MoE expert LoRA serving for %s models is experimental in vLLM and "
-            "not yet supported in SGLang. The adapter will be produced but may "
+            "MoE expert LoRA serving for %s models is experimental in vLLM. "
+            "SGLang supports it. The adapter will be produced but may "
             "not work with all serving configurations.",
             profile.model_family,
         )
