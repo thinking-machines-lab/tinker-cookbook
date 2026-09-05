@@ -1815,35 +1815,9 @@ class Renderer(ABC):
                 (tinker.types.EncodedTextChunk(tokens=self._bos_tokens), 0.0)
             )
 
-        last_user_idx = max(
-            (idx for idx, message in enumerate(messages) if message["role"] == "user"),
-            default=-1,
-        )
-
-        turn_start = self._last_assistant_turn_start_index(messages[:-1])
-
-        for idx, message in enumerate(messages):
-            if train_on_what == TrainOnWhat.CUSTOMIZED:
-                assert "trainable" in message, (
-                    "When using CUSTOMIZED train_on_what, each message must have a trainable field: True if loss is applied on this message, False otherwise"
-                )
-            else:
-                assert "trainable" not in message, (
-                    "When using non-CUSTOMIZED train_on_what, each message must not have a trainable field. Either change train_on_what to CUSTOMIZED or remove the trainable field from the message"
-                )
-
-            is_last_message = idx == len(messages) - 1
-            in_last_assistant_turn = idx >= turn_start
-
+        training_plan = self._training_plan(messages, train_on_what)
+        for message, (ctx, output_has_weight) in zip(messages, training_plan, strict=True):
             # only apply weight to header if train_on_what is ALL_TOKENS
-            ctx = RenderContext(
-                idx=idx,
-                is_last=is_last_message,
-                prev_message=messages[idx - 1] if idx > 0 else None,
-                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
-                last_user_index=last_user_idx,
-                in_last_assistant_turn=in_last_assistant_turn,
-            )
             rendered_message = self.render_message(message, ctx)
             header_part = rendered_message.header
             output_parts = rendered_message.output
@@ -1853,15 +1827,13 @@ class Renderer(ABC):
             if header_part:
                 model_input_chunks_weights += [(header_part, header_weight)]
 
-            output_has_weight = self._output_is_trained(message, ctx, train_on_what)
-
             model_input_chunks_weights += [
                 (output_part, int(output_has_weight)) for output_part in output_parts if output_part
             ]
 
             # stop_overlap completes the stop sequence for formats like RoleColon (e.g., "User:")
             # Only included for the last message.
-            if is_last_message and stop_overlap_part:
+            if ctx.is_last and stop_overlap_part:
                 model_input_chunks_weights += [(stop_overlap_part, int(output_has_weight))]
 
         weights_data = [w for chunk, w in model_input_chunks_weights for _ in range(chunk.length)]
@@ -1949,6 +1921,37 @@ class Renderer(ABC):
                 return message.get("trainable", False)
             case _:
                 raise RendererError(f"Unknown train_on_what: {train_on_what}")
+
+    def _training_plan(
+        self, messages: list[Message], train_on_what: TrainOnWhat
+    ) -> list[tuple[RenderContext, bool]]:
+        """Build the canonical per-message context and loss policy."""
+        customized = train_on_what == TrainOnWhat.CUSTOMIZED
+        for message in messages:
+            if customized and "trainable" not in message:
+                raise ValueError(
+                    "CUSTOMIZED train_on_what requires every message to have a trainable field"
+                )
+            if not customized and "trainable" in message:
+                raise ValueError("trainable fields require train_on_what=TrainOnWhat.CUSTOMIZED")
+
+        last_user_idx = max(
+            (idx for idx, message in enumerate(messages) if message["role"] == "user"),
+            default=-1,
+        )
+        turn_start = self._last_assistant_turn_start_index(messages[:-1])
+        plan: list[tuple[RenderContext, bool]] = []
+        for idx, message in enumerate(messages):
+            ctx = RenderContext(
+                idx=idx,
+                is_last=idx == len(messages) - 1,
+                prev_message=messages[idx - 1] if idx > 0 else None,
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
+                last_user_index=last_user_idx,
+                in_last_assistant_turn=idx >= turn_start,
+            )
+            plan.append((ctx, self._output_is_trained(message, ctx, train_on_what)))
+        return plan
 
     def _last_assistant_turn_start_index(self, messages: list[Message]) -> int:
         """Index of the first message in the turn the model is being asked to produce.
