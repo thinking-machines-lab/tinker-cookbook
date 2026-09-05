@@ -6,7 +6,6 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 """
 
 from collections.abc import Callable
-from importlib import import_module
 from typing import Any
 
 from tinker_cookbook.exceptions import RendererError
@@ -166,7 +165,9 @@ def get_renderer(
             - ``"gpt_oss_high_reasoning"``: GPT-OSS with high reasoning
             - Custom renderers registered via ``register_renderer()``
         tokenizer (Tokenizer): The tokenizer to use.
-        image_processor (ImageProcessor | None): Required for VL renderers.
+        image_processor (ImageProcessor | None): Image processor for legacy VL renderers.
+            Public TML renderers, including Qwen3-VL, own their image tokenization and ignore
+            this compatibility argument.
         model_name (str | None): Model name for pickle metadata. If None,
             falls back to ``tokenizer.name_or_path``. Provide this explicitly
             when the tokenizer was loaded with a remapped name (e.g., Llama 3
@@ -187,8 +188,7 @@ def get_renderer(
         ])
 
     Raises:
-        RendererError: If the renderer name is unknown or if a VL renderer
-            is requested without an image_processor.
+        RendererError: If the renderer name is unknown.
     """
 
     def _stamp_pickle_metadata(renderer: Renderer) -> Renderer:
@@ -203,6 +203,14 @@ def get_renderer(
         return _stamp_pickle_metadata(factory(tokenizer, image_processor))
 
     # Import renderer classes lazily to avoid circular imports and keep exports minimal
+    from tml_renderers import (
+        qwen3,
+        qwen3_disable_thinking,
+        qwen3_instruct,
+        qwen3_vl,
+        qwen3_vl_instruct,
+    )
+
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
@@ -227,10 +235,6 @@ def get_renderer(
         Nemotron3UltraPreserveThinkingRenderer,
         Nemotron3UltraRenderer,
     )
-    from tinker_cookbook.renderers.qwen3 import (
-        Qwen3VLInstructRenderer,
-        Qwen3VLRenderer,
-    )
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.qwen3_8 import Qwen3_8DisableThinkingRenderer, Qwen3_8Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
@@ -243,17 +247,15 @@ def get_renderer(
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
     elif name == "qwen3":
-        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3").Renderer())
+        renderer = TmlRendererAdapter(qwen3.Renderer())
     elif name == "qwen3_vl":
-        renderer = Qwen3VLRenderer(tokenizer, image_processor)
+        renderer = TmlRendererAdapter(qwen3_vl.Renderer())
     elif name == "qwen3_vl_instruct":
-        renderer = Qwen3VLInstructRenderer(tokenizer, image_processor)
+        renderer = TmlRendererAdapter(qwen3_vl_instruct.Renderer())
     elif name == "qwen3_disable_thinking":
-        renderer = TmlRendererAdapter(
-            import_module("tml_renderers.qwen3_disable_thinking").Renderer()
-        )
+        renderer = TmlRendererAdapter(qwen3_disable_thinking.Renderer())
     elif name == "qwen3_instruct":
-        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3_instruct").Renderer())
+        renderer = TmlRendererAdapter(qwen3_instruct.Renderer())
     elif name == "qwen3_5":
         renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_5_disable_thinking":
