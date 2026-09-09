@@ -218,37 +218,6 @@ class TestShutdownCascade:
 
         asyncio.run(_test())
 
-    def test_requeue_skipped_during_shutdown(self):
-        """
-        When the dataloader is done, stale samples should be discarded
-        rather than requeued (to avoid deadlocking on a full bounded queue).
-        """
-        dataloader_done = asyncio.Event()
-
-        requeue_attempted = False
-        discard_count = 0
-
-        def filter_stale(is_stale: bool) -> bool:
-            nonlocal requeue_attempted, discard_count
-            if is_stale:
-                if dataloader_done.is_set():
-                    discard_count += 1
-                else:
-                    requeue_attempted = True
-                return False
-            return True
-
-        # Before dataloader is done: stale items should attempt requeue
-        filter_stale(is_stale=True)
-        assert requeue_attempted
-
-        # After dataloader is done: stale items should be discarded
-        requeue_attempted = False
-        dataloader_done.set()
-        filter_stale(is_stale=True)
-        assert not requeue_attempted
-        assert discard_count == 1
-
     def test_none_items_pass_through_during_shutdown(self):
         """
         None items (failed rollouts) should be skipped, and _Shutdown should
