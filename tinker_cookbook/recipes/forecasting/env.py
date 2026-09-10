@@ -256,10 +256,17 @@ class ForecastEvaluator(RLTestSetEvaluator):
                     pair = (float(logs["forecast"]), int(logs["outcome"]))
                     for tag in tags:
                         pairs_by_tag[tag].append(pair)
+        auc_metrics: dict[str, float] = {}
         for tag, pairs in pairs_by_tag.items():
             auc = roc_auc(pairs)
             if auc is not None:
-                metrics[f"{self.name}/env/{tag}/auc"] = auc
+                auc_metrics[f"env/{tag}/auc"] = auc
+        # The base class records an unprefixed BenchmarkResult before returning the
+        # prefixed dict; keep both views complete.
+        if self.last_result is None:
+            raise RuntimeError("base evaluator did not record a BenchmarkResult")
+        self.last_result.metrics.update(auc_metrics)
+        metrics.update({f"{self.name}/{k}": v for k, v in auc_metrics.items()})
         return metrics
 
 
