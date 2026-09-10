@@ -9,7 +9,6 @@ import statistics
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import chz
 
@@ -27,10 +26,8 @@ from tinker_cookbook.rl.types import (
     Trajectory,
     TrajectoryGroup,
 )
+from tinker_cookbook.stores.training_store import TrainingRunStore
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-
-if TYPE_CHECKING:
-    from tinker_cookbook.stores.training_store import TrainingRunStore
 
 from .data import (
     DEFAULT_CACHE_DIR,
