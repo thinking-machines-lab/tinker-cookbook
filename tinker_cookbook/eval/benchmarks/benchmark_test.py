@@ -337,17 +337,19 @@ class TestIFEvalRelationCheck:
         assert _relation_check(3, "exactly", 3)
         assert not _relation_check(2, "exactly", 3)
 
-    def test_unrecognized_relation_passes(self):
-        """An unknown relation still passes, matching the rest of this verifier.
-
-        Instruction types it can't check are treated leniently, and the kwargs
-        come from third-party datasets, so an unexpected value shouldn't turn
-        into a silent zero.
+    def test_unrecognized_relation_fails_loudly(self, caplog):
+        """An unknown relation can't be verified, so it must not silently score as
+        satisfied -- that is the same score inflation the "less than" case caused.
+        It fails the check and logs a warning so the gap is visible.
         """
+        import logging
+
         from tinker_cookbook.eval.benchmarks._ifeval_verify import _relation_check
 
-        assert _relation_check(5, "more than", 3)
-        assert _relation_check(1, "", 3)
+        with caplog.at_level(logging.WARNING):
+            assert not _relation_check(5, "more than", 3)
+            assert not _relation_check(1, "", 3)
+        assert any("relation" in record.getMessage().lower() for record in caplog.records)
 
     def test_number_words_less_than(self):
         from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
