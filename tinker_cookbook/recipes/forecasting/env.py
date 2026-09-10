@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import math
 import re
-import statistics
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -224,26 +223,6 @@ def roc_auc(pairs: Sequence[tuple[float, int]]) -> float | None:
     return (rank_sum_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
 
 
-def _group_forecast(group: TrajectoryGroup) -> tuple[float, int] | None:
-    """Mean valid forecast across a question's rollouts, with its outcome.
-
-    Returns ``None`` when no rollout produced a parseable forecast.
-    """
-    forecasts: list[float] = []
-    outcome: int | None = None
-    for trajectory in group.trajectories_G:
-        for transition in trajectory.transitions:
-            logs = transition.logs
-            if "forecast" not in logs:
-                continue
-            outcome = int(logs["outcome"])
-            if logs["forecast"] != "invalid":
-                forecasts.append(float(logs["forecast"]))
-    if outcome is None or not forecasts:
-        return None
-    return statistics.fmean(forecasts), outcome
-
-
 class ForecastEvaluator(RLTestSetEvaluator):
     """Validation evaluator that also reports AUC.
 
@@ -251,6 +230,9 @@ class ForecastEvaluator(RLTestSetEvaluator):
     averages. AUC is a property of the whole validation set, so it has to be
     computed after every question has been scored; this hooks the shared
     metric-collection step to add it under the same ``env/<tag>/`` prefixes.
+    Every sampled forecast is one point, matching the per-rollout basis of the
+    other metrics; rollouts with no parseable forecast carry no probability and
+    are left out.
     """
 
     def _collect_eval_metrics(
@@ -265,12 +247,15 @@ class ForecastEvaluator(RLTestSetEvaluator):
         for builder, group in zip(self.env_group_builders_P, results):
             if group is None:
                 continue
-            pair = _group_forecast(group)
-            if pair is None:
-                continue
-            pairs_by_tag["all"].append(pair)
-            for tag in builder.logging_tags():
-                pairs_by_tag[tag].append(pair)
+            tags = ["all", *builder.logging_tags()]
+            for trajectory in group.trajectories_G:
+                for transition in trajectory.transitions:
+                    logs = transition.logs
+                    if "forecast" not in logs or logs["forecast"] == "invalid":
+                        continue
+                    pair = (float(logs["forecast"]), int(logs["outcome"]))
+                    for tag in tags:
+                        pairs_by_tag[tag].append(pair)
         for tag, pairs in pairs_by_tag.items():
             auc = roc_auc(pairs)
             if auc is not None:

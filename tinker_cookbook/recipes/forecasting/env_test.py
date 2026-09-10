@@ -17,7 +17,6 @@ from .env import (
     ForecastEvaluator,
     ForecastGroupBuilder,
     ForecastRLDataset,
-    _group_forecast,
     brier_reward,
     parse_forecast,
     render_prompt,
@@ -201,12 +200,6 @@ def _fake_group(forecasts: list[str], outcome: int) -> Trajectory:
     )
 
 
-def test_group_forecast_averages_valid_rollouts() -> None:
-    group = cast(TrajectoryGroup, _fake_group(["0.2", "invalid", "0.6"], 1))
-    assert _group_forecast(group) == (pytest.approx(0.4), 1)
-    assert _group_forecast(cast(TrajectoryGroup, _fake_group(["invalid"], 0))) is None
-
-
 def test_forecast_evaluator_adds_auc_by_tag(monkeypatch: pytest.MonkeyPatch) -> None:
     examples = [_example(outcome=1), _example(outcome=0), _example(outcome=1), _example(outcome=0)]
     dataset = ForecastRLDataset(
@@ -218,16 +211,18 @@ def test_forecast_evaluator_adds_auc_by_tag(monkeypatch: pytest.MonkeyPatch) -> 
         "_collect_eval_metrics",
         lambda self, results, export, *, store=None: {"test/env/all/brier_reward": 0.8},
     )
+    # Every valid rollout is a point; the invalid one is dropped. Points:
+    # YES: 0.9, 0.7   NO: 0.2, 0.4, 0.8  -> 5 of 6 YES/NO pairs ranked right.
     results = [
-        cast(TrajectoryGroup, _fake_group(["0.9"], 1)),
+        cast(TrajectoryGroup, _fake_group(["0.9", "invalid", "0.7"], 1)),
         cast(TrajectoryGroup, _fake_group(["0.2"], 0)),
         None,
-        cast(TrajectoryGroup, _fake_group(["0.4"], 0)),
+        cast(TrajectoryGroup, _fake_group(["0.4", "0.8"], 0)),
     ]
 
     metrics = evaluator._collect_eval_metrics(results, None)
 
     assert metrics["test/env/all/brier_reward"] == 0.8
-    assert metrics["test/env/all/auc"] == 1.0
-    assert metrics["test/env/prophet-arena/auc"] == 1.0
-    assert metrics["test/env/other/auc"] == 1.0
+    assert metrics["test/env/all/auc"] == pytest.approx(5 / 6)
+    assert metrics["test/env/prophet-arena/auc"] == pytest.approx(5 / 6)
+    assert metrics["test/env/other/auc"] == pytest.approx(5 / 6)
