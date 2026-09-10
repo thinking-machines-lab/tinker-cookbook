@@ -226,6 +226,7 @@ class AgentToolMessageEnv(MessageEnv):
                 )
 
         # Execute valid tool calls if present
+        tool_result_messages: list[Message] = []
         if tool_calls_to_run:
             for i, tc in enumerate(tool_calls_to_run):
                 logs[f"tool_call_{i}"] = f"{tc.function.name}({tc.function.arguments})"
@@ -269,6 +270,7 @@ class AgentToolMessageEnv(MessageEnv):
             next_messages=self.history,
             metrics=metrics,
             logs=logs,
+            appended_messages=tool_result_messages,
         )
 
     async def _grade(self) -> RewardResult:
@@ -375,6 +377,7 @@ def build_agent_tool_env(
     context_overflow_reward: float = -0.1,
     terminate_on_length: bool | None = None,
     parse_error_policy: ParseErrorPolicy | None = None,
+    preserve_sampled_tokens: bool = False,
 ) -> EnvFromMessageEnv:
     """Convenience method to build an EnvFromMessageEnv for tool-using agents.
 
@@ -454,6 +457,12 @@ def build_agent_tool_env(
             message up to ``max_consecutive`` times. Default ``None`` keeps
             those one-shot semantics. A rollout runner configured with a policy also
             sets this via ``set_parse_error_policy``.
+        preserve_sampled_tokens: Retain exact sampled assistant tokens on append-only
+            tool steps instead of re-rendering them. Defaults to False. This also
+            retains sampled reasoning that a renderer might otherwise strip from
+            history. Requires a renderer supporting independent rendering of new
+            messages. Parse-error retries, truncation continuation and externally
+            injected messages retain full rendering.
 
     Returns:
         An EnvFromMessageEnv ready for RL training.
@@ -505,4 +514,5 @@ def build_agent_tool_env(
         terminate_on_length=terminate_on_length,
         parse_error_policy=parse_error_policy,
         rollout_limits=cfg.limits if cfg is not None else None,
+        preserve_sampled_tokens=preserve_sampled_tokens,
     )
