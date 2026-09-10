@@ -199,7 +199,8 @@ For scale, always answering `0.5` scores a Brier reward of `0.7500` on this
 validation split, and always answering the training base rate scores `0.7709`.
 
 AUC measures how well the forecasts rank YES outcomes above NO outcomes,
-independent of calibration.
+independent of calibration. It is computed over the whole validation set at
+each evaluation and logged as `test/env/all/auc`.
 
 ## License
 

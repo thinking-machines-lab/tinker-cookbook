@@ -26,7 +26,7 @@ from .data import (
     DEFAULT_MAX_VALIDATION_QUESTIONS,
     DEFAULT_SPLIT_DATE,
 )
-from .env import ProphetArenaRLDatasetBuilder
+from .env import ForecastEvaluator, ForecastRLDataset, ProphetArenaRLDatasetBuilder
 
 
 @chz.chz
@@ -67,6 +67,13 @@ class Config:
     base_url: str | None = None
 
 
+async def _validation_dataset(builder: ProphetArenaRLDatasetBuilder) -> ForecastRLDataset:
+    _, validation_dataset = await builder()
+    if validation_dataset is None:
+        raise RuntimeError("dataset builder was configured without a validation split")
+    return validation_dataset
+
+
 async def _evaluate_final_checkpoint(
     train_config: train.Config,
     dataset_builder: ProphetArenaRLDatasetBuilder,
@@ -88,8 +95,8 @@ async def _evaluate_final_checkpoint(
     ):
         return
 
-    _, validation_dataset = await dataset_builder()
-    evaluator = train.RLTestSetEvaluator(
+    validation_dataset = await _validation_dataset(dataset_builder)
+    evaluator = ForecastEvaluator(
         validation_dataset,
         max_tokens=train_config.max_tokens,
         strategy=train_config.effective_rollout_strategy(),
@@ -137,11 +144,12 @@ async def cli_main(cfg: Config) -> None:
         max_validation_questions=cfg.max_validation_questions,
         seed=cfg.seed,
     )
+    validation_dataset = await _validation_dataset(dataset_builder)
     train_config = train.Config(
         model_name=cfg.model_name,
         recipe_name="recipe_prophet_arena_qwen_rl",
         renderer_name=renderer_name,
-        dataset_builder=dataset_builder,
+        dataset_builder=chz.replace(dataset_builder, include_validation=False),
         log_path=log_path,
         load_checkpoint_path=cfg.load_checkpoint_path,
         lora_rank=cfg.lora_rank,
@@ -157,6 +165,15 @@ async def cli_main(cfg: Config) -> None:
         base_url=cfg.base_url,
         kl_penalty_coef=0.0,
         compute_post_kl=False,
+    )
+    strategy = train_config.effective_rollout_strategy()
+    train_config = chz.replace(
+        train_config,
+        evaluator_builders=[
+            lambda: ForecastEvaluator(
+                validation_dataset, max_tokens=cfg.max_tokens, strategy=strategy
+            )
+        ],
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cfg.behavior_if_log_dir_exists)

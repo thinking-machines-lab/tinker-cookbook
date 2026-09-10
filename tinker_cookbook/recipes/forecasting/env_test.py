@@ -9,16 +9,19 @@ import pytest
 
 from tinker_cookbook import renderers
 from tinker_cookbook.renderers import Message
-from tinker_cookbook.rl.types import Trajectory
+from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
 
 from .data import ForecastExample
 from .env import (
     ForecastEnv,
+    ForecastEvaluator,
     ForecastGroupBuilder,
     ForecastRLDataset,
+    _group_forecast,
     brier_reward,
     parse_forecast,
     render_prompt,
+    roc_auc,
 )
 
 
@@ -174,3 +177,57 @@ def test_group_metrics_include_truncated_rollouts() -> None:
             },
         ),
     ]
+
+
+def test_roc_auc() -> None:
+    assert roc_auc([(0.9, 1), (0.8, 1), (0.2, 0), (0.1, 0)]) == 1.0
+    assert roc_auc([(0.1, 1), (0.2, 1), (0.8, 0), (0.9, 0)]) == 0.0
+    assert roc_auc([(0.5, 1), (0.5, 0)]) == 0.5
+    assert roc_auc([(0.9, 1), (0.5, 1), (0.5, 0), (0.1, 0)]) == pytest.approx(0.875)
+    assert roc_auc([(0.9, 1), (0.8, 1)]) is None
+
+
+def _fake_group(forecasts: list[str], outcome: int) -> Trajectory:
+    return cast(
+        Trajectory,
+        SimpleNamespace(
+            trajectories_G=[
+                SimpleNamespace(
+                    transitions=[SimpleNamespace(logs={"forecast": f, "outcome": outcome})]
+                )
+                for f in forecasts
+            ]
+        ),
+    )
+
+
+def test_group_forecast_averages_valid_rollouts() -> None:
+    group = cast(TrajectoryGroup, _fake_group(["0.2", "invalid", "0.6"], 1))
+    assert _group_forecast(group) == (pytest.approx(0.4), 1)
+    assert _group_forecast(cast(TrajectoryGroup, _fake_group(["invalid"], 0))) is None
+
+
+def test_forecast_evaluator_adds_auc_by_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    examples = [_example(outcome=1), _example(outcome=0), _example(outcome=1), _example(outcome=0)]
+    dataset = ForecastRLDataset(
+        examples, batch_size=4, group_size=1, renderer=cast(renderers.Renderer, None)
+    )
+    evaluator = ForecastEvaluator(dataset, max_tokens=8)
+    monkeypatch.setattr(
+        ForecastEvaluator.__mro__[1],
+        "_collect_eval_metrics",
+        lambda self, results, export, *, store=None: {"test/env/all/brier_reward": 0.8},
+    )
+    results = [
+        cast(TrajectoryGroup, _fake_group(["0.9"], 1)),
+        cast(TrajectoryGroup, _fake_group(["0.2"], 0)),
+        None,
+        cast(TrajectoryGroup, _fake_group(["0.4"], 0)),
+    ]
+
+    metrics = evaluator._collect_eval_metrics(results, None)
+
+    assert metrics["test/env/all/brier_reward"] == 0.8
+    assert metrics["test/env/all/auc"] == 1.0
+    assert metrics["test/env/prophet-arena/auc"] == 1.0
+    assert metrics["test/env/other/auc"] == 1.0
