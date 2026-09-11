@@ -13,7 +13,7 @@ Each entry includes:
 
 ---
 
-### [cookbook] Stop Harbor retries from leaking Modal sandboxes
+### [cookbook] Stop Harbor retries from leaking Modal sandboxes ([#944](https://github.com/thinking-machines-lab/tinker-cookbook/pull/944))
 **Date:** 2026-09-11
 **Type:** fix
 **Tags:** rl, harbor
