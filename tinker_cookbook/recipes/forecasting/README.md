@@ -167,36 +167,40 @@ for the outcome-based forecasting setup.
 
 With Qwen3.8-27B, we produced the following for reference:
 
-| Step | Validation Brier reward | Validation accuracy | Valid format |
-|---:|---:|---:|---:|
-| 0 | 0.7998 | 72.92% | 99.80% |
-| 16 | 0.8166 | 74.32% | 100.00% |
-| 32 | 0.8207 | 73.88% | 100.00% |
-| 48 | 0.8222 | 73.97% | 100.00% |
-| 64 | 0.8262 | 74.54% | 100.00% |
-| 80 | 0.8202 | 73.61% | 100.00% |
-| 96 | 0.8071 | 72.22% | 99.90% |
-| 112 | 0.8288 | 74.78% | 100.00% |
-| 128 | 0.8294 | 75.34% | 100.00% |
+| Step | Validation Brier reward | Validation accuracy | Validation AUC | Valid format |
+|---:|---:|---:|---:|---:|
+| 0 | 0.7998 | 72.92% | 0.7959 | 99.80% |
+| 16 | 0.8166 | 74.32% | 0.7981 | 100.00% |
+| 32 | 0.8207 | 73.88% | 0.8025 | 100.00% |
+| 48 | 0.8222 | 73.97% | 0.8045 | 100.00% |
+| 64 | 0.8262 | 74.54% | 0.8102 | 100.00% |
+| 80 | 0.8202 | 73.61% | 0.8026 | 100.00% |
+| 96 | 0.8071 | 72.22% | 0.8050 | 99.90% |
+| 112 | 0.8288 | 74.78% | 0.8145 | 100.00% |
+| 128 | 0.8294 | 75.34% | 0.8175 | 100.00% |
 
 With GLM-5.3:
 
-| Step | Validation Brier reward | Validation accuracy | Valid format |
-|---:|---:|---:|---:|
-| 0 | 0.7952 | 72.53% | 98.63% |
-| 16 | 0.8254 | 74.78% | 99.95% |
-| 32 | 0.8224 | 74.41% | 99.95% |
-| 48 | 0.8058 | 72.36% | 100.00% |
-| 64 | 0.8413 | 77.32% | 100.00% |
-| 80 | 0.8373 | 76.32% | 100.00% |
-| 96 | 0.8309 | 75.32% | 100.00% |
-| 112 | 0.8387 | 77.05% | 100.00% |
-| 128 | 0.8475 | 78.30% | 100.00% |
+| Step | Validation Brier reward | Validation accuracy | Validation AUC | Valid format |
+|---:|---:|---:|---:|---:|
+| 0 | 0.7952 | 72.53% | 0.8088 | 98.63% |
+| 16 | 0.8254 | 74.78% | 0.8122 | 99.95% |
+| 32 | 0.8224 | 74.41% | 0.8131 | 99.95% |
+| 48 | 0.8058 | 72.36% | 0.7808 | 100.00% |
+| 64 | 0.8413 | 77.32% | 0.8387 | 100.00% |
+| 80 | 0.8373 | 76.32% | 0.8289 | 100.00% |
+| 96 | 0.8309 | 75.32% | 0.8265 | 100.00% |
+| 112 | 0.8387 | 77.05% | 0.8331 | 100.00% |
+| 128 | 0.8475 | 78.30% | 0.8495 | 100.00% |
 
 This shows consistent improvement on temporally **held-out** validation questions and suggests that the learned forecasting behavior generalizes beyond the training events.
 
-For scale, always answering `0.5` scores `0.7500` on this validation split and
-always answering the training base rate scores `0.7709`.
+For scale, always answering `0.5` scores a Brier reward of `0.7500` on this
+validation split, and always answering the training base rate scores `0.7709`.
+
+AUC measures how well the forecasts rank YES outcomes above NO outcomes,
+independent of calibration. It is computed over the whole validation set at
+each evaluation and logged as `test/env/all/auc`.
 
 ## License
 
