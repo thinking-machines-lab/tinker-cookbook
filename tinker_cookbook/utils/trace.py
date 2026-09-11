@@ -444,6 +444,7 @@ def _instrument_sdk_clients() -> None:
             "load_state_async",
             "load_state_with_optimizer_async",
             "save_weights_for_sampler_async",
+            "save_weights_external_async",
             "save_weights_and_get_sampling_client_async",
             "create_sampling_client_async",
         ],
