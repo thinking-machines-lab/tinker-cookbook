@@ -13,7 +13,7 @@ Each entry includes:
 
 ---
 
-### [cookbook] Unblock stream-minibatch when a trajectory worker crashes
+### [cookbook] Unblock stream-minibatch when a trajectory worker crashes ([#946](https://github.com/thinking-machines-lab/tinker-cookbook/pull/946))
 **Date:** 2026-09-12
 **Type:** fix
 **Tags:** rl
