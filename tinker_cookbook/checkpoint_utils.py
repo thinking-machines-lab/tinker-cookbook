@@ -535,7 +535,13 @@ class CheckpointManager:
     * **Rolling** – cheap resume-only checkpoints (state only, no sampler
       export) saved every ``rolling_save_every`` steps.  After each save the
       previous rolling checkpoint is deleted to bound storage.  A short TTL
-      acts as a safety net if deletion fails.
+      acts as a safety net if deletion fails.  Rolling checkpoints are named
+      ``{step:06d}-rolling`` so they can never collide with a periodic
+      checkpoint saved at the same step — a same-name double save fails with
+      "Checkpoint already exists", and the failed request poisons the
+      training client, killing the run.  Rolling saves are also skipped
+      entirely on steps where a periodic save fires, since the periodic
+      checkpoint already contains the training state.
     * **Final** – a permanent checkpoint saved at the end of training with no
       TTL, followed by cleanup of any remaining rolling checkpoint.  The final
       checkpoint always blocks (never fire-and-forget).
@@ -590,6 +596,9 @@ class CheckpointManager:
         self._pending_rolling_task: asyncio.Task[None] | None = None
         self._pending_periodic_task: asyncio.Task[dict[str, str]] | None = None
         self._prev_state_path: str | None = None
+        # Step of the most recent periodic save; lets _should_save_rolling
+        # skip the redundant same-step rolling save (see class docstring).
+        self._last_periodic_step: int | None = None
 
         self._last_saved_tokens: int = 0
         self._last_saved_wall_time: float = time.perf_counter()
@@ -623,6 +632,7 @@ class CheckpointManager:
         sampling client) should call :meth:`should_save_periodic` first, then
         this method directly.
         """
+        self._last_periodic_step = step
         async with trace.scope_span("save_checkpoint"):
             return await save_checkpoint_async(
                 training_client=self._training_client,
@@ -636,6 +646,7 @@ class CheckpointManager:
 
     def save_periodic(self, step: int, loop_state: dict[str, Any]) -> dict[str, str]:
         """Synchronous version of :meth:`save_periodic_async`."""
+        self._last_periodic_step = step
         with trace.scope_span_sync("save_checkpoint"):
             return save_checkpoint(
                 training_client=self._training_client,
@@ -657,7 +668,11 @@ class CheckpointManager:
             return False
         if step % self._rolling_save_every != 0:
             return False
-        # Skip when a periodic checkpoint fires on the same step.
+        # Skip when a periodic save fired on this step: it already contains
+        # the training state. _last_periodic_step covers token- and wall-clock-
+        # triggered saves, which the save_every modulo below can't predict.
+        if step == self._last_periodic_step:
+            return False
         return not (self._save_every > 0 and step % self._save_every == 0)
 
     async def maybe_save_rolling_async(self, step: int, loop_state: dict[str, Any]) -> None:
@@ -712,6 +727,9 @@ class CheckpointManager:
         """
         result: dict[str, str] | None = None
         if self.should_save_periodic(step, elapsed_tokens=elapsed_tokens):
+            # Mark before the save is submitted so the rolling check below sees
+            # it even when the periodic save runs as a background task.
+            self._last_periodic_step = step
             if self._async_periodic_saves:
                 await self._resolve_pending_periodic_async()
                 self._pending_periodic_task = asyncio.create_task(
@@ -829,7 +847,9 @@ class CheckpointManager:
         self._pending_periodic_task = None
 
     async def _do_rolling_save_async(self, step: int, loop_state: dict[str, Any]) -> None:
-        name = f"{step:06d}"
+        # The "-rolling" suffix keeps rolling checkpoints in a distinct
+        # namespace from periodic ones (see class docstring).
+        name = f"{step:06d}-rolling"
         paths = await save_checkpoint_async(
             training_client=self._training_client,
             name=name,
