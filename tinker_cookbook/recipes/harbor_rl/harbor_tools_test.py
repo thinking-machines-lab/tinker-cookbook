@@ -19,7 +19,9 @@ class FakeSandbox:
     """In-memory sandbox for testing."""
 
     def __init__(self) -> None:
-        self.files: dict[str, str] = {}
+        # Values are stored exactly as written so binary fixtures round-trip,
+        # matching ModalSandbox.write_file, which streams raw bytes.
+        self.files: dict[str, str | bytes] = {}
         self.executable_files: set[str] = set()
         self.commands_run: list[str] = []
         self._command_results: dict[str, SandboxResult] = {}
@@ -51,13 +53,15 @@ class FakeSandbox:
         self, path: str, max_bytes: int | None = None, timeout: int = 60
     ) -> SandboxResult:
         if path in self.files:
-            return SandboxResult(stdout=self.files[path], stderr="", exit_code=0)
+            content = self.files[path]
+            stdout = content if isinstance(content, str) else content.decode(errors="replace")
+            return SandboxResult(stdout=stdout, stderr="", exit_code=0)
         return SandboxResult(stdout="", stderr=f"No such file: {path}", exit_code=1)
 
     async def write_file(
         self, path: str, content: str | bytes, executable: bool = False, timeout: int = 60
     ) -> SandboxResult:
-        self.files[path] = content if isinstance(content, str) else content.decode()
+        self.files[path] = content
         if executable:
             self.executable_files.add(path)
         return SandboxResult(stdout="", stderr="", exit_code=0)
@@ -152,6 +156,28 @@ class TestHarborReward:
         assert "/tests/test.sh" in sandbox.executable_files
         assert "/tests/helper.py" not in sandbox.executable_files
         assert "/tests/fixtures/expected.txt" not in sandbox.executable_files
+
+    def test_upload_tests_with_binary_fixture(self, tmp_path: Path) -> None:
+        """Non-UTF-8 fixtures upload byte-for-byte instead of failing the grade.
+
+        Terminal-Bench tasks such as sam-cell-seg (tests/test_img.png) and
+        pytorch-model-recovery (tests/weights_gtruth.pt) ship binary ground
+        truth that their graders read back, so reading the tree as text makes
+        those tasks unsolvable regardless of what the agent did.
+        """
+        png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
+        (tmp_path / "test.sh").write_text("#!/bin/bash\necho ok")
+        (tmp_path / "reference.png").write_bytes(png_bytes)
+
+        sandbox = FakeSandbox()
+        sandbox.files["/logs/verifier/reward.txt"] = "1.0"
+        reward_fn = self._make_reward(tmp_path, sandbox)
+
+        reward, info = asyncio.run(reward_fn([]))
+
+        assert sandbox.files["/tests/reference.png"] == png_bytes
+        assert reward == 1.0
+        assert "grading_error" not in info
 
 
 # ---------------------------------------------------------------------------
