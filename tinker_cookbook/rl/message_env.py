@@ -99,14 +99,6 @@ class EnvFromMessageEnv(types.Env):
 
     This bridges the message-level abstraction to the token-level interface
     expected by the RL training loop.
-
-    With preserve_sampled_tokens=True, steps declaring appended_messages retain
-    the exact sampled assistant tokens and render only the appended messages.
-    This preserves reasoning and other sampled formatting even when full rendering
-    would rewrite history. Opt in only when that raw history is the desired model
-    context and the renderer supports rendering appended messages independently.
-    History replacements, truncation continuation and message injection still use
-    full rendering, so those boundaries may split training datums.
     """
 
     def __init__(

@@ -32,46 +32,6 @@ env = build_agent_tool_env(
 )
 ```
 
-## Preserving sampled tokens
-
-For append-only tool rollouts, opt into retaining the exact sampled assistant
-tokens when constructing the next prompt:
-
-```python
-env = build_agent_tool_env(
-    renderer=renderer,
-    tools=[search],
-    initial_messages=messages,
-    reward_fn=my_reward_fn,
-    preserve_sampled_tokens=True,
-)
-```
-
-The default is `False`. With this option enabled, a continuing tool step builds
-the next observation from the previous observation, raw sampled action tokens,
-newly rendered tool results, and the generation suffix. Tools and rewards still
-receive parsed messages. Valid formatting variations, such as the two Harmony
-tool-recipient header positions, therefore do not break the token-prefix check
-used to merge RL turns into a single training datum.
-
-Enable this only when retaining the sampled history is desired: it also keeps
-reasoning that full rendering might strip. The renderer must support rendering
-new messages independently via `render_message` and its generation suffix; this
-path does not apply custom whole-history transformations. GPT-OSS tool rollouts
-are covered by regression tests.
-
-Custom `MessageEnv` implementations can opt individual steps into this path by
-setting `MessageStepResult.appended_messages` to the messages added **after** the
-assistant action. These must also be the tail of `next_messages`, and the earlier
-history and assistant message must be unchanged. An empty list means nothing was
-added after the assistant; `None` requests full rendering. This declaration only
-takes effect when `EnvFromMessageEnv(preserve_sampled_tokens=True)` is configured.
-
-History replacement, parse-error retries, truncation continuation, message
-injection, and terminal steps retain full rendering. Later incremental steps
-resume from the resulting observation. Such fallback boundaries can still split
-training datums; the training prefix check remains unchanged.
-
 ## Stateful Tools
 
 Stateful tools, including tools that share state, can be constructed by adding the `@tool` decorator to class methods with instance state:
