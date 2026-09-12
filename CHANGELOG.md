@@ -13,6 +13,20 @@ Each entry includes:
 
 ---
 
+### [cookbook] Unblock stream-minibatch when a trajectory worker crashes ([#946](https://github.com/thinking-machines-lab/tinker-cookbook/pull/946))
+**Date:** 2026-09-12
+**Type:** fix
+**Tags:** rl
+
+Fixes #945: stream-minibatch and async RL workers were fire-and-forget. If a
+rollout raised (default ``FailFast``), nothing was put on
+``trajectory_groups_queue``, so the trainer blocked on ``queue.get()`` forever
+and the original error showed up as ``Task exception was never retrieved``.
+Workers now forward ``_WorkerFailed``; putting ``None`` would swallow FailFast
+(it already means a filtered group). Distinct from fully-filtered empty batches.
+
+---
+
 ### [cookbook] Fix base-model single-turn evals + replace `parse_success` bool with `ParseTermination` enum ([#688](https://github.com/thinking-machines-lab/tinker-cookbook/pull/688))
 **Date:** 2026-04-30
 **Type:** fix
