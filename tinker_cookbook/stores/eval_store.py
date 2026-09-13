@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tinker_cookbook.stores.eval_comparison import RunComparison, compare_eval_runs
 from tinker_cookbook.stores.storage import Storage, storage_join
 
 if TYPE_CHECKING:
@@ -285,6 +286,15 @@ class EvalStore:
     def read_summary(self, run_id: str) -> dict[str, Any] | None:
         """Read the combined summary for a run, or ``None`` if missing."""
         return self._read_json("runs", run_id, "summary.json")
+
+    def compare_runs(self, baseline_run_id: str, candidate_run_id: str) -> RunComparison:
+        """Compare two stored runs using stable, non-empty ``example_id`` values.
+
+        The comparison is entirely offline. Examples without an ID are reported
+        as unmatched and duplicate non-empty IDs raise ``ValueError``. Error
+        classifications take precedence over reward-based classifications.
+        """
+        return compare_eval_runs(self, baseline_run_id, candidate_run_id)
 
     # ── Writes (for eval runner) ──────────────────────────────────────
 
