@@ -177,9 +177,11 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
         # Parse-error turns flagged for masking (ParseErrorPolicy.mask_error_turns)
         # contribute no training signal: their action tokens get mask=0 and
         # advantage=0, while surrounding turns train normally.
-        masked = float(transition.metrics.get(PARSE_ERROR_MASKED_METRIC_KEY, 0.0)) >= 1.0
-        action_mask = 0.0 if masked else 1.0
-        action_advantage = 0.0 if masked else traj_advantage
+        parse_error_masked = (
+            float(transition.metrics.get(PARSE_ERROR_MASKED_METRIC_KEY, 0.0)) >= 1.0
+        )
+        action_mask = 0.0 if parse_error_masked else transition.action_mask
+        action_advantage = 0.0 if action_mask == 0.0 else traj_advantage
         SequenceAccumulator.full_sequence.extend(delta_ob_flat)
         SequenceAccumulator.full_sequence.extend(ac_with_logprobs.tokens)
         SequenceAccumulator.sampled_logprobs.extend(

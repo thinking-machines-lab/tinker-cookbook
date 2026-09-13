@@ -1,169 +1,113 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import statistics
 import time
+import tomllib
+from pathlib import Path
 
 import chz
-import numpy as np
 import tinker
-import verifiers as vf
-from verifiers.utils.message_utils import messages_to_printable
+import verifiers.v1 as vf
 
-from tinker_cookbook import checkpoint_utils, model_info, renderers
-from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.recipes.verifiers_rl.tinker_client import TinkerClient
+from tinker_cookbook.recipes.verifiers_rl.verifiers_env import load_tasks
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 
-def log_results(
-    results: vf.GenerateOutputs,
-    vf_env_id: str,
-    model_name: str,
-    num_examples: int,
-    rollouts_per_example: int,
-    time_s: float,
-):
-    print(f"Evaluation completed in {time_s:.2f} seconds")
-    print("--- Evaluation ---")
-    print(f"Environment: {vf_env_id}")
-    print(f"Model: {model_name}")
-    print(f"Examples: {num_examples}")
-    print(f"Rollouts per example: {rollouts_per_example}")
-    print("--- Example ---")
-    printable_prompts = [messages_to_printable(p) for p in results["prompt"]]
-    printable_completions = [messages_to_printable(c) for c in results["completion"]]
-    vf.print_prompt_completions_sample(
-        prompts=printable_prompts,
-        completions=printable_completions,
-        errors=[],  # Required argument added in verifiers 0.1.9
-        rewards=results["reward"],
-        step=0,
-    )
-    print("--- All ---")
-    print("Rewards:")
-    print(
-        f"reward: avg - {sum(results['reward']) / len(results['reward']):.3f}, std - {np.std(results['reward']):.3f}"
-    )
-    r = rollouts_per_example
-    n = len(results["reward"]) // r
-    for i in range(r):
-        # rounded to 3 decimal places
-        trials = [round(results["reward"][(i * n) + j], 3) for j in range(n)]
-        out = f"r{i + 1}: {trials}"
-        print(out)
-    for k in results["metrics"]:
-        v = results["metrics"][k]
-        print(f"{k}: avg - {sum(v) / len(v):.3f}, std - {np.std(v):.3f}")
-        for i in range(r):
-            # rounded to 3 decimal places
-            trials = [round(v[(i * n) + j], 3) for j in range(n)]
-            out = f"r{i + 1}: {trials}"
-            print(out)
+def print_results(traces: list[vf.Trace], elapsed: float) -> None:
+    rewards = [trace.reward for trace in traces]
+    errors = [trace for trace in traces if trace.has_error]
+    print(f"Evaluation completed in {elapsed:.2f} seconds")
+    print(f"Rollouts: {len(traces)} ({len(errors)} errors)")
+    if rewards:
+        print(f"Reward: {statistics.mean(rewards):.3f} ± {statistics.pstdev(rewards):.3f}")
+    if traces:
+        print("--- Example trace ---")
+        print(traces[0].transcript)
 
 
 async def evaluate(
-    vf_env_id: str,
-    vf_env_args: dict,
+    env_config_path: str,
     model_name: str | None,
-    num_examples: int,
-    rollouts_per_example: int,
+    model_path: str | None,
+    renderer_model_name: str | None,
+    renderer_pool_size: int,
+    num_tasks: int | None,
+    rollouts_per_task: int,
     max_concurrent: int,
     max_tokens: int,
     temperature: float,
-    model_path: str | None = None,
-):
-    service = tinker.ServiceClient(
-        user_metadata=recipe_user_metadata("eval_verifiers_rl"),
-    )
-
-    # If model_path is provided, get the base model from the training run
+) -> list[vf.Trace]:
+    service = tinker.ServiceClient(user_metadata=recipe_user_metadata("eval_verifiers_rl_v1"))
     if model_path is not None:
-        rest_client = service.create_rest_client()
-        training_run = await rest_client.get_training_run_by_tinker_path_async(model_path)
-        if model_name:
-            if model_name != training_run.base_model:
-                raise ValueError(
-                    f"Model name {model_name} does not match training run base model {training_run.base_model}"
-                )
-        else:
-            model_name = training_run.base_model
-
+        run = await service.create_rest_client().get_training_run_by_tinker_path_async(model_path)
+        if model_name is not None and model_name != run.base_model:
+            raise ValueError(
+                f"model_name {model_name!r} does not match checkpoint base model {run.base_model!r}"
+            )
+        model_name = run.base_model
     if model_name is None:
         raise ValueError("model_name or model_path must be provided")
 
-    env = vf.load_environment(vf_env_id, **vf_env_args)
-    tokenizer = get_tokenizer(model_name)
-    renderer_name = None
-    if model_path is not None:
-        renderer_name = await checkpoint_utils.get_renderer_name_from_checkpoint_async(
-            service, model_path
-        )
-    if renderer_name is None:
-        renderer_name = model_info.get_recommended_renderer_name(model_name)
-    print(f"Using renderer: {renderer_name}")
-    renderer = renderers.get_renderer(renderer_name, tokenizer)
-
-    # Create sampling client from checkpoint path or base model
-    if model_path:
-        sampling = service.create_sampling_client(model_path=model_path, base_model=model_name)
-    else:
-        sampling = service.create_sampling_client(base_model=model_name)
-
-    client = TinkerAsyncOpenAIClient(sampling, renderer, tokenizer)
-    start_time = time.time()
-    results = env.evaluate_sync(
-        client=client,
+    sampling_client = (
+        service.create_sampling_client(model_path=model_path, base_model=model_name)
+        if model_path
+        else service.create_sampling_client(base_model=model_name)
+    )
+    client = TinkerClient(
+        sampling_client,
+        renderer_model_name=renderer_model_name or model_name,
+        renderer_pool_size=renderer_pool_size,
+    )
+    context = vf.ModelContext(
         model=model_name,
-        num_examples=num_examples,
-        rollouts_per_example=rollouts_per_example,
-        max_concurrent=max_concurrent,
-        sampling_args={
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        },
+        client=client,
+        sampling=vf.SamplingConfig(max_tokens=max_tokens, temperature=temperature),
     )
-    end_time = time.time()
-    log_results(
-        results,
-        vf_env_id,
-        model_name,
-        num_examples,
-        rollouts_per_example,
-        end_time - start_time,
-    )
-    return results
+    raw_config = tomllib.loads(Path(env_config_path).read_text())
+    env = vf.Environment(vf.EnvConfig.model_validate(raw_config))
+    tasks = load_tasks(env.taskset, num_tasks)
+    semaphore = asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
+
+    start = time.monotonic()
+    async with env.serving():
+        groups = await asyncio.gather(
+            *(env.episode(task, context, n=rollouts_per_task).run(semaphore) for task in tasks)
+        )
+    traces = [trace for group in groups for trace in group]
+    print_results(traces, time.monotonic() - start)
+    return traces
 
 
 @chz.chz
 class CLIConfig:
-    model_name: str | None = None  # Base model name (auto-detected from checkpoint if not provided)
-    model_path: str | None = None  # Path to checkpoint (e.g., from checkpoints.jsonl sampler_path)
-    vf_env_id: str = "reverse-text"
-    vf_env_args: str | None = None  # JSON string
-    num_examples: int = 5
-    rollouts_per_example: int = 3
+    env_config_path: str
+    model_name: str | None = None
+    model_path: str | None = None
+    renderer_model_name: str | None = None
+    renderer_pool_size: int = 1
+    num_tasks: int | None = 5
+    rollouts_per_task: int = 3
     max_concurrent: int = 32
     max_tokens: int = 1024
     temperature: float = 1.0
 
 
-async def cli_main(config: CLIConfig):
-    env_args = json.loads(config.vf_env_args) if config.vf_env_args else {}
+async def cli_main(config: CLIConfig) -> list[vf.Trace]:
     return await evaluate(
-        vf_env_id=config.vf_env_id,
-        vf_env_args=env_args,
+        env_config_path=config.env_config_path,
         model_name=config.model_name,
-        num_examples=config.num_examples,
-        rollouts_per_example=config.rollouts_per_example,
+        model_path=config.model_path,
+        renderer_model_name=config.renderer_model_name,
+        renderer_pool_size=config.renderer_pool_size,
+        num_tasks=config.num_tasks,
+        rollouts_per_task=config.rollouts_per_task,
         max_concurrent=config.max_concurrent,
         max_tokens=config.max_tokens,
         temperature=config.temperature,
-        model_path=config.model_path,
     )
 
 
 if __name__ == "__main__":
-    config = chz.entrypoint(CLIConfig)
-
-    asyncio.run(cli_main(config))
+    asyncio.run(cli_main(chz.entrypoint(CLIConfig)))
