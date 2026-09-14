@@ -99,7 +99,7 @@ class TmlRenderersTokenizerAdapter:
         tokenizers = importlib.import_module("tml_renderers.tokenizers")
 
         self.name_or_path = name_or_path
-        self.tml_tokenizer = tokenizers.o200k_base_chat()
+        self.tml_tokenizer = tokenizers.O200kBaseChatTokenizer()
         self.bos_token = self.tml_tokenizer.bos_token
         self.eos_token = self.tml_tokenizer.eos_token
         try:

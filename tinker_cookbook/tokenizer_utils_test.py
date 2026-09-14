@@ -100,6 +100,23 @@ def test_tml_renderers_source_dir_rolls_back_failed_sys_path_insert(
     assert sys.path == original_sys_path
 
 
+def test_tml_renderers_adapter_constructs_named_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    tokenizer = MagicMock()
+    tokenizer.bos_token = "<bos>"
+    tokenizer.eos_token = "<eos>"
+    tokenizer.encode_special.return_value = 42
+    tokenizers = MagicMock()
+    tokenizers.O200kBaseChatTokenizer.return_value = tokenizer
+    monkeypatch.setattr(tokenizer_utils, "ensure_tml_renderers_importable", MagicMock())
+    monkeypatch.setattr(tokenizer_utils.importlib, "import_module", lambda _name: tokenizers)
+
+    adapter = tokenizer_utils.TmlRenderersTokenizerAdapter("thinkingmachines/Inkling")
+
+    tokenizers.O200kBaseChatTokenizer.assert_called_once_with()
+    assert adapter.tml_tokenizer is tokenizer
+    assert adapter.eos_token_id == 42
+
+
 @patch("tinker_cookbook.tokenizer_utils.TmlRenderersTokenizerAdapter")
 def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -> None:
     tokenizer = tokenizer_utils.get_tokenizer("thinkingmachines/Inkling")
