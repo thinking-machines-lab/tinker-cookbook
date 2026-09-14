@@ -135,9 +135,9 @@ def split_list(lst: Sequence[T], num_splits: int) -> list[list[T]]:
     Example::
 
         >>> split_list([1, 2, 3, 4, 5], 2)
-        [[1, 2, 3], [4, 5]]
+        [[1, 2], [3, 4, 5]]
         >>> split_list([1, 2, 3, 4, 5], 3)
-        [[1, 2], [3, 4], [5]]
+        [[1], [2, 3], [4, 5]]
     """
     if num_splits <= 0:
         raise ValueError(f"num_splits must be positive, got {num_splits}")
