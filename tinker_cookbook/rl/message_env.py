@@ -39,14 +39,9 @@ class MessageStepResult:
     metrics: dict[str, float] = field(default_factory=dict)
     logs: types.Logs = field(default_factory=dict)
     next_stop_condition: StopCondition | None = None
+    # Messages added to the conversation by the environment at this step. Can contain
+    # tool call results or other kinds of environment feedback.
     appended_messages: list[Message] | None = None
-    """Messages appended after the assistant action, also the tail of next_messages.
-
-    Providing this certifies that the previous history and assistant message were
-    retained unchanged. None requests full rendering (the default); an empty list
-    means only the assistant message was appended. Used only when the adapter opts
-    into preserve_sampled_tokens.
-    """
 
 
 class MessageEnv(ABC):
@@ -125,7 +120,7 @@ class EnvFromMessageEnv(types.Env):
         self.terminate_on_length = terminate_on_length
         self.parse_error_policy = parse_error_policy
         self.preserve_sampled_tokens = preserve_sampled_tokens
-        self._current_observation: tinker.ModelInput | None = None
+        self._latest_observation: tinker.ModelInput | None = None
         # Budgets this env wants a rollout runner to enforce. The runner reads
         # this when it is given no limits of its own (run_rollout's fallback),
         # so envs built from a RolloutConfig keep their token budgets in the
@@ -148,15 +143,15 @@ class EnvFromMessageEnv(types.Env):
         observation = await asyncio.to_thread(
             self.renderer.build_generation_prompt, messages, **kwargs
         )
-        self._current_observation = observation
+        self._latest_observation = observation
         return observation
 
     def _append_sampled_tokens(
         self, action: types.Action, step: MessageStepResult
     ) -> tinker.ModelInput:
-        """Render new messages in full-history context without rewriting old tokens."""
-        assert self._current_observation is not None
-        assert step.appended_messages is not None
+        """Render new messages from both the model and environment in this turn to the full-history context without rewriting old tokens."""
+        if self._latest_observation is None or step.appended_messages is None or step.episode_done:
+            return self.renderer.build_generation_prompt(step.next_messages)
         messages = step.next_messages
         start = len(messages) - len(step.appended_messages)
         if start < 1 or messages[start:] != step.appended_messages:
@@ -164,7 +159,7 @@ class EnvFromMessageEnv(types.Env):
         if messages[start - 1]["role"] != "assistant":
             raise ValueError("appended_messages must immediately follow the assistant action")
 
-        chunks = list(self._current_observation.chunks)
+        chunks = list(self._latest_observation.chunks)
         if action:
             chunks.append(tinker.EncodedTextChunk(tokens=action))
         last_user_idx = max(
@@ -274,7 +269,7 @@ class EnvFromMessageEnv(types.Env):
         if not termination.is_clean:
             # Legacy nonterminal parse failures return an empty next observation.
             # Do not reuse the previous prompt on a subsequent append-only step.
-            self._current_observation = None
+            self._latest_observation = None
             # STRUCTURAL parse failure: the response never produced its stop
             # signal, so the message boundary is unknown and the conversation
             # state is corrupted. Never retried (unlike content failures):
@@ -294,18 +289,14 @@ class EnvFromMessageEnv(types.Env):
             )
 
         msg_step = await self.message_env.step(assistant_message)
-        if (
-            self.preserve_sampled_tokens
-            and self._current_observation is not None
-            and msg_step.appended_messages is not None
-            and not msg_step.episode_done
-        ):
+
+        if self.preserve_sampled_tokens:
             next_observation = await asyncio.to_thread(
                 self._append_sampled_tokens, action, msg_step
             )
-            self._current_observation = next_observation
         else:
             next_observation = await self._render_in_thread(msg_step.next_messages)
+        self._latest_observation = next_observation
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
 
         # Check if the full trajectory + generation budget fits in the context window.

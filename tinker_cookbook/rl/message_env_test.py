@@ -965,7 +965,7 @@ def test_append_retains_chunks_and_full_positional_context(renderer: GptOssRende
         # while testing that the adapter never flattens/re-tokenizes their payload.
         image = ImageChunk(data=b"image", format="png", expected_tokens=4)
         original = tinker.ModelInput(chunks=[*initial[0].chunks, image])
-        env._current_observation = original
+        env._latest_observation = original
         action = renderer.tokenizer.encode(ANALYSIS + REORDERED, add_special_tokens=False)
         parsed, _ = renderer.parse_response(action)
         tools: list[Message] = [
