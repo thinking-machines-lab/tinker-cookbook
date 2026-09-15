@@ -1,6 +1,5 @@
 """Utilities for exporting per-rollout records to JSONL."""
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -8,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from tinker_cookbook.rl.types import TrajectoryGroup
-from tinker_cookbook.utils.deprecation import deprecated
 from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
@@ -80,7 +78,7 @@ def serialize_rollout_summaries(
     """Serialize trajectory groups into JSON-safe rollout summary records.
 
     Returns one record per trajectory, suitable for writing to JSONL via
-    ``TrainingRunStore.write_rollouts()`` or ``write_rollout_summaries_jsonl()``.
+    ``TrainingRunStore.write_rollouts()``.
 
     Each record contains::
 
@@ -146,46 +144,6 @@ def serialize_rollout_summaries(
     return records
 
 
-@deprecated(
-    message="Use serialize_rollout_summaries() + store.write_rollouts() instead.",
-    removal_version="0.4.0",
-)
-def write_rollout_summaries_jsonl(
-    path: str | Path,
-    *,
-    split: str,
-    iteration: int,
-    trajectory_groups_P: Sequence[TrajectoryGroup],
-    taglist_P: Sequence[list[str]],
-    sampling_client_steps_P: Sequence[int | None] | None = None,
-) -> None:
-    """Write one JSON record per rollout trajectory to a JSONL file.
-
-    .. deprecated::
-        Prefer ``serialize_rollout_summaries()`` + ``store.write_rollouts()``.
-
-    Args:
-        path (str | Path): Destination file path.
-        split (str): Dataset split identifier.
-        iteration (int): Training iteration / batch index.
-        trajectory_groups_P (Sequence[TrajectoryGroup]): One trajectory group per problem.
-        taglist_P (Sequence[list[str]]): Tags for each trajectory group.
-        sampling_client_steps_P (Sequence[int | None] | None): Per-group step counters.
-    """
-    records = serialize_rollout_summaries(
-        split=split,
-        iteration=iteration,
-        trajectory_groups_P=trajectory_groups_P,
-        taglist_P=taglist_P,
-        sampling_client_steps_P=sampling_client_steps_P,
-    )
-    path_obj = Path(path)
-    path_obj.parent.mkdir(parents=True, exist_ok=True)
-    with open(path_obj, "w") as f:
-        for record in records:
-            f.write(json.dumps(record) + "\n")
-
-
 def rollout_summaries_jsonl_path(iteration_dir: Path, base_name: str) -> Path:
     """Build the rollout-summary JSONL path inside an iteration subdirectory.
 
@@ -213,37 +171,6 @@ def serialize_rollout_summaries_from_groups(
     :class:`RolloutSummaryGroup` objects.
     """
     return serialize_rollout_summaries(
-        split=split,
-        iteration=iteration,
-        trajectory_groups_P=[group.trajectory_group for group in groups_P],
-        taglist_P=[group.tags for group in groups_P],
-        sampling_client_steps_P=[group.sampling_client_step for group in groups_P],
-    )
-
-
-def write_rollout_summaries_jsonl_from_groups(
-    path: Path,
-    *,
-    split: str,
-    iteration: int,
-    groups_P: Sequence[RolloutSummaryGroup],
-) -> None:
-    """Serialize rollout summaries from pre-grouped records to a JSONL file.
-
-    A convenience wrapper around :func:`write_rollout_summaries_jsonl` that
-    accepts a sequence of :class:`RolloutSummaryGroup` objects instead of
-    parallel sequences of trajectory groups, tags, and sampling steps.
-
-    Args:
-        path (Path): Destination file path.
-        split (str): Dataset split identifier (e.g. ``"train"``).
-        iteration (int): Training iteration / batch index.
-        groups_P (Sequence[RolloutSummaryGroup]): One summary group per
-            problem, each containing a trajectory group, tags, and an optional
-            sampling-client step.
-    """
-    write_rollout_summaries_jsonl(
-        path,
         split=split,
         iteration=iteration,
         trajectory_groups_P=[group.trajectory_group for group in groups_P],
