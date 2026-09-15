@@ -149,9 +149,9 @@ class EnvFromMessageEnv(types.Env):
     def _append_sampled_tokens(
         self, action: types.Action, step: MessageStepResult
     ) -> tinker.ModelInput:
-        """Render new messages from both the model and environment in this turn to the full-history context without rewriting old tokens."""
-        if self._latest_observation is None or step.appended_messages is None or step.episode_done:
-            return self.renderer.build_generation_prompt(step.next_messages)
+        """Build the next observation from raw action tokens and appended messages."""
+        assert self._latest_observation is not None
+        assert step.appended_messages is not None
         messages = step.next_messages
         start = len(messages) - len(step.appended_messages)
         if start < 1 or messages[start:] != step.appended_messages:
@@ -267,30 +267,41 @@ class EnvFromMessageEnv(types.Env):
         assistant_message, termination = self.renderer.parse_response(action)
 
         if not termination.is_clean:
-            # Legacy nonterminal parse failures return an empty next observation.
-            # Do not reuse the previous prompt on a subsequent append-only step.
-            self._latest_observation = None
             # STRUCTURAL parse failure: the response never produced its stop
-            # signal, so the message boundary is unknown and the conversation
-            # state is corrupted. Never retried (unlike content failures):
-            # re-rendering a broken-framing turn would put the model on a
-            # garbage observation.
+            # signal. Do not add the broken response to the message history.
+            # An explicit parse-error policy still terminates structural failures.
             if self.parse_error_policy is not None:
+                self._latest_observation = None
                 return self._structural_parse_error_step(assistant_message, termination)
             parse_metrics: types.Metrics = {"parse_error": 1.0}
             if self.terminate_on_parse_error:
                 parse_metrics[f"{types.STOP_METRIC_PREFIX}{types.StopReason.PARSE_ERROR}"] = 1.0
+            if self.preserve_sampled_tokens and not self.terminate_on_parse_error:
+                assert self._latest_observation is not None
+                # Retry from the exact prior prompt. The failed action remains in
+                # the rollout's transitions, but does not enter conversation history.
+                next_observation = self._latest_observation
+            else:
+                # Legacy behavior with preserve_sampled_tokens=False discards the
+                # failed response from conversation history and returns an empty
+                # prompt, even when terminate_on_parse_error=False allows a retry.
+                next_observation = tinker.ModelInput.empty()
+                self._latest_observation = None
             return types.StepResult(
                 reward=self.failed_parse_reward,
                 episode_done=self.terminate_on_parse_error,
-                next_observation=tinker.ModelInput.empty(),
+                next_observation=next_observation,
                 next_stop_condition=self._base_stop_condition,
                 metrics=parse_metrics,
             )
 
         msg_step = await self.message_env.step(assistant_message)
 
-        if self.preserve_sampled_tokens:
+        if (
+            self.preserve_sampled_tokens
+            and self._latest_observation is not None
+            and msg_step.appended_messages is not None
+        ):
             next_observation = await asyncio.to_thread(
                 self._append_sampled_tokens, action, msg_step
             )

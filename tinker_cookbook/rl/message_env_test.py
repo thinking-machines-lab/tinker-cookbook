@@ -817,6 +817,11 @@ def test_multiple_turns_pack_without_changing_actions(
         )
         step = await env.step(final)
         assert step.episode_done
+        assert _is_prefix(ob.to_ints() + final, step.next_observation.to_ints())
+        assert (
+            renderer.tokenizer.decode(step.next_observation.to_ints()[ob.length + len(final) :])
+            == "<|start|>assistant"
+        )
         transitions.append(Transition(ob, TokensWithLogprobs(final, [-1.0] * len(final)), 1, True))
         data = trajectory_to_data(Trajectory(transitions, step.next_observation), 1.0)
         assert len(data) == 1
@@ -864,7 +869,7 @@ def test_disabled_flag_retains_retemplating(renderer: GptOssRenderer) -> None:
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("fallback", ["injection", "truncation", "parse_retry", "structural_error"])
+@pytest.mark.parametrize("fallback", ["injection", "truncation", "parse_retry"])
 def test_fallback_resynchronizes_next_append(renderer: GptOssRenderer, fallback: str) -> None:
     async def run() -> None:
         env = make_env(renderer)
@@ -888,15 +893,6 @@ def test_fallback_resynchronizes_next_append(renderer: GptOssRenderer, fallback:
             )
             step = await env.step(invalid)
             assert not step.episode_done
-            ob = step.next_observation
-        else:
-            env.terminate_on_parse_error = False
-            step = await env.step(renderer.tokenizer.encode("broken", add_special_tokens=False))
-            assert not step.episode_done
-            assert step.next_observation.length == 0
-            # No valid observation remains after this legacy error path. The next
-            # successful turn must fully render before incremental appends resume.
-            step = await env.step(action)
             ob = step.next_observation
         messages = await env.message_env.initial_observation()
         assert ob.to_ints() == renderer.build_generation_prompt(messages).to_ints()
@@ -997,5 +993,114 @@ def test_append_retains_chunks_and_full_positional_context(renderer: GptOssRende
         assert [ctx.is_last for ctx in contexts] == [False, True, True]
         assert contexts[2].prev_message == tools[-1]
         assert all(ctx.last_user_index == 0 and ctx.in_last_assistant_turn for ctx in contexts)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("preserve", [False, True])
+def test_structural_failure_retries_original_prompt_when_preserving_tokens(
+    renderer: GptOssRenderer, preserve: bool
+) -> None:
+    async def run() -> None:
+        env = make_env(renderer, preserve)
+        env.terminate_on_parse_error = False
+        await env.initial_observation()
+        action = renderer.tokenizer.encode(ANALYSIS + REORDERED, add_special_tokens=False)
+        first = await env.step(action)
+        prompt = first.next_observation
+        history = list(await env.message_env.initial_observation())
+        broken = renderer.tokenizer.encode("broken", add_special_tokens=False)
+        for _ in range(2):
+            failure = await env.step(broken)
+            assert not failure.episode_done
+            assert failure.reward == env.failed_parse_reward
+            assert failure.metrics["parse_error"] == 1.0
+            assert await env.message_env.initial_observation() == history
+            if preserve:
+                assert failure.next_observation is prompt
+                assert env._latest_observation is prompt
+            else:
+                assert failure.next_observation.length == 0
+                assert env._latest_observation is None
+        success = await env.step(action)
+        assert not success.episode_done
+        if preserve:
+            assert _is_prefix(prompt.to_ints() + action, success.next_observation.to_ints())
+        else:
+            messages = await env.message_env.initial_observation()
+            assert (
+                success.next_observation.to_ints()
+                == renderer.build_generation_prompt(messages).to_ints()
+            )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("explicit_policy", [False, True])
+def test_structural_failure_still_terminates_when_configured(
+    renderer: GptOssRenderer, explicit_policy: bool
+) -> None:
+    async def run() -> None:
+        env = make_env(renderer)
+        await env.initial_observation()
+        if explicit_policy:
+            env.terminate_on_parse_error = False
+            env.set_parse_error_policy(ParseErrorPolicy(max_consecutive=2))
+        failure = await env.step(renderer.tokenizer.encode("broken", add_special_tokens=False))
+        assert failure.episode_done
+        assert failure.next_observation.length == 0
+        assert failure.metrics["stop/parse_error"] == 1.0
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("invalid", ["wrong_tail", "no_assistant"])
+def test_incremental_render_rejects_invalid_append_declaration(
+    renderer: GptOssRenderer, invalid: str
+) -> None:
+    async def run() -> None:
+        env = make_env(renderer)
+        await env.initial_observation()
+        tool_result: Message = {"role": "tool", "name": "search", "content": "result"}
+        if invalid == "wrong_tail":
+            messages: list[Message] = [{"role": "assistant", "content": ""}, tool_result]
+            appended: list[Message] = [{"role": "tool", "name": "search", "content": "other"}]
+        else:
+            messages = [{"role": "user", "content": "question"}, tool_result]
+            appended = [tool_result]
+        step = MessageStepResult(0, False, messages, appended_messages=appended)
+        with pytest.raises(ValueError, match="appended_messages must"):
+            env._append_sampled_tokens([], step)
+
+    asyncio.run(run())
+
+
+def test_terminal_tool_result_is_preserved(renderer: GptOssRenderer) -> None:
+    async def run() -> None:
+        def finish(q: str) -> ToolResult:
+            return simple_tool_result(f"Finished {q}", should_stop=True)
+
+        env = build_agent_tool_env(
+            renderer=renderer,
+            tools=[FunctionTool(finish)],
+            initial_messages=[{"role": "user", "content": "Finish the task."}],
+            reward_fn=reward,
+            preserve_sampled_tokens=True,
+        )
+        initial = await env.initial_observation()
+        assert isinstance(initial, tuple)
+        action = renderer.tokenizer.encode(
+            (ANALYSIS + REORDERED).replace("functions.search", "functions.finish"),
+            add_special_tokens=False,
+        )
+        result = await env.step(action)
+        assert result.episode_done
+        assert result.reward == 1.0
+        assert _is_prefix(initial[0].to_ints() + action, result.next_observation.to_ints())
+        tail = renderer.tokenizer.decode(
+            result.next_observation.to_ints()[initial[0].length + len(action) :]
+        )
+        assert "Finished x" in tail
+        assert tail.endswith("<|start|>assistant")
 
     asyncio.run(run())

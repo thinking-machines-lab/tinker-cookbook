@@ -460,9 +460,8 @@ def build_agent_tool_env(
         preserve_sampled_tokens: Retain exact sampled assistant tokens on append-only
             tool steps instead of re-rendering them. Defaults to False. This also
             retains sampled reasoning that a renderer might otherwise strip from
-            history. Requires a renderer supporting independent rendering of new
-            messages. Parse-error retries, truncation continuation and externally
-            injected messages retain full rendering.
+            history. Avoids repeated training context when re-rendering would
+            change sampled formatting, including valid tool-call header variants.
 
     Returns:
         An EnvFromMessageEnv ready for RL training.
