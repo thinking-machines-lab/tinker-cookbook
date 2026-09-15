@@ -521,7 +521,13 @@ class GptOssRenderer(Renderer):
         dangling = self._detect_dangling_tool_block(str_response, tool_calls, unparsed)
         if dangling is not None:
             unparsed = [*unparsed, dangling]
-        content: list[ContentPart] | str = parts if parts else str_response
+        content: list[ContentPart] | str
+        if parts:
+            content = parts
+        elif tool_calls:
+            content = ""
+        else:
+            content = str_response
 
         message: Message = {"role": "assistant", "content": content}
         if tool_calls:
