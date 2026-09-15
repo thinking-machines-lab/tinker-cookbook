@@ -267,30 +267,18 @@ class EnvFromMessageEnv(types.Env):
         assistant_message, termination = self.renderer.parse_response(action)
 
         if not termination.is_clean:
-            # STRUCTURAL parse failure: the response never produced its stop
-            # signal. Do not add the broken response to the message history.
-            # An explicit parse-error policy still terminates structural failures.
+            # Legacy failures discard the response from conversation history and
+            # return an empty observation, even when termination is disabled.
+            self._latest_observation = None
             if self.parse_error_policy is not None:
-                self._latest_observation = None
                 return self._structural_parse_error_step(assistant_message, termination)
             parse_metrics: types.Metrics = {"parse_error": 1.0}
             if self.terminate_on_parse_error:
                 parse_metrics[f"{types.STOP_METRIC_PREFIX}{types.StopReason.PARSE_ERROR}"] = 1.0
-            if self.preserve_sampled_tokens and not self.terminate_on_parse_error:
-                assert self._latest_observation is not None
-                # Retry from the exact prior prompt. The failed action remains in
-                # the rollout's transitions, but does not enter conversation history.
-                next_observation = self._latest_observation
-            else:
-                # Legacy behavior with preserve_sampled_tokens=False discards the
-                # failed response from conversation history and returns an empty
-                # prompt, even when terminate_on_parse_error=False allows a retry.
-                next_observation = tinker.ModelInput.empty()
-                self._latest_observation = None
             return types.StepResult(
                 reward=self.failed_parse_reward,
                 episode_done=self.terminate_on_parse_error,
-                next_observation=next_observation,
+                next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self._base_stop_condition,
                 metrics=parse_metrics,
             )

@@ -998,7 +998,7 @@ def test_append_retains_chunks_and_full_positional_context(renderer: GptOssRende
 
 
 @pytest.mark.parametrize("preserve", [False, True])
-def test_structural_failure_retries_original_prompt_when_preserving_tokens(
+def test_structural_failure_preserves_legacy_behavior(
     renderer: GptOssRenderer, preserve: bool
 ) -> None:
     async def run() -> None:
@@ -1006,8 +1006,7 @@ def test_structural_failure_retries_original_prompt_when_preserving_tokens(
         env.terminate_on_parse_error = False
         await env.initial_observation()
         action = renderer.tokenizer.encode(ANALYSIS + REORDERED, add_special_tokens=False)
-        first = await env.step(action)
-        prompt = first.next_observation
+        await env.step(action)
         history = list(await env.message_env.initial_observation())
         broken = renderer.tokenizer.encode("broken", add_special_tokens=False)
         for _ in range(2):
@@ -1016,21 +1015,19 @@ def test_structural_failure_retries_original_prompt_when_preserving_tokens(
             assert failure.reward == env.failed_parse_reward
             assert failure.metrics["parse_error"] == 1.0
             assert await env.message_env.initial_observation() == history
-            if preserve:
-                assert failure.next_observation is prompt
-                assert env._latest_observation is prompt
-            else:
-                assert failure.next_observation.length == 0
-                assert env._latest_observation is None
+            assert failure.next_observation.length == 0
+            assert env._latest_observation is None
         success = await env.step(action)
         assert not success.episode_done
+        messages = await env.message_env.initial_observation()
+        assert (
+            success.next_observation.to_ints()
+            == renderer.build_generation_prompt(messages).to_ints()
+        )
         if preserve:
-            assert _is_prefix(prompt.to_ints() + action, success.next_observation.to_ints())
-        else:
-            messages = await env.message_env.initial_observation()
-            assert (
-                success.next_observation.to_ints()
-                == renderer.build_generation_prompt(messages).to_ints()
+            next_step = await env.step(action)
+            assert _is_prefix(
+                success.next_observation.to_ints() + action, next_step.next_observation.to_ints()
             )
 
     asyncio.run(run())
