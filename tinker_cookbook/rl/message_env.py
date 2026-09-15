@@ -159,6 +159,7 @@ class EnvFromMessageEnv(types.Env):
         if messages[start - 1]["role"] != "assistant":
             raise ValueError("appended_messages must immediately follow the assistant action")
 
+        # chunks hold all the previous tokens.
         chunks = list(self._latest_observation.chunks)
         if action:
             chunks.append(tinker.EncodedTextChunk(tokens=action))
@@ -167,6 +168,7 @@ class EnvFromMessageEnv(types.Env):
             default=-1,
         )
         turn_start = self.renderer._last_assistant_turn_start_index(messages)
+        # Render each of the messaged appended by the environment.
         for idx in range(start, len(messages)):
             ctx = RenderContext(
                 idx=idx,
@@ -267,8 +269,11 @@ class EnvFromMessageEnv(types.Env):
         assistant_message, termination = self.renderer.parse_response(action)
 
         if not termination.is_clean:
-            # Legacy failures discard the response from conversation history and
-            # return an empty observation, even when termination is disabled.
+            # STRUCTURAL parse failure: the response never produced its stop
+            # signal, so the message boundary is unknown and the conversation
+            # state is corrupted. Never retried (unlike content failures):
+            # re-rendering a broken-framing turn would put the model on a
+            # garbage observation.
             self._latest_observation = None
             if self.parse_error_policy is not None:
                 return self._structural_parse_error_step(assistant_message, termination)
