@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -13,6 +14,8 @@ import chz
 from tinker_cookbook import renderers
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
+from tinker_cookbook.rl.metric_util import RLTestSetEvaluator
+from tinker_cookbook.rl.rollout_logging import RolloutSummaryExportConfig
 from tinker_cookbook.rl.types import (
     Env,
     EnvGroupBuilder,
@@ -20,7 +23,9 @@ from tinker_cookbook.rl.types import (
     RLDataset,
     RLDatasetBuilder,
     Trajectory,
+    TrajectoryGroup,
 )
+from tinker_cookbook.stores.training_store import TrainingRunStore
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 from .data import (
@@ -194,6 +199,77 @@ class ForecastGroupBuilder(EnvGroupBuilder):
         return ["prophet-arena", category]
 
 
+def roc_auc(pairs: Sequence[tuple[float, int]]) -> float | None:
+    """Area under the ROC curve for ``(score, outcome)`` pairs.
+
+    Mann-Whitney form with average ranks for tied scores. Returns ``None``
+    when only one outcome class is present, since AUC is undefined there.
+    """
+    n_pos = sum(1 for _, y in pairs if y == 1)
+    n_neg = len(pairs) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return None
+    ordered = sorted(pairs, key=lambda pair: pair[0])
+    ranks = [0.0] * len(ordered)
+    i = 0
+    while i < len(ordered):
+        j = i
+        while j + 1 < len(ordered) and ordered[j + 1][0] == ordered[i][0]:
+            j += 1
+        for k in range(i, j + 1):
+            ranks[k] = (i + j) / 2 + 1
+        i = j + 1
+    rank_sum_pos = sum(rank for rank, (_, y) in zip(ranks, ordered) if y == 1)
+    return (rank_sum_pos - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+
+
+class ForecastEvaluator(RLTestSetEvaluator):
+    """Validation evaluator that also reports AUC.
+
+    Brier reward and accuracy are per-rollout numbers that the base evaluator
+    averages. AUC is a property of the whole validation set, so it has to be
+    computed after every question has been scored; this hooks the shared
+    metric-collection step to add it under the same ``env/<tag>/`` prefixes.
+    Every sampled forecast is one point, matching the per-rollout basis of the
+    other metrics; rollouts with no parseable forecast carry no probability and
+    are left out.
+    """
+
+    def _collect_eval_metrics(
+        self,
+        results: list[TrajectoryGroup | None],
+        rollout_summary_export: RolloutSummaryExportConfig | None,
+        *,
+        store: TrainingRunStore | None = None,
+    ) -> dict[str, float]:
+        metrics = super()._collect_eval_metrics(results, rollout_summary_export, store=store)
+        pairs_by_tag: dict[str, list[tuple[float, int]]] = defaultdict(list)
+        for builder, group in zip(self.env_group_builders_P, results):
+            if group is None:
+                continue
+            tags = ["all", *builder.logging_tags()]
+            for trajectory in group.trajectories_G:
+                for transition in trajectory.transitions:
+                    logs = transition.logs
+                    if "forecast" not in logs or logs["forecast"] == "invalid":
+                        continue
+                    pair = (float(logs["forecast"]), int(logs["outcome"]))
+                    for tag in tags:
+                        pairs_by_tag[tag].append(pair)
+        auc_metrics: dict[str, float] = {}
+        for tag, pairs in pairs_by_tag.items():
+            auc = roc_auc(pairs)
+            if auc is not None:
+                auc_metrics[f"env/{tag}/auc"] = auc
+        # The base class records an unprefixed BenchmarkResult before returning the
+        # prefixed dict; keep both views complete.
+        if self.last_result is None:
+            raise RuntimeError("base evaluator did not record a BenchmarkResult")
+        self.last_result.metrics.update(auc_metrics)
+        metrics.update({f"{self.name}/{k}": v for k, v in auc_metrics.items()})
+        return metrics
+
+
 class ForecastRLDataset(RLDataset):
     """Batches of unique questions repeated for a configured number of epochs."""
 
@@ -249,8 +325,12 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
     max_train_questions: int | None = DEFAULT_MAX_TRAIN_QUESTIONS
     max_validation_questions: int | None = DEFAULT_MAX_VALIDATION_QUESTIONS
     seed: int = 0
+    # The training loop adds its own plain evaluator whenever a validation dataset
+    # is returned; the recipe supplies ForecastEvaluator instead, so it asks for
+    # training data only and builds the validation dataset separately.
+    include_validation: bool = True
 
-    async def __call__(self) -> tuple[ForecastRLDataset, ForecastRLDataset]:
+    async def __call__(self) -> tuple[ForecastRLDataset, ForecastRLDataset | None]:
         csv_path = (
             fetch_prophet_arena(self.dataset_revision, self.data_cache_dir)
             if self.data_path is None
@@ -284,5 +364,7 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
                 batch_size=self.groups_per_batch,
                 group_size=self.validation_group_size,
                 renderer=renderer,
-            ),
+            )
+            if self.include_validation
+            else None,
         )

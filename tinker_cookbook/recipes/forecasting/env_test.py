@@ -8,17 +8,20 @@ from typing import cast
 import pytest
 
 from tinker_cookbook import renderers
+from tinker_cookbook.eval.benchmarks._types import BenchmarkResult
 from tinker_cookbook.renderers import Message
-from tinker_cookbook.rl.types import Trajectory
+from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
 
 from .data import ForecastExample
 from .env import (
     ForecastEnv,
+    ForecastEvaluator,
     ForecastGroupBuilder,
     ForecastRLDataset,
     brier_reward,
     parse_forecast,
     render_prompt,
+    roc_auc,
 )
 
 
@@ -174,3 +177,66 @@ def test_group_metrics_include_truncated_rollouts() -> None:
             },
         ),
     ]
+
+
+def test_roc_auc() -> None:
+    assert roc_auc([(0.9, 1), (0.8, 1), (0.2, 0), (0.1, 0)]) == 1.0
+    assert roc_auc([(0.1, 1), (0.2, 1), (0.8, 0), (0.9, 0)]) == 0.0
+    assert roc_auc([(0.5, 1), (0.5, 0)]) == 0.5
+    assert roc_auc([(0.9, 1), (0.5, 1), (0.5, 0), (0.1, 0)]) == pytest.approx(0.875)
+    assert roc_auc([(0.9, 1), (0.8, 1)]) is None
+
+
+def _fake_group(forecasts: list[str], outcome: int) -> Trajectory:
+    return cast(
+        Trajectory,
+        SimpleNamespace(
+            trajectories_G=[
+                SimpleNamespace(
+                    transitions=[SimpleNamespace(logs={"forecast": f, "outcome": outcome})]
+                )
+                for f in forecasts
+            ]
+        ),
+    )
+
+
+def test_forecast_evaluator_adds_auc_by_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    examples = [_example(outcome=1), _example(outcome=0), _example(outcome=1), _example(outcome=0)]
+    dataset = ForecastRLDataset(
+        examples, batch_size=4, group_size=1, renderer=cast(renderers.Renderer, None)
+    )
+    evaluator = ForecastEvaluator(dataset, max_tokens=8)
+
+    def fake_base(self, results, export, *, store=None):
+        self.last_result = BenchmarkResult(
+            name=self.name,
+            score=0.0,
+            num_examples=len(results),
+            num_correct=0,
+            num_errors=0,
+            metrics={"env/all/brier_reward": 0.8},
+        )
+        return {"test/env/all/brier_reward": 0.8}
+
+    monkeypatch.setattr(ForecastEvaluator.__mro__[1], "_collect_eval_metrics", fake_base)
+    # Every valid rollout is a point; the invalid one is dropped. Points:
+    # YES: 0.9, 0.7   NO: 0.2, 0.4, 0.8  -> 5 of 6 YES/NO pairs ranked right.
+    results = [
+        cast(TrajectoryGroup, _fake_group(["0.9", "invalid", "0.7"], 1)),
+        cast(TrajectoryGroup, _fake_group(["0.2"], 0)),
+        None,
+        cast(TrajectoryGroup, _fake_group(["0.4", "0.8"], 0)),
+    ]
+
+    metrics = evaluator._collect_eval_metrics(results, None)
+
+    assert metrics["test/env/all/brier_reward"] == 0.8
+    assert metrics["test/env/all/auc"] == pytest.approx(5 / 6)
+    assert metrics["test/env/prophet-arena/auc"] == pytest.approx(5 / 6)
+    assert metrics["test/env/other/auc"] == pytest.approx(5 / 6)
+    # The unprefixed BenchmarkResult view must carry AUC as well.
+    assert evaluator.last_result is not None
+    assert evaluator.last_result.metrics["env/all/brier_reward"] == 0.8
+    assert evaluator.last_result.metrics["env/all/auc"] == pytest.approx(5 / 6)
+    assert evaluator.last_result.metrics["env/other/auc"] == pytest.approx(5 / 6)
