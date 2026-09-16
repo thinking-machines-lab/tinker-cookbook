@@ -1,6 +1,6 @@
 # Forecasting with RL
 
-Fine-tune a model (Qwen3.8-27B in this example) with Tinker on binary markets from the
+Fine-tune Qwen3.8-27B or GLM-5.3 with Tinker on binary markets from the
 [Prophet Arena subset](https://huggingface.co/datasets/prophetarena/Prophet-Arena-Subset-1200)
 using a chronological split and Brier reward.
 
@@ -129,10 +129,9 @@ Either:
 - Qwen3.8-27B (the default), with the Tinker [`qwen3_8_low_reasoning`](../../renderers/qwen3_8.py) renderer
 - GLM-5.3, with the Tinker [`glm5_3_high_reasoning`](../../renderers/glm5_3.py) renderer
 
-These reasoning effort settings were the best we found in our sweeps (though we
-didn't try `glm5_3_max_reasoning`). Note that Qwen at low effort generates
-about 600 tokens per forecast, which is actually significantly more than GLM at
-high effort which generates about 100.
+These reasoning effort settings were the best we found in our sweeps. Note that
+Qwen at low effort generates about 600 tokens per forecast, which is actually
+significantly more than GLM at high effort which generates about 100.
 
 Both use LoRA rank 32, a `1e-4` learning rate, and 32 training forecasts per
 question. When switching to another model, use that model's recommended
