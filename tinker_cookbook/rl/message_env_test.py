@@ -807,7 +807,9 @@ def test_multiple_turns_pack_without_changing_actions(
         for _ in range(3):
             step = await env.step(action)
             assert not step.episode_done
-            assert _is_prefix(ob.to_ints() + action, step.next_observation.to_ints())
+            assert _is_prefix(
+                _flatten_chunks(ob.chunks) + action, _flatten_chunks(step.next_observation.chunks)
+            )
             transitions.append(
                 Transition(ob, TokensWithLogprobs(action, [-1.0] * len(action)), 0, False)
             )
@@ -817,7 +819,9 @@ def test_multiple_turns_pack_without_changing_actions(
         )
         step = await env.step(final)
         assert step.episode_done
-        assert _is_prefix(ob.to_ints() + final, step.next_observation.to_ints())
+        assert _is_prefix(
+            _flatten_chunks(ob.chunks) + final, _flatten_chunks(step.next_observation.chunks)
+        )
         assert (
             renderer.tokenizer.decode(step.next_observation.to_ints()[ob.length + len(final) :])
             == "<|start|>assistant"
@@ -860,7 +864,10 @@ def test_disabled_flag_retains_retemplating(renderer: GptOssRenderer) -> None:
         assert isinstance(initial, tuple)
         action = renderer.tokenizer.encode(ANALYSIS + REORDERED, add_special_tokens=False)
         step = await env.step(action)
-        assert not _is_prefix(initial[0].to_ints() + action, step.next_observation.to_ints())
+        assert not _is_prefix(
+            _flatten_chunks(initial[0].chunks) + action,
+            _flatten_chunks(step.next_observation.chunks),
+        )
         messages = await env.message_env.initial_observation()
         assert (
             step.next_observation.to_ints() == renderer.build_generation_prompt(messages).to_ints()
@@ -894,10 +901,14 @@ def test_fallback_resynchronizes_next_append(renderer: GptOssRenderer, fallback:
             step = await env.step(invalid)
             assert not step.episode_done
             ob = step.next_observation
+        else:
+            raise AssertionError(f"Unknown fallback: {fallback}")
         messages = await env.message_env.initial_observation()
         assert ob.to_ints() == renderer.build_generation_prompt(messages).to_ints()
         next_step = await env.step(action)
-        assert _is_prefix(ob.to_ints() + action, next_step.next_observation.to_ints())
+        assert _is_prefix(
+            _flatten_chunks(ob.chunks) + action, _flatten_chunks(next_step.next_observation.chunks)
+        )
 
     asyncio.run(run())
 
@@ -926,10 +937,14 @@ def test_history_replacement_then_empty_append(renderer: GptOssRenderer) -> None
         assert isinstance(initial, tuple)
         action = renderer.tokenizer.encode(ANALYSIS + REORDERED, add_special_tokens=False)
         replaced = await env.step(action)
-        assert not _is_prefix(initial[0].to_ints() + action, replaced.next_observation.to_ints())
+        assert not _is_prefix(
+            _flatten_chunks(initial[0].chunks) + action,
+            _flatten_chunks(replaced.next_observation.chunks),
+        )
         appended = await env.step(action)
         assert _is_prefix(
-            replaced.next_observation.to_ints() + action, appended.next_observation.to_ints()
+            _flatten_chunks(replaced.next_observation.chunks) + action,
+            _flatten_chunks(appended.next_observation.chunks),
         )
 
     asyncio.run(run())
@@ -1027,7 +1042,8 @@ def test_structural_failure_preserves_legacy_behavior(
         if preserve:
             next_step = await env.step(action)
             assert _is_prefix(
-                success.next_observation.to_ints() + action, next_step.next_observation.to_ints()
+                _flatten_chunks(success.next_observation.chunks) + action,
+                _flatten_chunks(next_step.next_observation.chunks),
             )
 
     asyncio.run(run())
@@ -1093,10 +1109,14 @@ def test_terminal_tool_result_is_preserved(renderer: GptOssRenderer) -> None:
         result = await env.step(action)
         assert result.episode_done
         assert result.reward == 1.0
-        assert _is_prefix(initial[0].to_ints() + action, result.next_observation.to_ints())
+        assert _is_prefix(
+            _flatten_chunks(initial[0].chunks) + action,
+            _flatten_chunks(result.next_observation.chunks),
+        )
         tail = renderer.tokenizer.decode(
             result.next_observation.to_ints()[initial[0].length + len(action) :]
         )
+        assert isinstance(tail, str)
         assert "Finished x" in tail
         assert tail.endswith("<|start|>assistant")
 
