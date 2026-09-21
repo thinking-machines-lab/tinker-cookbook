@@ -209,6 +209,41 @@ class SubmittedBatch:
     num_tokens: int = 0
 
 
+def next_supervised_loop_state(
+    epoch_idx: int,
+    batch_idx: int,
+    n_batches: int,
+    elapsed_tokens: int,
+) -> dict[str, int]:
+    """Return the loop state to persist after batch ``batch_idx`` has been applied.
+
+    Resume treats ``(epoch, batch)`` as the *next* batch to execute (see
+    :func:`main`). After training ``(epoch_idx, batch_idx)``, the next index is
+    ``batch_idx + 1``, wrapping to the following epoch when the dataset is
+    exhausted.
+
+    Args:
+        epoch_idx (int): Epoch of the batch that was just enqueued.
+        batch_idx (int): Batch index within that epoch that was just enqueued.
+        n_batches (int): Number of batches per epoch.
+        elapsed_tokens (int): Tokens submitted through this batch, inclusive.
+
+    Returns:
+        dict[str, int]: ``epoch``, ``batch``, and ``elapsed_tokens`` suitable
+        for ``checkpoints.jsonl`` / :class:`checkpoint_utils.CheckpointManager`.
+    """
+    next_epoch = epoch_idx
+    next_batch = batch_idx + 1
+    if n_batches > 0 and next_batch >= n_batches:
+        next_epoch += 1
+        next_batch = 0
+    return {
+        "epoch": next_epoch,
+        "batch": next_batch,
+        "elapsed_tokens": elapsed_tokens,
+    }
+
+
 async def run_evals(
     evaluators: list[Evaluator],
     training_client: tinker.TrainingClient,
@@ -393,6 +428,7 @@ async def main(config: Config):
 
     @trace.scope
     async def submit_batch(epoch_idx: int, batch_idx: int) -> SubmittedBatch:
+        nonlocal elapsed_tokens
         step = epoch_idx * n_batches + batch_idx
         trace.update_scope_context({"step": step})
 
@@ -438,6 +474,19 @@ async def main(config: Config):
         fwd_bwd_future = await training_client.forward_backward_async(data, loss_fn="cross_entropy")
         optim_step_future = await training_client.optim_step_async(adam_params)
 
+        # Checkpoint here, immediately after this batch's train ops, so
+        # save_state is ordered on Tinker's request queue before any later
+        # batch is submitted. finish_batch may run after submit_batch(N+1)
+        # when submit_ahead > 0 (the default), which would snapshot extra
+        # updates. loop_state names the *next* batch to execute on resume.
+        num_tokens = sum(datum.model_input.length for datum in data)
+        elapsed_tokens += num_tokens
+        await checkpoint_mgr.maybe_save_async(
+            step=step,
+            loop_state=next_supervised_loop_state(epoch_idx, batch_idx, n_batches, elapsed_tokens),
+            elapsed_tokens=elapsed_tokens,
+        )
+
         return SubmittedBatch(
             fwd_bwd_future=fwd_bwd_future,
             optim_step_future=optim_step_future,
@@ -448,27 +497,15 @@ async def main(config: Config):
             batch_idx=batch_idx,
             eval_metrics=eval_metrics,
             infrequent_eval_metrics=infrequent_eval_metrics,
-            num_tokens=sum(datum.model_input.length for datum in data),
+            num_tokens=num_tokens,
         )
 
     @trace.scope
     async def finish_batch(submitted: SubmittedBatch):
-        nonlocal elapsed_tokens
         trace.update_scope_context({"step": submitted.step})
 
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
-
-        elapsed_tokens += submitted.num_tokens
-        await checkpoint_mgr.maybe_save_async(
-            step=submitted.step,
-            loop_state={
-                "epoch": submitted.epoch_idx,
-                "batch": submitted.batch_idx,
-                "elapsed_tokens": elapsed_tokens,
-            },
-            elapsed_tokens=elapsed_tokens,
-        )
 
         async with trace.scope_span("step"):
             fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
