@@ -6,6 +6,7 @@ Use viz_sft_dataset to visualize the output of different renderers. E.g.,
 """
 
 from collections.abc import Callable
+from importlib import import_module
 from typing import Any
 
 from tinker_cookbook.exceptions import RendererError
@@ -229,13 +230,13 @@ def get_renderer(
     from tinker_cookbook.renderers.qwen3 import (
         Qwen3DisableThinkingRenderer,
         Qwen3InstructRenderer,
-        Qwen3Renderer,
         Qwen3VLInstructRenderer,
         Qwen3VLRenderer,
     )
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.qwen3_8 import Qwen3_8DisableThinkingRenderer, Qwen3_8Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
+    from tinker_cookbook.renderers.tml import TmlRendererAdapter
     from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
     renderer: Renderer
@@ -244,7 +245,7 @@ def get_renderer(
     elif name == "llama3":
         renderer = Llama3Renderer(tokenizer)
     elif name == "qwen3":
-        renderer = Qwen3Renderer(tokenizer)
+        renderer = TmlRendererAdapter(import_module("tml_renderers.qwen3").Renderer())
     elif name == "qwen3_vl":
         renderer = Qwen3VLRenderer(tokenizer, image_processor)
     elif name == "qwen3_vl_instruct":
