@@ -1,4 +1,6 @@
+import json
 import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +13,7 @@ from tinker_cookbook.tokenizer_utils import _get_hf_tokenizer
 def _clear_cache() -> None:
     """Clear the lru_cache between tests so env var changes take effect."""
     _get_hf_tokenizer.cache_clear()
+    tokenizer_utils._get_model_eos_token_ids.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -106,3 +109,23 @@ def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -
 
     mock_adapter.assert_called_once_with("thinkingmachines/Inkling")
     assert tokenizer is mock_adapter.return_value
+
+
+@pytest.mark.parametrize("generation_eos,expected", [(2, {2, 3}), ([1, 2], {1, 2, 3}), (None, {3})])
+def test_model_eos_ids_include_both_configs(
+    tmp_path: Path, generation_eos: int | list[int] | None, expected: set[int]
+) -> None:
+    (tmp_path / "config.json").write_text(json.dumps({"eos_token_id": 3}))
+    (tmp_path / "generation_config.json").write_text(json.dumps({"eos_token_id": generation_eos}))
+
+    assert tokenizer_utils._get_model_eos_token_ids(str(tmp_path), None) == expected
+
+
+def test_model_eos_ids_allow_tokenizer_only_directory(tmp_path: Path) -> None:
+    assert tokenizer_utils._get_model_eos_token_ids(str(tmp_path), None) == frozenset()
+
+
+def test_model_eos_ids_reject_invalid_metadata(tmp_path: Path) -> None:
+    (tmp_path / "generation_config.json").write_text(json.dumps({"eos_token_id": "2"}))
+    with pytest.raises(ValueError, match="Invalid eos_token_id"):
+        tokenizer_utils._get_model_eos_token_ids(str(tmp_path), None)

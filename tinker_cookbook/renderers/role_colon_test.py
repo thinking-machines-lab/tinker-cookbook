@@ -6,7 +6,14 @@ responses with EOS (no "\\n\\nUser:" delimiter) must report ``ParseTermination.E
 failed_parse_reward=0 and never grades the answer.
 """
 
+import asyncio
+import json
+from pathlib import Path
+
 import pytest
+from tokenizers import Tokenizer as RustTokenizer
+from tokenizers.models import WordLevel
+from transformers import PreTrainedTokenizerFast
 
 from tinker_cookbook.renderers.base import ParseTermination
 from tinker_cookbook.renderers.role_colon import RoleColonRenderer
@@ -110,3 +117,82 @@ def test_parse_response_keeps_the_content_whitespace_it_rendered(
 
     assert termination == ParseTermination.STOP_SEQUENCE
     assert message["content"] == content
+
+
+@pytest.fixture
+def multiple_eos_renderer(tmp_path: Path) -> RoleColonRenderer:
+    # Model generation can stop on tokens absent from tokenizer.eos_token_id.
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=RustTokenizer(WordLevel({"<unk>": 0}, unk_token="<unk>")),
+        eos_token="<|im_end|>",
+        additional_special_tokens=["<|endoftext|>", "\\boxed{42}", "\n\nUser:"],
+    )
+    tokenizer.save_pretrained(tmp_path)
+    (tmp_path / "generation_config.json").write_text(
+        json.dumps(
+            {"eos_token_id": tokenizer.convert_tokens_to_ids(["<|im_end|>", "<|endoftext|>"])}
+        )
+    )
+    return RoleColonRenderer(get_tokenizer(str(tmp_path)))
+
+
+@pytest.mark.parametrize("ending", ["<|im_end|>", "<|endoftext|>"])
+def test_parse_response_accepts_model_eos(
+    multiple_eos_renderer: RoleColonRenderer, ending: str
+) -> None:
+    tokens = multiple_eos_renderer.tokenizer.encode("\\boxed{42}" + ending)
+    original_tokens = tokens.copy()
+
+    message, termination = multiple_eos_renderer.parse_response(tokens)
+
+    assert termination == ParseTermination.EOS
+    assert message["content"] == "\\boxed{42}"
+    assert tokens == original_tokens
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "",
+        "<|endoftext|><|endoftext|>",
+        "<|endoftext|><|im_end|>",
+        "<|endoftext|>\\boxed{42}",
+        "<|endoftext|>\n\nUser:",
+        "\n\nUser:<|endoftext|>",
+    ],
+)
+def test_parse_response_rejects_invalid_model_eos(
+    multiple_eos_renderer: RoleColonRenderer, suffix: str
+) -> None:
+    tokens = multiple_eos_renderer.tokenizer.encode("\\boxed{42}" + suffix)
+
+    _, termination = multiple_eos_renderer.parse_response(tokens)
+
+    assert termination == ParseTermination.MALFORMED
+
+
+@pytest.mark.parametrize(
+    "ending,expected_format",
+    [("<|endoftext|>", 1), ("<|im_end|>", 1), ("\n\nUser:", 1), ("", 0)],
+)
+def test_deepmath_rewards_clean_termination(
+    multiple_eos_renderer: RoleColonRenderer,
+    monkeypatch: pytest.MonkeyPatch,
+    ending: str,
+    expected_format: int,
+) -> None:
+    from datasets import Dataset
+
+    from tinker_cookbook.recipes.math_rl import math_env
+
+    data = Dataset.from_list([{"question": "6 * 7?", "final_answer": "42"}])
+    monkeypatch.setattr(math_env, "load_dataset", lambda *args, **kwargs: data)
+    dataset = math_env.DeepMathDataset(1, 1, multiple_eos_renderer)
+    builder = dataset.get_batch(0)[0]
+    env = asyncio.run(builder.make_envs())[0]
+    tokens = multiple_eos_renderer.tokenizer.encode("\\boxed{42}" + ending)
+
+    result = asyncio.run(env.step(tokens))
+
+    assert result.metrics == {"correct": 1.0, "format": expected_format}
+    assert result.reward == pytest.approx(1.0 if expected_format else 0.9)

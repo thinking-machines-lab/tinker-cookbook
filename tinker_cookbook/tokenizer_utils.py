@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -211,6 +212,49 @@ def get_tokenizer(model_name: str) -> Tokenizer:
         return cast(Tokenizer, TmlRenderersTokenizerAdapter(model_name))
 
     return _get_hf_tokenizer(model_name)
+
+
+def get_eos_token_ids(tokenizer: Tokenizer) -> frozenset[int]:
+    """Include model-generation EOS tokens that are absent from tokenizer metadata."""
+    from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+
+    eos_ids: set[int] = set()
+    eos_token_id = tokenizer.eos_token_id
+    if eos_token_id is not None:
+        assert isinstance(eos_token_id, int)
+        eos_ids.add(eos_token_id)
+    model_name = getattr(tokenizer, "name_or_path", None)
+    if isinstance(tokenizer, PreTrainedTokenizerBase) and model_name:
+        revision = getattr(tokenizer, "init_kwargs", {}).get("revision")
+        eos_ids.update(_get_model_eos_token_ids(model_name, revision))
+    return frozenset(eos_ids)
+
+
+@cache
+def _get_model_eos_token_ids(model_name: str, revision: str | None) -> frozenset[int]:
+    from transformers.utils.hub import cached_file
+
+    eos_ids: set[int] = set()
+    for filename in ("config.json", "generation_config.json"):
+        path = cached_file(
+            model_name,
+            filename,
+            revision=revision,
+            _raise_exceptions_for_missing_entries=False,
+        )
+        if path is None:
+            continue
+        configured_ids = json.loads(Path(path).read_text()).get("eos_token_id")
+        if configured_ids is None:
+            continue
+        if isinstance(configured_ids, int):
+            configured_ids = [configured_ids]
+        if not isinstance(configured_ids, list) or not all(
+            isinstance(token_id, int) for token_id in configured_ids
+        ):
+            raise ValueError(f"Invalid eos_token_id in {path}: {configured_ids!r}")
+        eos_ids.update(configured_ids)
+    return frozenset(eos_ids)
 
 
 # Pinned revisions for Kimi K2 tokenizers, loaded directly via the custom

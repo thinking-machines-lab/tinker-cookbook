@@ -304,7 +304,13 @@ class DeepMathDataset(MathDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
+                MathEnv,
+                problem,
+                answer,
+                self.renderer,
+                convo_prefix=self.convo_prefix,
+                # Single-turn math answers may end with any model EOS token.
+                require_stop_sequence_for_format=False,
             ),
             num_envs=group_size,
             dataset_name="deepmath",

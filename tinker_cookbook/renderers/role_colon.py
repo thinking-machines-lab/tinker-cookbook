@@ -13,6 +13,7 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     ensure_text,
 )
+from tinker_cookbook.tokenizer_utils import Tokenizer, get_eos_token_ids
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ class RoleColonRenderer(Renderer):
     This is basically the format used by DeepSeek R1-Zero, and similar to the format
     used by Anthropic, except that they use "Human" instead of "User".
     """
+
+    def __init__(self, tokenizer: Tokenizer):
+        super().__init__(tokenizer)
+        self._eos_token_ids = get_eos_token_ids(tokenizer)
 
     @property
     def has_extension_property(self) -> bool:
@@ -83,7 +88,8 @@ class RoleColonRenderer(Renderer):
         """Parse sampled token IDs back into an assistant Message.
 
         Splits the decoded text on the ``\\n\\nUser:`` stop sequence. Handles EOS
-        token stripping and multiple-delimiter edge cases.
+        token stripping and multiple-delimiter edge cases. EOS includes all IDs
+        in the model's generation configuration, not just tokenizer.eos_token_id.
 
         Args:
             response (list[int]): Raw token IDs from the sampler.
@@ -98,14 +104,16 @@ class RoleColonRenderer(Renderer):
                 multiple ``\\n\\nUser:`` delimiters).
         """
         terminated_with_eos = False
-        eos_token_id = self.tokenizer.eos_token_id
-        if eos_token_id is not None and response and response[-1] == eos_token_id:
+        if response and response[-1] in self._eos_token_ids:
             response = response[:-1]
             terminated_with_eos = True
 
         str_response = str(self.tokenizer.decode(response))
         splitted = str_response.split("\n\nUser:")
         content = splitted[0].removeprefix(_CONTENT_PREFIX).removesuffix(_CONTENT_SUFFIX)
+        if any(token_id in self._eos_token_ids for token_id in response):
+            # Sampling should have stopped at the first EOS token.
+            return Message(role="assistant", content=content), ParseTermination.MALFORMED
         if len(splitted) == 1:
             if terminated_with_eos:
                 return Message(role="assistant", content=content), ParseTermination.EOS
