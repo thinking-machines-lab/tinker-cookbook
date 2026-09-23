@@ -6,6 +6,7 @@ and assembling training batches.
 """
 
 import logging
+from collections.abc import Sequence
 
 import tinker
 import torch
@@ -230,6 +231,30 @@ def assemble_training_data(
             metadata_D.extend([{"group_idx": i_group, "traj_idx": i_traj} for _ in new_data])
 
     return data_D, metadata_D
+
+
+def successful_rollout_indices(
+    trajectory_groups_raw: Sequence[TrajectoryGroup | None],
+) -> list[int]:
+    """Indices of the rollouts that produced a trajectory group.
+
+    ``do_group_rollout_and_filter_constant_reward`` returns ``None`` for a group
+    it could not roll out. Dropping those from the group list alone renumbers
+    every group after the first failure, and the group index is what
+    :func:`assemble_training_data` stamps onto each datum -- so anything looked
+    up by that index afterwards (the teacher client for the datum, its dataset,
+    its prompt) silently comes from a different problem. Filter every list that
+    runs parallel to the batch by these indices.
+
+    Args:
+        trajectory_groups_raw (Sequence[TrajectoryGroup | None]): Rollout
+            results, one per problem in the batch, ``None`` where the rollout
+            failed.
+
+    Returns:
+        list[int]: Indices, ascending, of the non-``None`` entries.
+    """
+    return [i for i, group in enumerate(trajectory_groups_raw) if group is not None]
 
 
 def remove_constant_reward_groups(
