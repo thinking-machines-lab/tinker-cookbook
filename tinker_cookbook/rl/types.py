@@ -337,6 +337,26 @@ class EnvGroupBuilder(ABC):
         """
         pass
 
+    async def make_env(self) -> Env:
+        """Create a single replacement environment.
+
+        Retry strategies need one fresh env after a failed rollout, not a
+        full group. The default calls :meth:`make_envs` and returns the first
+        env; unused extras are left for :meth:`cleanup` if this builder tracks
+        them. Sandbox builders **must** override this to provision a single
+        container — calling ``make_envs()`` for one retry is not cheap there.
+
+        Returns:
+            Env: A single new environment.
+
+        Raises:
+            RuntimeError: If :meth:`make_envs` returns an empty sequence.
+        """
+        envs = await self.make_envs()
+        if not envs:
+            raise RuntimeError(f"{type(self).__name__}.make_envs() returned no environments")
+        return envs[0]
+
     async def compute_group_rewards(
         self, trajectory_group: list[Trajectory], env_group: Sequence[Env]
     ) -> list[tuple[float, Metrics]]:
@@ -365,11 +385,13 @@ class EnvGroupBuilder(ABC):
         return [(0.0, {}) for _ in trajectory_group]
 
     async def cleanup(self) -> None:
-        """Clean up resources created by make_envs().
+        """Clean up resources created by make_envs() / make_env().
 
         Called after rollouts and reward computation complete, regardless
         of success or failure. Override this to release expensive resources
-        like cloud sandboxes, remote browsers, etc.
+        like cloud sandboxes, remote browsers, etc. Implementations that
+        create resources across multiple ``make_envs`` / ``make_env`` calls
+        (retries) must retain all of them until this method runs.
 
         Default is a no-op. Implementations should be idempotent (safe to
         call multiple times) and handle exceptions internally, as `do_group_rollout`
