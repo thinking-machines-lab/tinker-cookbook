@@ -224,6 +224,7 @@ This is the most subtle and most common cause of "mysterious" slowdowns. Because
 - Heavy JSON/pydantic serialization
 - File I/O for large datasets
 - `transformers` tokenizer calls on large batches
+- `len(tokenizer)` on Hugging Face fast tokenizers: it rebuilds the vocabulary on every call (~0.2 s for gpt-oss), so calling it per request or per sample adds up fast. `py-spy dump` shows `tokenization_utils_tokenizers.py: __len__`. Use `tokenizer_utils.get_vocab_size(tokenizer)` instead
 
 **Fixes:**
 1. **Move heavy work out of the hot loop**: Preprocess data before training starts

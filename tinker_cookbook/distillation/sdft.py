@@ -69,7 +69,7 @@ from tinker_cookbook.rl.types import (
     RLDataset,
     TrajectoryGroup,
 )
-from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.tokenizer_utils import get_tokenizer, get_vocab_size
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import split_list
@@ -987,7 +987,7 @@ async def main(
                         teacher_prompts_P,
                         topk=cfg.topk,
                         max_context_length=cfg.max_context_length,
-                        vocab_size=len(tokenizer),
+                        vocab_size=get_vocab_size(tokenizer),
                     )
                 metrics.update(rev_metrics)
 
@@ -1009,7 +1009,7 @@ async def main(
                         teacher_prompts_P,
                         topk=cfg.topk,
                         max_context_length=cfg.max_context_length,
-                        vocab_size=len(tokenizer),
+                        vocab_size=get_vocab_size(tokenizer),
                     )
                 metrics.update(topk_metrics)
 

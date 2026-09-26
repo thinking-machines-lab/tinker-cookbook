@@ -95,6 +95,8 @@ For an identifier to pass to the SDK, call `service_client.get_server_capabiliti
 
 9. **DPO:** Start with `dpo_beta=0.1`, LR~1e-5.
 
+10. **`len(tokenizer)` in hot loops:** On Hugging Face fast tokenizers, `len(tokenizer)` rebuilds the vocabulary on every call (~0.2 s for gpt-oss). Called per request inside async code, it blocks the event loop and serializes concurrent sampling. Use `tokenizer_utils.get_vocab_size(tokenizer)`, which caches it. `tokenizer.vocab_size` is not a substitute: it excludes added tokens such as stop tokens.
+
 ---
 
 ## Testing
