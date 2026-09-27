@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+import tinker
+from PIL import Image
 from tml_renderers import chat as tml_chat
 from tml_renderers.renderer import Renderer as PublicRenderer
 
@@ -12,6 +14,7 @@ import tinker_cookbook.renderers as renderers
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.renderers import tml
 from tinker_cookbook.renderers.base import (
+    ImagePart,
     Message,
     ParseTermination,
     RenderContext,
@@ -89,13 +92,7 @@ class _Renderer:
         self.parsers.append(parser)
         return parser
 
-    def render_for_sft(
-        self,
-        messages: TmlRenderInput,
-        *,
-        split_non_extension_history: bool = True,
-    ) -> list[tml_chat.TrainingExample]:
-        del split_non_extension_history
+    def render_for_sft(self, messages: TmlRenderInput) -> list[tml_chat.TrainingExample]:
         self.sft_input = messages
         return [
             tml_chat.TrainingExample(
@@ -352,3 +349,49 @@ def test_qwen3_builtins_use_public_renderer_behavior(
     assert adapter.tokenizer is not caller_tokenizer
     assert adapter.tokenizer.decode(prompt.to_ints()).endswith(generation_suffix)
     adapter.parse_response([])
+
+
+@pytest.mark.parametrize("renderer_name", ["qwen3_vl", "qwen3_vl_instruct"])
+def test_qwen3_vl_builtins_use_public_renderer_for_images(renderer_name: str) -> None:
+    caller_tokenizer = SimpleNamespace(name_or_path="Qwen/Qwen3-8B")
+    caller_image_processor = object()
+    adapter = renderers.get_renderer(
+        renderer_name,
+        cast(Tokenizer, caller_tokenizer),
+        caller_image_processor,
+    )
+    image = Image.new("RGB", (224, 224), color="red")
+    prompt_messages = [
+        Message(
+            role="user",
+            content=[
+                TextPart(type="text", text="What is this?"),
+                ImagePart(type="image", image=image),
+            ],
+        )
+    ]
+
+    prompt = adapter.build_generation_prompt(prompt_messages)
+    (image_chunk,) = [
+        chunk for chunk in prompt.chunks if isinstance(chunk, tinker.types.ImageChunk)
+    ]
+
+    assert isinstance(adapter, tml.TmlRendererAdapter)
+    assert adapter.tokenizer is not caller_tokenizer
+    assert image_chunk.format == "jpeg"
+    assert image_chunk.data.startswith(b"\xff\xd8")
+    assert image_chunk.expected_tokens == 64
+    adapter.parse_response([])
+
+    model_input, weights = adapter.build_supervised_example(
+        [*prompt_messages, Message(role="assistant", content="It is red.")]
+    )
+    sft_image_index = next(
+        i
+        for i, chunk in enumerate(model_input.chunks)
+        if isinstance(chunk, tinker.types.ImageChunk)
+    )
+    image_offset = sum(chunk.length for chunk in model_input.chunks[:sft_image_index])
+
+    assert weights[image_offset : image_offset + 64].tolist() == [0.0] * 64
+    assert weights[image_offset + 64 :].sum() > 0
