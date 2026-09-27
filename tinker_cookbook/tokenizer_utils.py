@@ -14,7 +14,7 @@ import sys
 from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, TypeAlias, cast, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # ``tml_renderers`` import shim.
@@ -61,7 +61,14 @@ else:
 _CUSTOM_TOKENIZER_REGISTRY: dict[str, Callable[[], Tokenizer]] = {}
 
 
-class TmlTokenizer(Protocol):
+class TmlRendererTokenizer(Protocol):
+    def encode_ordinary(self, text: str) -> Sequence[int]: ...
+
+    def decode(self, token_ids: Sequence[int]) -> str: ...
+
+
+@runtime_checkable
+class TmlTokenizer(TmlRendererTokenizer, Protocol):
     """Structural type for the underlying ``tml_renderers`` tokenizer.
 
     Cookbook never constructs this object (``tml_renderers.tokenizers`` does),
@@ -73,10 +80,6 @@ class TmlTokenizer(Protocol):
 
     bos_token: str
     eos_token: str
-
-    def encode_ordinary(self, text: str) -> Sequence[int]: ...
-
-    def decode(self, token_ids: list[int]) -> str: ...
 
     def encode_special(self, text: str) -> int: ...
 
@@ -91,20 +94,35 @@ class SupportsTmlTokenizer(Protocol):
 class TmlRenderersTokenizerAdapter:
     """Small tokenizer facade for ``tml_renderers`` models used through cookbook."""
 
+    bos_token: str | None
+    eos_token: str | None
     eos_token_id: int | None = None
-    tml_tokenizer: TmlTokenizer
+    tml_tokenizer: TmlRendererTokenizer
 
     def __init__(self, name_or_path: str):
         ensure_tml_renderers_importable()
         tokenizers = importlib.import_module("tml_renderers.tokenizers")
 
+        self._initialize(tokenizers.o200k_base_chat(), name_or_path)
+
+    @classmethod
+    def from_tokenizer(
+        cls, tokenizer: TmlRendererTokenizer, name_or_path: str = "tml-renderers"
+    ) -> Self:
+        adapter = cls.__new__(cls)
+        adapter._initialize(tokenizer, name_or_path)
+        return adapter
+
+    def _initialize(self, tokenizer: TmlRendererTokenizer, name_or_path: str) -> None:
         self.name_or_path = name_or_path
-        self.tml_tokenizer = tokenizers.o200k_base_chat()
-        self.bos_token = self.tml_tokenizer.bos_token
-        self.eos_token = self.tml_tokenizer.eos_token
-        try:
-            self.eos_token_id = int(self.tml_tokenizer.encode_special(self.eos_token))
-        except Exception:
+        self.tml_tokenizer = tokenizer
+        if isinstance(tokenizer, TmlTokenizer):
+            self.bos_token = tokenizer.bos_token
+            self.eos_token = tokenizer.eos_token
+            self.eos_token_id = int(tokenizer.encode_special(tokenizer.eos_token))
+        else:
+            self.bos_token = None
+            self.eos_token = None
             self.eos_token_id = None
 
     def encode(self, text: str, add_special_tokens: bool = False, **_: Any) -> list[int]:

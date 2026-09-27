@@ -1,4 +1,5 @@
 import sys
+from collections.abc import Sequence
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -106,3 +107,48 @@ def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -
 
     mock_adapter.assert_called_once_with("thinkingmachines/Inkling")
     assert tokenizer is mock_adapter.return_value
+
+
+class _MinimalTmlRendererTokenizer:
+    def encode_ordinary(self, text: str) -> Sequence[int]:
+        return [ord(character) for character in text]
+
+    def decode(self, token_ids: Sequence[int]) -> str:
+        return "".join(chr(token_id) for token_id in token_ids)
+
+
+class _FullTmlTokenizer(_MinimalTmlRendererTokenizer):
+    bos_token = "<bos>"
+    eos_token = "<eos>"
+
+    def encode_special(self, text: str) -> int:
+        assert text == self.eos_token
+        return 42
+
+
+class _BrokenFullTmlTokenizer(_FullTmlTokenizer):
+    def encode_special(self, text: str) -> int:
+        raise ValueError("unknown special token")
+
+
+def test_tml_tokenizer_adapter_exposes_full_tokenizer_special_tokens() -> None:
+    adapter = tokenizer_utils.TmlRenderersTokenizerAdapter.from_tokenizer(_FullTmlTokenizer())
+
+    assert adapter.bos_token == "<bos>"
+    assert adapter.eos_token == "<eos>"
+    assert adapter.eos_token_id == 42
+
+
+def test_tml_tokenizer_adapter_marks_minimal_tokenizer_special_tokens_unavailable() -> None:
+    adapter = tokenizer_utils.TmlRenderersTokenizerAdapter.from_tokenizer(
+        _MinimalTmlRendererTokenizer()
+    )
+
+    assert adapter.bos_token is None
+    assert adapter.eos_token is None
+    assert adapter.eos_token_id is None
+
+
+def test_tml_tokenizer_adapter_does_not_hide_special_token_errors() -> None:
+    with pytest.raises(ValueError, match="unknown special token"):
+        tokenizer_utils.TmlRenderersTokenizerAdapter.from_tokenizer(_BrokenFullTmlTokenizer())
