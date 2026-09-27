@@ -449,6 +449,7 @@ def test_qwen3_streaming_supported_by_text_variants(renderer_name):
     response_str = "<think>reasoning</think>answer<|im_end|>"
     response_tokens = tokenizer.encode(response_str, add_special_tokens=False)
 
+    renderer.build_generation_prompt([])
     deltas = list(renderer.parse_response_streaming(response_tokens))
 
     assert isinstance(deltas[0], StreamingMessageHeader)
@@ -794,6 +795,7 @@ def test_qwen3_produced_turn_survives_a_render_parse_roundtrip(reasoning: str | 
 
     model_input, _ = renderer.build_supervised_example(convo)
     produced = str(tokenizer.decode(model_input.to_ints())).split("<|im_start|>assistant\n")[1]
+    renderer.build_generation_prompt(cast(list[Message], convo[:-1]))
     parsed, termination = renderer.parse_response(
         tokenizer.encode(produced, add_special_tokens=False)
     )
