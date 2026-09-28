@@ -77,7 +77,7 @@ See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and
 
 ### Tutorials
 
-New to Tinker? The [`tutorials/`](tutorials/) directory contains 20+ progressive [marimo](https://marimo.io/) notebooks that walk through core concepts — rendering, loss functions, completers, weight management — and advanced topics such as custom RL environments, DPO, RLHF, and weight export. Run any tutorial with `marimo edit tutorials/101_hello_tinker.py`. See the [tutorials README](tutorials/README.md) for the full list, or browse rendered versions on the [Tinker docs site](https://tinker-docs.thinkingmachines.ai/tutorials).
+New to Tinker? The [`tutorials/`](tutorials/) directory contains 20+ progressive [marimo](https://marimo.io/) notebooks that walk through core concepts — rendering, loss functions, completers, weight management — and advanced topics such as custom RL environments, DPO, and RLHF. Exporting and publishing trained weights is covered by the [Deployment guides](https://tinker-docs.thinkingmachines.ai/cookbook/deployment/) on the docs site. Run any tutorial with `marimo edit tutorials/101_hello_tinker.py`. See the [tutorials README](tutorials/README.md) for the full list, or browse rendered versions on the [Tinker docs site](https://tinker-docs.thinkingmachines.ai/tutorials).
 
 To download the weights of any model:
 ```python

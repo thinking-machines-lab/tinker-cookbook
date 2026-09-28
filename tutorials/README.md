@@ -72,18 +72,11 @@ Alternatively, you can try notebooks online in [molab](https://molab.marimo.io/n
 | 406 | [Prompt Distillation](406_prompt_distillation.py) | Teacher/student, context distillation | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/406_prompt_distillation.py) |
 | 407 | [RLHF Pipeline](407_rlhf_pipeline.py) | 3-stage SFT, preference model, RL | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/407_rlhf_pipeline.py) |
 
-### Deployment (5xx)
-
-| # | Notebook | What you'll learn | Try on molab |
-|---|----------|-------------------|--------------|
-| 501 | [Export to HF](501_export_hf.py) | Merge LoRA into full model | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/501_export_hf.py) |
-| 502 | [Build LoRA Adapter](502_lora_adapter.py) | PEFT format for vLLM/SGLang | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/502_lora_adapter.py) |
-| 503 | [Publish to Hub](503_publish_hub.py) | Upload to HuggingFace with model card | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/503_publish_hub.py) |
-
 Work through them in order — each builds on concepts from the previous one.
 
 ## After the tutorials
 
 - **Production recipes** with logging, checkpointing, and evaluation: see [`tinker_cookbook/recipes/`](../tinker_cookbook/recipes/)
+- **Deploying a trained checkpoint** (merge into a HuggingFace model, export a PEFT adapter, publish to the Hub): see the [Deployment guides](https://tinker-docs.thinkingmachines.ai/cookbook/deployment/)
 - **Full documentation**: see the [Tinker docs site](https://tinker-docs.thinkingmachines.ai)
 - **API reference**: see the [Tinker API reference](https://tinker-docs.thinkingmachines.ai/tinker/api-reference/serviceclient/)

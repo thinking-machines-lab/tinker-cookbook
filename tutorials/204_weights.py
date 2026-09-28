@@ -340,11 +340,11 @@ def _(mo):
     mo.md(r"""
     ### After downloading
 
-    Once you have the adapter files locally, see the deployment tutorials for next steps:
+    Once you have the adapter files locally, see the [Deployment guides](https://tinker-docs.thinkingmachines.ai/cookbook/deployment/) for next steps:
 
-    - **Export a Merged HuggingFace Model** -- merge LoRA into a standalone model with `weights.build_hf_model()`
-    - **Build a PEFT LoRA Adapter** -- convert to PEFT format for serving with vLLM or SGLang via `weights.build_lora_adapter()`
-    - **Publish to HuggingFace Hub** -- upload models with custom model cards via `weights.publish_to_hf_hub()`
+    - **[Merge into a HuggingFace Model](https://tinker-docs.thinkingmachines.ai/cookbook/deployment/export-hf/)** -- merge LoRA into a standalone model with `weights.build_hf_model()`
+    - **[Build a PEFT LoRA Adapter](https://tinker-docs.thinkingmachines.ai/cookbook/deployment/lora-adapter/)** -- convert to PEFT format for serving with vLLM or SGLang via `weights.build_lora_adapter()`
+    - **[Publish to HuggingFace Hub](https://tinker-docs.thinkingmachines.ai/cookbook/deployment/publish-hub/)** -- upload models with custom model cards via `weights.publish_to_hf_hub()`
     """)
     return
 
