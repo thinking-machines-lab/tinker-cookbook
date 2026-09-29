@@ -46,7 +46,11 @@ except ImportError:
     ) from None
 
 from tinker_cookbook.exceptions import SandboxError
-from tinker_cookbook.sandbox.sandbox_interface import SandboxResult, SandboxTerminatedError
+from tinker_cookbook.sandbox.sandbox_interface import (
+    SandboxInterface,
+    SandboxResult,
+    SandboxTerminatedError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +107,9 @@ def _cap(text: str, max_bytes: int) -> str:
     return data[:max_bytes].decode("utf-8", errors="ignore")
 
 
-class TensorlakeSandbox:
+class TensorlakeSandbox(SandboxInterface):
     """
-    Persistent Tensorlake sandbox for code execution. Conforms to SandboxInterface.
+    Persistent Tensorlake sandbox for code execution. Implements SandboxInterface.
 
     Usage:
         sandbox = await TensorlakeSandbox.create()
