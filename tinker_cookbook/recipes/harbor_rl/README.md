@@ -64,7 +64,7 @@ class SandboxInterface(Protocol):
     async def cleanup(self) -> None: ...
 ```
 
-`ModalSandbox` implements this interface.
+`ModalSandbox` and `TensorlakeSandbox` implement this interface.
 
 ### SandboxFactory and injection
 
@@ -83,7 +83,9 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
 
 The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`).
 
-`cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
+`tensorlake_sandbox_factory` first looks for the task's prebuilt `docker_image` (from `task.toml`) in Tensorlake. Harbor publishes the Terminal-Bench images there, so most tasks start without a build. On a miss it imports the image from the registry. If the task has no `docker_image`, or the import fails, it builds the Dockerfile once and caches the image by a content hash.
+
+`cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it uses `get_sandbox_factory(cli_config.sandbox_backend)`. The default backend is `modal`. The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
 ## Running
 
@@ -105,6 +107,10 @@ uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py 
     lora_rank=32 \
     wandb_project=cookbook_harbor_rl
 ```
+
+To use Tensorlake instead of Modal, install the `tensorlake` extra, set `TENSORLAKE_API_KEY`, and add `sandbox_backend=tensorlake`. The training and evaluation scripts both accept this option.
+
+To run a subset of tasks, pass `task_names=chess-best-move,fix-git` (comma-separated). The evaluation script also accepts `max_tasks=N`, which samples N tasks at random from the loaded set.
 
 ## Evaluation
 
