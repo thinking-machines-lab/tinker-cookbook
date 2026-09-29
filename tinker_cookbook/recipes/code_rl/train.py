@@ -6,6 +6,7 @@ import chz
 
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.recipes.code_rl.code_env import DeepcoderDatasetBuilder
+from tinker_cookbook.recipes.code_rl.code_grading import shutdown_sandbox_pools
 from tinker_cookbook.rl.rollout_strategy import RetryOnFailure
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.sandbox import SandboxBackend
@@ -62,6 +63,11 @@ class CLIConfig:
 
 
 async def cli_main(cli_config: CLIConfig) -> None:
+    if cli_config.sandbox_backend == SandboxBackend.TENSORLAKE:
+        # Import eagerly so a missing `tensorlake` package fails at startup instead of
+        # being caught per-rollout by the grader and silently scored as reward 0.
+        import tinker_cookbook.sandbox.tensorlake_sandbox  # noqa: F401
+
     renderer_name = await checkpoint_utils.resolve_renderer_name_from_checkpoint_or_default_async(
         model_name=cli_config.model_name,
         explicit_renderer_name=cli_config.renderer_name,
@@ -127,7 +133,10 @@ async def cli_main(cli_config: CLIConfig) -> None:
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
-    await main(config)
+    try:
+        await main(config)
+    finally:
+        await shutdown_sandbox_pools()
 
 
 if __name__ == "__main__":
