@@ -321,11 +321,15 @@ class TestMCQExtraction:
         from tinker_cookbook.eval.benchmarks._bfcl import _match_function_call
 
         gen = {"name": "get_weather", "arguments": {"city": "London"}}
-        exp = {"name": "get_weather", "arguments": {"city": "london"}}
-        assert _match_function_call(gen, exp)
+        exp = {"get_weather": {"city": ["london"]}}
+        function = {
+            "name": "get_weather",
+            "parameters": {"properties": {"city": {"type": "string"}}, "required": ["city"]},
+        }
+        assert _match_function_call(gen, exp, function)
 
         gen_wrong = {"name": "get_weather", "arguments": {"city": "Paris"}}
-        assert not _match_function_call(gen_wrong, exp)
+        assert not _match_function_call(gen_wrong, exp, function)
 
     def test_tau2_bench_action_matching(self):
         from tinker_cookbook.eval.benchmarks._tau2_bench import _check_actions
