@@ -1,6 +1,7 @@
-"""Offline tests for TensorlakeSandboxPool. TensorlakeSandbox.create is mocked."""
+"""Offline tests for TensorlakeSandbox and TensorlakeSandboxPool. The Tensorlake API is mocked."""
 
 import asyncio
+import inspect
 from typing import Self
 from unittest import mock
 
@@ -10,7 +11,7 @@ pytest.importorskip("tensorlake")
 
 from tinker_cookbook.exceptions import SandboxError
 from tinker_cookbook.sandbox import tensorlake_sandbox
-from tinker_cookbook.sandbox.sandbox_interface import SandboxResult
+from tinker_cookbook.sandbox.sandbox_interface import SandboxInterface, SandboxResult
 
 _OK = SandboxResult(stdout="", stderr="", exit_code=0)
 
@@ -258,3 +259,26 @@ def test_structured_lifecycle_error_is_terminated() -> None:
     assert str(err) == "API error (status 409): Sandbox abc terminated (Timeout)"
     assert tensorlake_sandbox._is_sandbox_terminated(err)
     assert not tensorlake_sandbox._is_sandbox_terminated(RemoteAPIError(409, "conflict"))
+
+
+def test_tensorlake_sandbox_implements_sandbox_interface() -> None:
+    sandbox = tensorlake_sandbox.TensorlakeSandbox(mock.Mock())
+    assert isinstance(sandbox, SandboxInterface)
+
+
+@pytest.mark.parametrize(
+    "name", ["send_heartbeat", "run_command", "read_file", "write_file", "cleanup"]
+)
+def test_tensorlake_sandbox_accepts_sandbox_interface_calls(name: str) -> None:
+    # Inheritance supplies a stub for a missing method, so also check that
+    # each method takes every protocol parameter with the same default.
+    expected = inspect.signature(getattr(SandboxInterface, name)).parameters
+    actual = inspect.signature(getattr(tensorlake_sandbox.TensorlakeSandbox, name)).parameters
+    assert getattr(tensorlake_sandbox.TensorlakeSandbox, name) is not getattr(
+        SandboxInterface, name
+    )
+    for param in expected.values():
+        assert param.name in actual, f"{name} has no parameter {param.name!r}"
+        assert actual[param.name].kind == param.kind
+        if param.default is not inspect.Parameter.empty:
+            assert actual[param.name].default == param.default
