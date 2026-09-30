@@ -14,7 +14,7 @@ import torch.nn.functional as F
 
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
-from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
+from tinker_cookbook.supervised.nll_evaluator import SamplerNLLEvaluator
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
@@ -533,7 +533,7 @@ def main(config: Config):
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     if maybe_test_dataset is not None:
-        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
+        evaluators.append(SamplerNLLEvaluator.from_dataset(maybe_test_dataset))
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
     logger.info(
         f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
