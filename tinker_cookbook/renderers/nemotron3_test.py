@@ -16,6 +16,7 @@ import json
 import pytest
 
 from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
+from tinker_cookbook.renderers.base import TextPart
 from tinker_cookbook.renderers.nemotron3 import (
     Nemotron3DisableThinkingRenderer,
     Nemotron3LowThinkingRenderer,
@@ -542,6 +543,17 @@ def test_disable_thinking_generation_matches_hf(
         [r.to_openai_message(m) for m in messages],
         enable_thinking=False,
     )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_user_list_content_is_not_trimmed_like_hf(nemotron_tokenizer, nemotron_renderer):
+    """The template renders user content as-is, so list content keeps its whitespace."""
+    text = "  What is 2+2? \n"
+    messages = [Message(role="user", content=[TextPart(type="text", text=text)])]
+    cookbook = nemotron_renderer.build_generation_prompt(messages).to_ints()
+    hf = _hf_generation_tokens(nemotron_tokenizer, [{"role": "user", "content": text}])
     assert cookbook == hf, (
         f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
     )

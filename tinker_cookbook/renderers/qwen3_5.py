@@ -22,6 +22,7 @@ import re
 
 from tinker_cookbook.renderers.base import (
     UNTERMINATED_TOOL_BLOCK_ERROR,
+    ContentPart,
     ImagePart,
     Message,
     ParseTermination,
@@ -46,6 +47,22 @@ _PARAM_BLOCK_RE = re.compile(
 )
 
 
+def _strip_visible_content(content: list[ContentPart]) -> list[ContentPart]:
+    """Trim like the HF template's ``content|trim``, skipping thinking parts."""
+    parts = list(content)
+    visible = [i for i, p in enumerate(parts) if p["type"] != "thinking"]
+    for indices, strip in ((visible, str.lstrip), (visible[::-1], str.rstrip)):
+        for i in indices:
+            part = parts[i]
+            if part["type"] != "text":
+                break
+            text = strip(part["text"])
+            parts[i] = TextPart(type="text", text=text)
+            if text:
+                break
+    return parts
+
+
 class Qwen3_5Renderer(Qwen3VLRenderer):
     """
     Renderer for Qwen3.5 models.
@@ -62,9 +79,14 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
     # single <|im_start|>user block (gated on loop.previtem/nextitem).
     groups_consecutive_tool_responses = True
 
+    def _trim_content(self, content: str | list[ContentPart]) -> str | list[ContentPart]:
+        """Trim like the HF template's ``content|trim``."""
+        if isinstance(content, str):
+            return content.strip()
+        return _strip_visible_content(content)
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        if isinstance(message["content"], str):
-            message = {**message, "content": message["content"].strip()}
+        message = {**message, "content": self._trim_content(message["content"])}
         return super().render_message(message, ctx)
 
     def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:

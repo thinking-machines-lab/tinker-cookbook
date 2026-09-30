@@ -25,6 +25,7 @@ We provide the following examples:
 - **[Code reasoning](./code_rl/)**: train LLMs on competitive programming problems with sandboxed code execution (DeepCoder replication).
 - **[Preference learning](./preference/)**: showcase a three-stage RLHF pipeline: 1) supervised fine-tuning, 2) learning a reward model, 3) RL against the reward model.
 - **[Tool use](./search_tool/)**: train LLMs to better use retrieval tools to answer questions more accurately.
+- **[RL numerics check](./rl_numerics_check/)**: not a real task; a synthetic many-turn task with 60K+ token episodes for checking that the trainer's log-probabilities match the sampler's during RL.
 - **[Forecasting](./forecasting/)**: train LLMs to make calibrated probability forecasts about real-world events, scored with a Brier reward.
 - **[Prompt distillation](./prompt_distillation/)**: internalize long and complex instructions into LLMs.
 - **[Multi-Agent](./multiplayer_rl/)**: optimize LLMs to play against another LLM or themselves.
@@ -36,6 +37,7 @@ We provide the following examples:
 - **[Harbor RL](./harbor_rl/)**: RL training on Harbor-formatted tasks (e.g., Terminal-Bench) with sandboxed code execution.
 - **[Self-Distillation Fine-Tuning (SDFT)](./sdft/)**: self-distillation via top-K forward KL loss without a separate teacher deployment.
 - **[True Thinking Score (TTS)](./true_thinking_score/)**: quantify the faithfulness of chain-of-thought reasoning to the model's final answer.
+- **[Decision model](./decisions/)**: get a probability distribution over choices in response to a question
 
 These examples are located in each subfolder, and their `README.md` file will walk you through the key implementation details, the commands to run them, and the expected performance.
 
@@ -45,8 +47,8 @@ Our examples support the following CLI arguments to log the results.
 
 1. `wandb_project`: When provided, logs will be sent to your Weights & Biases project. Without this argument, training scripts save logs locally only.
 2. `log_path`: Controls where training artifacts are saved.
-    - Default behavior: If not specified, each run generates a unique name and saves to `/tmp/tinker-examples`
-    - Output files:
-        - `{log_path}/metrics.jsonl` saves training metrics.
-        - `{log_path}/checkpoints.jsonl` records all the checkpoints saved during training. You can share these checkpoints for model release, offline evaluation, etc.
-    - Resuming: When using an existing `log_path`, you can either overwrite the previous run or resume training. This is particularly useful for recovering from runtime interruptions.
+   - Default behavior: If not specified, each run generates a unique name and saves to `/tmp/tinker-examples`
+   - Output files:
+     - `{log_path}/metrics.jsonl` saves training metrics.
+     - `{log_path}/checkpoints.jsonl` records all the checkpoints saved during training. You can share these checkpoints for model release, offline evaluation, etc.
+   - Resuming: When using an existing `log_path`, you can either overwrite the previous run or resume training. This is particularly useful for recovering from runtime interruptions.
