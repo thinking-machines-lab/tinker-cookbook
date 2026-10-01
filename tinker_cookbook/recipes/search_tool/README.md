@@ -11,7 +11,7 @@ In this demo, we demonstrate similar experiments using `Qwen3.5-4B` in non-think
 This demo is built with Chroma DB and the Gemini API. You can install the additional dependencies by
 
 ```bash
-uv pip install -e .[vector-search]
+uv pip install -e ".[vector-search]"
 ```
 
 By default, we use google vertex ai for the embedding service, and you need to set `$GOOGLE_GENAI_USE_VERTEXAI`, `$GCP_VERTEXAI_PROJECT_NUMBER`, `$GCP_VERTEXAI_REGION`. Or, tweak `./embedding.py` to authenticate differently.
