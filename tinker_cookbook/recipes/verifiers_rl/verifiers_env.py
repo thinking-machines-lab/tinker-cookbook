@@ -1,206 +1,251 @@
+"""Native verifiers v1 dataset and rollout integration."""
+
 from __future__ import annotations
 
+import asyncio
+import tomllib
 from collections.abc import Sequence
-from contextvars import ContextVar
+from contextlib import AbstractAsyncContextManager
+from itertools import islice
+from pathlib import Path
 
 import chz
 import tinker
-import verifiers as vf
+import verifiers.v1 as vf
+from verifiers.v1.decorators import discover_decorated
 
-from tinker_cookbook.completers import TokensWithLogprobs
+from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter, TokensWithLogprobs
+from tinker_cookbook.exceptions import AllTrajectoriesFailedError
+from tinker_cookbook.recipes.verifiers_rl.tinker_client import TinkerClient
 from tinker_cookbook.rl.types import (
+    DirectEnvGroupBuilder,
     EnvGroupBuilder,
     RLDataset,
     RLDatasetBuilder,
+    RolloutError,
     Trajectory,
     TrajectoryGroup,
     Transition,
 )
 
-_vf_env_ctx: ContextVar[vf.Environment | None] = ContextVar("vf_env", default=None)
+
+class _VerifiersRuntime:
+    def __init__(self, env: vf.Environment, max_concurrent: int) -> None:
+        self.env = env
+        self.semaphore = asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
+        self._serving: AbstractAsyncContextManager[None] | None = None
+
+    async def start(self) -> None:
+        if self._serving is not None:
+            return
+        self._serving = self.env.serving()
+        await self._serving.__aenter__()
+
+    async def close(self) -> None:
+        if self._serving is None:
+            return
+        serving = self._serving
+        self._serving = None
+        await serving.__aexit__(None, None, None)
 
 
-def set_vf_env(env: vf.Environment) -> None:
-    """Set the verifiers environment for the current context."""
-    _vf_env_ctx.set(env)
+def load_tasks(taskset: vf.Taskset, num_tasks: int | None) -> list[vf.Task]:
+    """Load a bounded task list without exhausting an infinite taskset."""
+    if num_tasks is not None:
+        if num_tasks < 0:
+            raise ValueError("num_tasks must be non-negative")
+        return list(islice(taskset.load(), num_tasks))
+    if getattr(taskset, "INFINITE", False):
+        raise ValueError("num_tasks is required for an infinite taskset")
+    return list(taskset.load())
 
 
-def get_vf_env() -> vf.Environment | None:
-    """Get the verifiers environment from the current context."""
-    return _vf_env_ctx.get()
+def trace_to_trajectory(trace: vf.Trace) -> Trajectory:
+    """Convert every v1 trace branch into Tinker's prefix/action representation."""
+    transitions: list[Transition] = []
+    trained_nodes: set[int] = set()
 
-
-def convert_states_to_trajectory_group(states: list[vf.State]) -> TrajectoryGroup:
-    """Convert verifiers States to tinker TrajectoryGroup."""
-    trajectories_G: list[Trajectory] = []
-    final_rewards_G: list[float] = []
-    metrics_G: list[dict[str, float | int]] = []
-
-    for state in states:
-        transitions: list[Transition] = []
-        trajectory_steps = state.get("trajectory", [])
-
-        for i, step in enumerate(trajectory_steps):
-            tokens_data = step.get("tokens")
-            if tokens_data is not None:
-                prompt_ids = tokens_data.get("prompt_ids", [])
-                ob = tinker.ModelInput.from_ints(prompt_ids)
-                completion_ids = tokens_data.get("completion_ids", [])
-                completion_logprobs = tokens_data.get("completion_logprobs", [])
-                ac = TokensWithLogprobs(
-                    tokens=completion_ids,
-                    maybe_logprobs=completion_logprobs,
+    for branch in trace.branches:
+        prefix: list[int] = []
+        for node in branch.nodes:
+            if not node.sampled or not any(node.mask):
+                prefix.extend(node.token_ids)
+                continue
+            first_sampled = node.mask.index(True)
+            if any(not sampled for sampled in node.mask[first_sampled:]):
+                raise ValueError("verifiers trace has a non-contiguous sampled token span")
+            prompt_ids = prefix + node.token_ids[:first_sampled]
+            completion_ids = node.token_ids[first_sampled:]
+            if len(node.logprobs) != len(completion_ids):
+                raise ValueError("verifiers trace completion tokens and logprobs are misaligned")
+            transitions.append(
+                Transition(
+                    ob=tinker.ModelInput.from_ints(prompt_ids),
+                    ac=TokensWithLogprobs(
+                        tokens=completion_ids,
+                        maybe_logprobs=node.logprobs,
+                    ),
+                    reward=0.0,
+                    episode_done=False,
+                    action_mask=0.0 if id(node) in trained_nodes else 1.0,
                 )
-            else:
-                ob = tinker.ModelInput.empty()
-                ac = TokensWithLogprobs(tokens=[], maybe_logprobs=[])
-
-            is_last = i == len(trajectory_steps) - 1
-            transition = Transition(
-                ob=ob,
-                ac=ac,
-                reward=0.0,
-                episode_done=is_last,
-                metrics={},
             )
-            transitions.append(transition)
+            trained_nodes.add(id(node))
+            prefix.extend(node.token_ids)
 
-        trajectory = Trajectory(transitions=transitions, final_ob=tinker.ModelInput.empty())
-        trajectories_G.append(trajectory)
-        final_rewards_G.append(state.get("reward") or 0.0)
-        metrics_G.append(state.get("metrics") or {})
-
-    return TrajectoryGroup(
-        trajectories_G=trajectories_G,
-        final_rewards_G=final_rewards_G,
-        metrics_G=metrics_G,
+    if transitions:
+        transitions[-1].episode_done = True
+    return Trajectory(
+        transitions=transitions,
+        final_ob=tinker.ModelInput.empty(),
+        stop_reason=trace.stop_condition,
     )
+
+
+def traces_to_trajectory_group(
+    traces: list[vf.Trace], *, requires_group_scoring: bool = False
+) -> TrajectoryGroup:
+    trajectories: list[Trajectory] = []
+    rewards: list[float] = []
+    metrics: list[dict[str, float | int]] = []
+    errors: list[RolloutError] = []
+
+    if requires_group_scoring and any(trace.has_error for trace in traces):
+        raise AllTrajectoriesFailedError("verifiers group-scored episode contains a failed rollout")
+
+    for trace in traces:
+        if trace.error is not None:
+            errors.append(RolloutError(trace.error.type, trace.error.message))
+            continue
+        trajectory = trace_to_trajectory(trace)
+        if not trajectory.transitions:
+            errors.append(RolloutError("EmptyTraceError", "trace contains no sampled tokens"))
+            continue
+        trajectories.append(trajectory)
+        rewards.append(trace.reward)
+        metrics.append(dict(trace.metrics))
+
+    if not trajectories:
+        raise AllTrajectoriesFailedError("all verifiers rollouts failed or produced no tokens")
+    return TrajectoryGroup(trajectories, rewards, metrics, rollout_errors=errors)
 
 
 class VerifiersRLDataset(RLDataset):
     def __init__(
         self,
-        rows: list[dict],
-        vf_env: vf.Environment,
+        tasks: list[vf.Task],
+        env: vf.Environment,
         groups_per_batch: int,
-    ):
-        self.rows = rows
-        self.vf_env = vf_env
+        group_size: int,
+        model_name: str,
+        renderer_model_name: str,
+        renderer_pool_size: int,
+        max_concurrent: int,
+    ) -> None:
+        self.tasks = tasks
+        self.runtime = _VerifiersRuntime(env, max_concurrent)
         self.groups_per_batch = groups_per_batch
+        self.group_size = group_size
+        self.model_name = model_name
+        self.renderer_model_name = renderer_model_name
+        self.renderer_pool_size = renderer_pool_size
+        self.requires_group_scoring = bool(tasks and discover_decorated(tasks[0], "group_reward"))
 
     def __len__(self) -> int:
-        return (len(self.rows) + self.groups_per_batch - 1) // self.groups_per_batch
+        return (len(self.tasks) + self.groups_per_batch - 1) // self.groups_per_batch
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         start = index * self.groups_per_batch
-        end = min(len(self.rows), start + self.groups_per_batch)
-        builders: list[EnvGroupBuilder] = []
-        for j in range(start, end):
-            row = self.rows[j]
-            builders.append(
-                VerifiersEnvGroupBuilder(
-                    vf_env=self.vf_env,
-                    prompt=row["prompt"],
-                    example_id=row["example_id"],
-                    task=row["task"],
-                    answer=row.get("answer", ""),
-                    info=row.get("info", {}),
-                )
+        return [
+            VerifiersEnvGroupBuilder(
+                task=task,
+                runtime=self.runtime,
+                group_size=self.group_size,
+                model_name=self.model_name,
+                renderer_model_name=self.renderer_model_name,
+                renderer_pool_size=self.renderer_pool_size,
+                requires_group_scoring=self.requires_group_scoring,
             )
-        return builders
+            for task in self.tasks[start : start + self.groups_per_batch]
+        ]
+
+    async def start(self) -> None:
+        await self.runtime.start()
+
+    async def close(self) -> None:
+        await self.runtime.close()
 
 
 @chz.chz
 class VerifiersRLDatasetBuilder(RLDatasetBuilder):
-    vf_env_id: str
-    vf_env_args: dict = chz.field(default_factory=dict)
+    env_config_path: str
+    model_name: str
+    renderer_model_name: str
     groups_per_batch: int = 32
-    dataset_n: int = -1
-    dataset_seed: int | None = None
+    group_size: int = 8
+    num_tasks: int | None = None
+    renderer_pool_size: int = 1
+    max_concurrent: int = 0
 
     async def __call__(self) -> tuple[RLDataset, RLDataset | None]:
-        vf_env = get_vf_env()
-        if vf_env is None:
-            vf_env = vf.load_environment(self.vf_env_id, **self.vf_env_args)
-            set_vf_env(vf_env)
-        ds = vf_env.get_dataset(n=self.dataset_n, seed=self.dataset_seed)
-        rows = [
-            {
-                "prompt": ds["prompt"][i],
-                "example_id": ds["example_id"][i],
-                "task": ds["task"][i],
-                **({"answer": ds["answer"][i]} if "answer" in ds.column_names else {}),
-                **({"info": ds["info"][i]} if "info" in ds.column_names else {}),
-            }
-            for i in range(len(ds))
-        ]
-        return VerifiersRLDataset(rows, vf_env, self.groups_per_batch), None
+        raw_config = tomllib.loads(Path(self.env_config_path).read_text())
+        config = vf.EnvConfig.model_validate(raw_config)
+        env = vf.Environment(config)
+        tasks = load_tasks(env.taskset, self.num_tasks)
+        dataset = VerifiersRLDataset(
+            tasks=tasks,
+            env=env,
+            groups_per_batch=self.groups_per_batch,
+            group_size=self.group_size,
+            model_name=self.model_name,
+            renderer_model_name=self.renderer_model_name,
+            renderer_pool_size=self.renderer_pool_size,
+            max_concurrent=self.max_concurrent,
+        )
+        return dataset, None
 
 
-class VerifiersEnvGroupBuilder(EnvGroupBuilder):
-    """EnvGroupBuilder for the verifiers library integration.
-
-    Pickle support: ``vf.Environment`` is not pickleable. On deserialization,
-    it is recovered from the ``_vf_env_ctx`` context variable (set via
-    ``set_vf_env()``). Raises ``RuntimeError`` if the context variable is not
-    set — this is expected in cross-process scenarios since the verifiers
-    integration currently requires single-process execution (the
-    ``custom_do_group_rollout`` in train.py is a closure over shared state).
-    """
-
+class VerifiersEnvGroupBuilder(DirectEnvGroupBuilder):
     def __init__(
         self,
-        vf_env: vf.Environment,
-        prompt: vf.Messages,
-        example_id: int,
-        task: str,
-        answer: str = "",
-        info: dict | None = None,
-    ):
-        self.vf_env = vf_env
-        self.prompt = prompt
-        self.example_id = example_id
+        task: vf.Task,
+        runtime: _VerifiersRuntime,
+        group_size: int,
+        model_name: str,
+        renderer_model_name: str,
+        renderer_pool_size: int,
+        requires_group_scoring: bool,
+    ) -> None:
         self.task = task
-        self.answer = answer
-        self.info = info or {}
+        self.runtime = runtime
+        self.group_size = group_size
+        self.model_name = model_name
+        self.renderer_model_name = renderer_model_name
+        self.renderer_pool_size = renderer_pool_size
+        self.requires_group_scoring = requires_group_scoring
 
-    def __getstate__(self) -> dict:
-        """Exclude non-pickleable vf.Environment from pickle state."""
-        state = self.__dict__.copy()
-        state["vf_env"] = None
-        return state
-
-    def __setstate__(self, state: dict) -> None:
-        """Restore vf.Environment from the context variable on unpickle."""
-        vf_env = state.pop("vf_env", None) or get_vf_env()
-        if vf_env is None:
-            raise RuntimeError(
-                "VerifiersEnvGroupBuilder unpickled without a vf.Environment. "
-                "In cross-process scenarios (ProcessPoolExecutor, Ray), the worker "
-                "process must call set_vf_env(vf.load_environment(...)) before "
-                "unpickling builders. See verifiers_rl/train.py for reference."
-            )
-        self.vf_env = vf_env
-        self.prompt = state["prompt"]
-        self.example_id = state["example_id"]
-        self.task = state["task"]
-        self.answer = state["answer"]
-        self.info = state["info"]
-
-    def get_rollout_inputs(self, group_size: int) -> list[vf.RolloutInput]:
-        return [
-            vf.RolloutInput(
-                prompt=self.prompt,
-                answer=self.answer,
-                task=self.task,
-                info=self.info,
-                example_id=self.example_id,
-            )
-            for _ in range(group_size)
-        ]
-
-    async def make_envs(self):
-        return []  # unused when using custom_do_group_rollout
+    async def rollout_group(self, policy: TokenCompleter) -> TrajectoryGroup:
+        if not isinstance(policy, TinkerTokenCompleter):
+            raise TypeError("verifiers v1 rollouts require TinkerTokenCompleter")
+        client = TinkerClient(
+            policy.sampling_client,
+            renderer_model_name=self.renderer_model_name,
+            renderer_pool_size=self.renderer_pool_size,
+        )
+        context = vf.ModelContext(
+            model=self.model_name,
+            client=client,
+            sampling=vf.SamplingConfig(
+                max_tokens=policy.max_tokens,
+                temperature=policy.temperature,
+            ),
+        )
+        traces = await self.runtime.env.episode(self.task, context, n=self.group_size).run(
+            self.runtime.semaphore
+        )
+        return traces_to_trajectory_group(
+            traces, requires_group_scoring=self.requires_group_scoring
+        )
 
     def logging_tags(self) -> list[str]:
-        return [self.task] if self.task else []
+        return [type(self.task).__name__]
