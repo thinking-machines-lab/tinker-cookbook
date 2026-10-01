@@ -19,6 +19,7 @@ from tinker_cookbook.sandbox.sandboxfusion import SandboxFusionClient
 class SandboxBackend(StrEnum):
     SANDBOXFUSION = "sandboxfusion"
     MODAL = "modal"
+    DAYTONA = "daytona"
 
 
 __all__ = [
