@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 try:
-    from instructions_registry import (  # pyright: ignore[reportMissingImports]
+    from ifbench.instructions_registry import (  # pyright: ignore[reportMissingImports]
         INSTRUCTION_DICT as _IFBENCH_CHECKERS,
     )
 except ImportError:
