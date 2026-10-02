@@ -79,6 +79,18 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
     # single <|im_start|>user block (gated on loop.previtem/nextitem).
     groups_consecutive_tool_responses = True
 
+    @property
+    def has_extension_property(self) -> bool:
+        """Qwen3.5 cannot claim the extension property, even with thinking preserved.
+
+        A turn that did not reason is sampled after the prompt's open ``<think>\\n``, so
+        its tokens continue with a lone ``\\n``. History writes that turn either with the
+        closed empty block, whose ``\\n\\n`` the tokenizer merges into a single token, or,
+        before a later user message, with no block at all. Either way the sampled sequence
+        is not a token-level prefix of the next prompt.
+        """
+        return False
+
     def _trim_content(self, content: str | list[ContentPart]) -> str | list[ContentPart]:
         """Trim like the HF template's ``content|trim``."""
         if isinstance(content, str):

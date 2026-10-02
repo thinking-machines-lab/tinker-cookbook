@@ -152,6 +152,11 @@ class Nemotron3Renderer(Qwen3_5Renderer):
       message when none is present, matching HF template behavior.
     """
 
+    @property
+    def has_extension_property(self) -> bool:
+        """With thinking preserved, history renders each turn as a supervised example does."""
+        return not self.strip_thinking_from_history
+
     def _normalize_messages(self, messages: list[Message]) -> list[Message]:
         """Prepend empty system message if not present.
 

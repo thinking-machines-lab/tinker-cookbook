@@ -135,6 +135,8 @@ def get_renderer(
             - ``"qwen3_instruct"``: Qwen3 instruct 2507 (no thinking)
             - ``"qwen3_5"``: Qwen3.5 VL with thinking
             - ``"qwen3_5_disable_thinking"``: Qwen3.5 VL with thinking disabled
+            - ``"qwen3_5_preserve_thinking"``: Qwen3.5 VL with thinking, keeping earlier
+              reasoning in history so multi-turn episodes have the sequence extension property
             - ``"qwen3_8_xhigh_reasoning"``: Qwen3.8 with thinking (reasoning effort xhigh, the HF default)
             - ``"qwen3_8_medium_reasoning"``: Qwen3.8 with thinking, reasoning effort medium
             - ``"qwen3_8_low_reasoning"``: Qwen3.8 with thinking, reasoning effort low
@@ -257,6 +259,10 @@ def get_renderer(
         renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_5_disable_thinking":
         renderer = Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "qwen3_5_preserve_thinking":
+        renderer = Qwen3_5Renderer(
+            tokenizer, image_processor=image_processor, strip_thinking_from_history=False
+        )
     elif name == "qwen3_8_xhigh_reasoning":
         renderer = Qwen3_8Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_8_medium_reasoning":

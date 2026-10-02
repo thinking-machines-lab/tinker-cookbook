@@ -21,7 +21,7 @@ _QWEN3 = ("qwen3", "qwen3_disable_thinking")
 _QWEN3_INSTRUCT = ("qwen3_instruct",)
 _QWEN3_VL = ("qwen3_vl",)
 _QWEN3_VL_INSTRUCT = ("qwen3_vl_instruct",)
-_QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking")
+_QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking", "qwen3_5_preserve_thinking")
 _QWEN3_8 = (
     "qwen3_8_xhigh_reasoning",
     "qwen3_8_disable_thinking",

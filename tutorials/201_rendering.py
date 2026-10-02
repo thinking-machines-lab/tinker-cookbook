@@ -265,6 +265,7 @@ def _(mo):
     |---|---|---|
     | `qwen3_5` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled (default) |
     | `qwen3_5_disable_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking disabled |
+    | `qwen3_5_preserve_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled, earlier reasoning kept in history (multi-turn RL) |
     | `qwen3_8_xhigh_reasoning` | Qwen3.8 (incl. VL) | Thinking enabled, reasoning effort xhigh (default) |
     | `qwen3_8_disable_thinking` | Qwen3.8 (incl. VL) | Thinking disabled |
     | `glm5_3_max_reasoning` | GLM-5.3 | Max reasoning effort (default) |

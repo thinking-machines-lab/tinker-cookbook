@@ -114,6 +114,26 @@ learning patterns:
 - One hidden word (`task.word_hint=first_last task.words=until`): reward stays flat until the
   model finds the word, then climbs to above 0.9.
 
+### Thinking
+
+With thinking enabled, `max_tokens` has to cover the reasoning as well as the answer. On
+Qwen3.6-35B-A3B, the final answer turn took a median of about 2.6K-3.7K tokens and up to about
+8K before training. At `max_tokens=1024` about 80% of answers were cut off, and with a hidden page
+count the model learned to stop answering. Use `max_tokens=8192`, and raise
+`max_trajectory_tokens`, since the reasoning kept in the history grows the context over 30+ turns:
+
+```bash
+python -m tinker_cookbook.recipes.rl_numerics_check.train \
+    model_name=Qwen/Qwen3.6-35B-A3B:peft:262144 \
+    renderer_name=qwen3_5_preserve_thinking \
+    max_tokens=8192 max_trajectory_tokens=196608
+```
+
+`qwen3_5_preserve_thinking` keeps earlier reasoning in the history, so a turn that reasons merges
+into the same sequence as the next; `qwen3_5` strips it. A turn with no reasoning does not merge,
+because history tokenizes its empty think block differently from how it was sampled;
+`env/all/extension_rate` shows how often this happens.
+
 ### Appendix
 
 #### Metrics
@@ -128,8 +148,9 @@ previous observation and action; see Renderers.
 #### Renderers
 
 Each episode trains as a single sequence only if the renderer has the sequence extension
-property for tool-calling turns. `qwen3_5_disable_thinking` and the GLM-5.3 renderers do. With
-`renderer_name` unset, Qwen3.5 and Qwen3.6 use their recommended `qwen3_5` renderer, which
-strips earlier reasoning from the history, so each turn of a 30+ turn episode becomes its own
-long training sequence. `env/all/extension_rate` shows this directly (1.0 when every turn
-merges), and the recipe logs a warning when most turns of an episode fail to extend.
+property for tool-calling turns. `qwen3_5_disable_thinking` and the GLM-5.3 renderers do, and
+`qwen3_5_preserve_thinking` does for turns that reason (see Thinking). With `renderer_name` unset,
+Qwen3.5 and Qwen3.6 use their recommended `qwen3_5` renderer, which strips earlier reasoning
+from the history, so each turn of a 30+ turn episode becomes its own long training sequence.
+`env/all/extension_rate` shows this directly (1.0 when every turn merges), and the recipe logs a
+warning when most turns of an episode fail to extend.

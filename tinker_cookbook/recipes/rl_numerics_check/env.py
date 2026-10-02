@@ -422,7 +422,8 @@ def _warn_turns_not_extending() -> None:
         "Most turns of an episode did not extend the previous observation and action, so "
         "those turns train as separate sequences with the full context so far. The renderer "
         "likely rewrites history, e.g. strips earlier reasoning; for Qwen3.5 and Qwen3.6, "
-        "use renderer_name=qwen3_5_disable_thinking."
+        "use renderer_name=qwen3_5_disable_thinking, or qwen3_5_preserve_thinking to keep "
+        "reasoning."
     )
 
 

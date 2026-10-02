@@ -62,7 +62,7 @@ from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
-from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
+from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 from tinker_cookbook.renderers.qwen3_8 import Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
@@ -1588,35 +1588,10 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),
-    # Qwen3.5 with strip_thinking_from_history=False (preserves thinking)
-    (
-        "Qwen/Qwen3.6-35B-A3B",
-        Qwen3_5Renderer,
-        {"strip_thinking_from_history": False},
-        get_multiturn_thinking_conversation,
-    ),
-    # Qwen3.5 disable thinking, on a conversation with no reasoning: this check trains each
-    # assistant turn in turn, and a reasoning-off renderer refuses one that reasoned. The old
-    # thinking conversation hid the failure below, because every turn reasoned and so no turn
-    # ever got the empty block.
-    pytest.param(
-        "Qwen/Qwen3.6-35B-A3B",
-        Qwen3_5DisableThinkingRenderer,
-        {"strip_thinking_from_history": False},
-        get_basic_4turn_conversation,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="`_assistant_header_suffix` decides the empty block by position "
-            "(`idx > last_user_index`), so one assistant turn gets it as the turn being "
-            "produced and not as history. The sequence through that turn is then not a prefix "
-            "of the next prompt, so has_extension_property=True does not hold.",
-        ),
-    ),
-    # Qwen3.8 is intentionally absent: it preserves thinking in history (HF
-    # preserve_thinking=true) but does not claim has_extension_property — a
-    # no-reasoning turn's closed empty block token-merges differently from the
-    # open-think prompt. Its behavioral extension guarantees are covered in
-    # qwen3_8_test.py.
+    # Qwen3.5 and Qwen3.8 are intentionally absent: they can preserve thinking in
+    # history but do not claim has_extension_property — a no-reasoning turn's closed
+    # empty block token-merges differently from the open-think prompt. Their behavioral
+    # extension guarantees are covered in qwen3_test.py and qwen3_8_test.py.
     # DeepSeek non-thinking with basic multi-turn
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_basic_4turn_conversation),
     # DeepSeek non-thinking with tool calls

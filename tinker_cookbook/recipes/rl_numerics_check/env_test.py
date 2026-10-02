@@ -269,6 +269,7 @@ def test_pages_past_the_end_return_text_and_are_tracked() -> None:
     ("renderer_name", "sampled_prefix", "expected_rate"),
     [
         ("qwen3_5_disable_thinking", "", 1.0),
+        ("qwen3_5_preserve_thinking", "I need page 1.\n</think>\n\n", 1.0),
         ("qwen3_5", "I need page 1.\n</think>\n\n", 0.0),
     ],
 )
