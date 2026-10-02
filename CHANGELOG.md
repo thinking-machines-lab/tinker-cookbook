@@ -13,6 +13,18 @@ Each entry includes:
 
 ---
 
+### [cookbook] Stop Harbor retries from leaking Modal sandboxes ([#944](https://github.com/thinking-machines-lab/tinker-cookbook/pull/944))
+**Date:** 2026-09-11
+**Type:** fix
+**Tags:** rl, harbor
+
+Fixes #943: ``RetryOnFailure`` / ``MinViableGroup`` called ``make_envs()`` for a
+single replacement env, and Harbor reset ``_sandboxes`` without cleanup, so
+retries leaked a full extra group plus the previous generation. Retry now
+uses ``make_env()``; Harbor appends sandboxes until ``cleanup()``.
+
+---
+
 ### [cookbook] Fix base-model single-turn evals + replace `parse_success` bool with `ParseTermination` enum ([#688](https://github.com/thinking-machines-lab/tinker-cookbook/pull/688))
 **Date:** 2026-04-30
 **Type:** fix

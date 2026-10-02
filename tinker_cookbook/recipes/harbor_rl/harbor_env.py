@@ -17,7 +17,6 @@ from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.sandbox import SandboxInterface
-from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 from tinker_cookbook.tool_use import build_agent_tool_env
 from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
 
@@ -41,6 +40,8 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
         timeout: Sandbox lifetime in seconds.
     """
     import modal
+
+    from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
     dockerfile_path = env_dir / "Dockerfile"
     image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
@@ -122,46 +123,49 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.context_overflow_reward = context_overflow_reward
         self.sandbox_factory = sandbox_factory or default_sandbox_factory
         self.reward_fn = reward_fn
+        # Accumulates every sandbox this builder ever created (initial group
+        # plus retries). Do not replace this list in make_envs — retry calls
+        # make_env while the original envs are still live, and cleanup() must
+        # still see the first generation.
         self._sandboxes: list[SandboxInterface] = []
 
-    async def make_envs(self) -> Sequence[Env]:
-        self._sandboxes = []
-
-        env_dir = self.task.task_dir / "environment"
-
-        # Create renderer (stateless, shared across envs)
+    def _renderer(self) -> Renderer:
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
         renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(
             self.model_name
         )
-        renderer = get_renderer(renderer_name, tokenizer)
+        return get_renderer(renderer_name, tokenizer)
 
+    async def _make_one_env(self, renderer: Renderer) -> Env:
+        env_dir = self.task.task_dir / "environment"
         tests_dir = self.task.task_dir / "tests"
+        sandbox = await self.sandbox_factory(env_dir, self.sandbox_timeout)
+        self._sandboxes.append(sandbox)
 
-        envs = []
-        for _ in range(self.group_size):
-            sandbox = await self.sandbox_factory(env_dir, self.sandbox_timeout)
-            self._sandboxes.append(sandbox)
+        bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)
+        reward_fn = self.reward_fn or HarborReward(
+            tests_dir=tests_dir,
+            sandbox=sandbox,
+            grader_timeout=self.grader_timeout,
+        )
+        return build_agent_tool_env(
+            renderer=renderer,
+            tools=[bash_tool.bash],
+            initial_messages=_initial_messages(self.task, renderer, bash_tool),
+            reward_fn=reward_fn,
+            max_turns=self.max_turns,
+            max_trajectory_tokens=self.max_trajectory_tokens,
+            max_generation_tokens=self.max_generation_tokens,
+            context_overflow_reward=self.context_overflow_reward,
+        )
 
-            bash_tool = HarborBashTool(sandbox, command_timeout=self.command_timeout)
-            reward_fn = self.reward_fn or HarborReward(
-                tests_dir=tests_dir,
-                sandbox=sandbox,
-                grader_timeout=self.grader_timeout,
-            )
-            envs.append(
-                build_agent_tool_env(
-                    renderer=renderer,
-                    tools=[bash_tool.bash],
-                    initial_messages=_initial_messages(self.task, renderer, bash_tool),
-                    reward_fn=reward_fn,
-                    max_turns=self.max_turns,
-                    max_trajectory_tokens=self.max_trajectory_tokens,
-                    max_generation_tokens=self.max_generation_tokens,
-                    context_overflow_reward=self.context_overflow_reward,
-                )
-            )
-        return envs
+    async def make_envs(self) -> Sequence[Env]:
+        renderer = self._renderer()
+        return [await self._make_one_env(renderer) for _ in range(self.group_size)]
+
+    async def make_env(self) -> Env:
+        """Provision one sandbox. Retry must not spawn a full extra group."""
+        return await self._make_one_env(self._renderer())
 
     async def cleanup(self) -> None:
         for sandbox in self._sandboxes:
