@@ -213,6 +213,7 @@ def discounted_future_sum_vectorized(x: torch.Tensor, gamma: float) -> torch.Ten
 
 def compute_sampling_client_metrics(
     wrapped_trajectory_groups: list[Any],  # WrappedTrajectoryGroup
+    current_step: int | None = None,
 ) -> dict[str, Any]:
     """Compute metrics about sampling clients used to generate trajectory groups.
 
@@ -224,6 +225,10 @@ def compute_sampling_client_metrics(
         wrapped_trajectory_groups (list[Any]): List of WrappedTrajectoryGroup
             objects, each having a ``sampling_client_step`` attribute and a
             ``metrics`` dict containing ``time/trajectory_group_worker_loop/total``.
+        current_step (int | None): The training step the batch is trained on.
+            When given, also emit the batch's staleness statistics
+            (``current_step - sampling_client_step``); in async training,
+            staleness should never exceed ``max_steps_off_policy``.
 
     Returns:
         dict[str, Any]: Dictionary with keys:
@@ -233,6 +238,8 @@ def compute_sampling_client_metrics(
             - ``time/sampling_time_max``: Maximum sampling time across groups.
             - ``time/sampling_time_min``: Minimum sampling time across groups.
             - ``time/sampling_time_mean``: Mean sampling time across groups.
+            - ``async/staleness_max`` / ``_min`` / ``_mean``: only when
+              ``current_step`` is given.
     """
     if not wrapped_trajectory_groups:
         return {}
@@ -251,4 +258,8 @@ def compute_sampling_client_metrics(
     metrics["time/sampling_time_max"] = max(sample_times)
     metrics["time/sampling_time_min"] = min(sample_times)
     metrics["time/sampling_time_mean"] = sum(sample_times) / len(sample_times)
+    if current_step is not None:
+        metrics["async/staleness_max"] = current_step - metrics["sampling_client/step_min"]
+        metrics["async/staleness_min"] = current_step - metrics["sampling_client/step_max"]
+        metrics["async/staleness_mean"] = current_step - metrics["sampling_client/step_mean"]
     return metrics
