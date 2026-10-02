@@ -232,6 +232,38 @@ def assemble_training_data(
     return data_D, metadata_D
 
 
+def nonconstant_reward_group_indices(
+    trajectory_groups_P: list[TrajectoryGroup],
+) -> list[int]:
+    """Indices of the groups that :func:`remove_constant_reward_groups` keeps.
+
+    Callers that hold lists running parallel to *trajectory_groups_P* -- the
+    ``EnvGroupBuilder`` each group came from, for instance -- must filter those
+    by the same indices. Dropping groups from one list alone silently shifts
+    the correspondence, so a builder ends up paired with another problem's
+    trajectories.
+
+    Args:
+        trajectory_groups_P (list[TrajectoryGroup]): Groups of trajectories
+            to filter.
+
+    Returns:
+        list[int]: Indices, ascending, of the groups containing at least two
+            distinct reward values; ``[0]`` if every group was uniform (see
+            :func:`remove_constant_reward_groups`); ``[]`` if there were no
+            groups at all.
+    """
+    kept = [
+        i for i, group in enumerate(trajectory_groups_P) if not all_same(group.get_total_rewards())
+    ]
+    if not kept:
+        logger.warning("All rewards are uniform. There will be no gradient")
+        # Keep one group rather than returning an empty batch, which breaks
+        # downstream code that assumes at least one group.
+        return [0] if trajectory_groups_P else []
+    return kept
+
+
 def remove_constant_reward_groups(
     trajectory_groups_P: list[TrajectoryGroup],
 ) -> list[TrajectoryGroup]:
@@ -242,6 +274,9 @@ def remove_constant_reward_groups(
     If *all* groups are uniform, a single group is returned so downstream code
     that expects a non-empty list does not break.
 
+    Use :func:`nonconstant_reward_group_indices` instead when any list runs
+    parallel to *trajectory_groups_P* and has to be filtered along with it.
+
     Args:
         trajectory_groups_P (list[TrajectoryGroup]): Groups of trajectories
             to filter.
@@ -251,12 +286,4 @@ def remove_constant_reward_groups(
             distinct reward values, or a singleton list if every group was
             uniform.
     """
-    new_groups: list[TrajectoryGroup] = []
-    for group in trajectory_groups_P:
-        if not all_same(group.get_total_rewards()):
-            new_groups.append(group)
-    if not new_groups:
-        logger.warning("All rewards are uniform. There will be no gradient")
-        return trajectory_groups_P[0:1]  # return singleton list in case empty
-        # list will cause problems
-    return new_groups
+    return [trajectory_groups_P[i] for i in nonconstant_reward_group_indices(trajectory_groups_P)]
