@@ -13,6 +13,20 @@ Each entry includes:
 
 ---
 
+### [cookbook] Fix SL resume replaying the last checkpointed batch ([#941](https://github.com/thinking-machines-lab/tinker-cookbook/pull/941))
+**Date:** 2026-09-11
+**Type:** fix
+**Tags:** supervised
+
+Fixes #935 and #940: supervised checkpoints recorded the batch that had already been
+enqueued on Tinker's ordered request queue, and with the default
+``submit_ahead=1`` pipeline ``save_state`` could run after the next batch's
+train ops. Resume then applied a duplicate ``optim_step`` on that data.
+Periodic saves now enqueue immediately after that batch's ``optim_step``, and
+``loop_state`` stores the next ``(epoch, batch)`` to execute (matching RL).
+
+---
+
 ### [cookbook] Fix base-model single-turn evals + replace `parse_success` bool with `ParseTermination` enum ([#688](https://github.com/thinking-machines-lab/tinker-cookbook/pull/688))
 **Date:** 2026-04-30
 **Type:** fix
