@@ -4,6 +4,7 @@ Code execution backends for sandboxed code evaluation.
 The sandbox/ directory provides thin wrappers around different sandbox backends:
 - SandboxFusionClient: HTTP-based sandbox using SandboxFusion Docker container
 - ModalSandbox: Cloud sandbox using Modal's infrastructure
+- TensorlakeSandbox: Cloud microVM sandbox using Tensorlake's infrastructure
 """
 
 from enum import StrEnum
@@ -19,6 +20,7 @@ from tinker_cookbook.sandbox.sandboxfusion import SandboxFusionClient
 class SandboxBackend(StrEnum):
     SANDBOXFUSION = "sandboxfusion"
     MODAL = "modal"
+    TENSORLAKE = "tensorlake"
 
 
 __all__ = [
