@@ -234,7 +234,16 @@ print(f"GSM8K: {result.score:.1%}")
 # List all runs
 for run in store.list_runs():
     print(f"{run.run_id}: {run.scores}")
+
+# Compare two stored runs without calling the model or any external service
+comparison = store.compare_runs("sft_step500_...", "sft_step1000_...")
+print(comparison.to_markdown())
 ```
+
+Run comparisons match trajectories by stable, non-empty `example_id` values, not
+by positional index. Benchmark implementations should provide deterministic IDs
+(for example, with `make_example_id`) so examples remain comparable when dataset
+ordering changes. Missing IDs are reported as unmatched.
 
 ### Storage layout
 
