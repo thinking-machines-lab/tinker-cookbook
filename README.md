@@ -134,6 +134,28 @@ Tinker Cookbook also provides reusable building blocks:
 - [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) — learning rate and hyperparameter scaling for LoRA training
 - [`eval`](tinker_cookbook/eval/) — benchmark framework and inline training evaluators (see [Evaluation](#evaluation-experimental) above)
 
+### Validate a bounded training run
+
+Before a larger launch, you can run a recipe with a small `max_steps` value and validate the
+artifacts it produced. The training command uses Tinker capacity. The validation command is
+read-only and does not call the Tinker API.
+
+```bash
+TINKER_CANARY_LOG="$(mktemp -d)"
+uv run python -m tinker_cookbook.recipes.sl_loop \
+  log_path="$TINKER_CANARY_LOG" batch_size=4 max_steps=1
+uv run python -m tinker_cookbook.preflight "$TINKER_CANARY_LOG" \
+  --metric train_mean_nll --sampler-checkpoint --minimum-step 0
+```
+
+Preflight exits with a nonzero status when metric records are missing, a required metric is not
+numeric and finite, a requested minimum step is absent, or a required final checkpoint record does
+not contain a non-empty `tinker://`-prefixed string. The recipe smoke harness can also capture record
+counts and a digest before resume. It rejects changed or truncated history and validates only the
+records added by the resumed run. A pass confirms only the declared shape and progress of the
+selected local records. It does not load a checkpoint, validate model quality, enforce a later launch,
+or prove large-run capacity.
+
 ## Claude Code Skills
 
 Tinker Cookbook ships with [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) that teach Claude how to use the Tinker API. Install them so Claude can help you write training code in any project:
