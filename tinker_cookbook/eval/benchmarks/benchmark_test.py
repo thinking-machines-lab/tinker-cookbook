@@ -396,6 +396,26 @@ class TestGradingConsistency:
             assert old(resp) == new(resp), f"Mismatch on: {resp}"
 
 
+class TestIFEvalBulletList:
+    def test_exact_count_satisfied(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
+
+        assert verify_instruction(
+            "detectable_format:number_bullet_lists",
+            "* a\n* b\n* c",
+            {"num_bullets": 3},
+        )
+
+    def test_too_many_bullets_fails(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_instruction
+
+        assert not verify_instruction(
+            "detectable_format:number_bullet_lists",
+            "* a\n* b\n* c\n* d\n* e",
+            {"num_bullets": 3},
+        )
+
+
 class TestEvalStore:
     def test_create_and_list_runs(self, tmp_path):
         from tinker_cookbook.stores.eval_store import EvalStore
