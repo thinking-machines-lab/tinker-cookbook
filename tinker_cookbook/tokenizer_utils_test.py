@@ -106,3 +106,21 @@ def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -
 
     mock_adapter.assert_called_once_with("thinkingmachines/Inkling")
     assert tokenizer is mock_adapter.return_value
+
+
+class _CountingTokenizer:
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self.len_calls = 0
+
+    def __len__(self) -> int:
+        self.len_calls += 1
+        return self.size
+
+
+def test_get_vocab_size_calls_len_once_per_tokenizer() -> None:
+    """get_vocab_size caches len(tokenizer), which is slow on HF fast tokenizers."""
+    a, b = _CountingTokenizer(100), _CountingTokenizer(200)
+    assert [tokenizer_utils.get_vocab_size(a) for _ in range(3)] == [100, 100, 100]
+    assert tokenizer_utils.get_vocab_size(b) == 200
+    assert (a.len_calls, b.len_calls) == (1, 1)
