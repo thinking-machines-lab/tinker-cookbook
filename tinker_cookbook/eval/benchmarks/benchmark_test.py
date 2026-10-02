@@ -63,6 +63,60 @@ class TestBenchmarkConfig:
         assert c.judge_sampling_client is None
 
 
+class TestExtractBoxed:
+    """Test \\boxed{} extraction shared by the math and MCQ benchmarks."""
+
+    def test_single_box(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        assert extract_boxed("The answer is \\boxed{42}") == "42"
+
+    def test_multiple_boxes_returns_last(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        assert extract_boxed("\\boxed{1} then \\boxed{2}") == "2"
+
+    def test_self_correction_returns_final_answer(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        response = "Try \\boxed{7}. That is wrong; the answer is \\boxed{42}."
+        assert extract_boxed(response) == "42"
+
+    def test_nested_braces(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        assert extract_boxed("\\boxed{\\frac{1}{2}}") == "\\frac{1}{2}"
+        assert extract_boxed("\\boxed{\\sqrt{\\frac{3}{4}}}") == "\\sqrt{\\frac{3}{4}}"
+
+    def test_nested_boxed_returns_outermost(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        assert extract_boxed("\\boxed{\\boxed{3}}") == "\\boxed{3}"
+
+    def test_empty_box(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        assert extract_boxed("\\boxed{}") == ""
+
+    def test_no_box_returns_none(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        assert extract_boxed("no answer here") is None
+
+    def test_unclosed_box_returns_none(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        assert extract_boxed("\\boxed{unclosed") is None
+
+    def test_unclosed_box_falls_back_to_closed_span(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed
+
+        # A trailing truncated span must not hide a well-formed earlier answer,
+        # and a leading truncated span must not swallow a later one.
+        assert extract_boxed("\\boxed{42} and \\boxed{unclosed") == "42"
+        assert extract_boxed("\\boxed{unclosed and \\boxed{42}") == "42"
+
+
 class TestGSM8KImport:
     def test_gsm8k_registered(self):
         # Importing the module triggers registration
@@ -391,6 +445,33 @@ class TestGradingConsistency:
             "\\boxed{C}",
             "I believe A is correct.",
             "D",
+        ]
+        for resp in cases:
+            assert old(resp) == new(resp), f"Mismatch on: {resp}"
+
+    def test_extract_boxed_matches_math_rl(self):
+        """Regression guard for #895: eval and math-RL must pick the same box.
+
+        The eval path and the math-RL training path both grade \\boxed{} answers.
+        They previously disagreed -- eval took the first span, math_rl the last --
+        so a self-correcting model was graded on its discarded first attempt.
+        """
+        # math_grading raises a bare ImportError (not ModuleNotFoundError) when the
+        # math-rl extras are absent, which pytest.importorskip does not catch.
+        try:
+            from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed as old
+        except ImportError:
+            pytest.skip("math-rl extras (sympy, pylatexenc, math-verify) not installed")
+        from tinker_cookbook.eval.benchmarks._common import extract_boxed as new
+
+        cases = [
+            "The answer is \\boxed{42}",
+            "\\boxed{1} then \\boxed{2}",
+            "Try \\boxed{7}. That is wrong; the answer is \\boxed{42}.",
+            "\\boxed{\\frac{1}{2}}",
+            "\\boxed{\\sqrt{\\frac{3}{4}}}",
+            "\\boxed{x^2 + 1}",
+            "\\boxed{}",
         ]
         for resp in cases:
             assert old(resp) == new(resp), f"Mismatch on: {resp}"
