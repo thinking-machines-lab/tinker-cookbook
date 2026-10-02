@@ -54,7 +54,8 @@ class MergeProfile:
     """How expert weights are arranged in the model.
 
     - ``"separate"`` — individual weight per expert (Qwen3 MoE, DeepSeek)
-    - ``"fused_interleaved"`` — gate_up_proj with [g0, u0, g1, u1, ...] (GPT-OSS)
+    - ``"fused_interleaved"`` — gate_up_proj with [g0, u0, g1, u1, ...]
+      (GPT-OSS, Inkling)
     - ``"fused_concatenated"`` — gate_up_proj with [gate | up] (Qwen3.5, Qwen3-VL)
     """
 
@@ -118,6 +119,9 @@ class MergeProfile:
     Currently only applies to Qwen3.5 models (hybrid linear attention layers
     with Q‖K‖V layout where Q, K, V may have unequal dimensions)."""
 
+    num_shared_experts: int | None = None
+    """Number of shared experts when their adapter factors are flattened."""
+
 
 def detect_merge_profile(
     model_config: dict,
@@ -165,11 +169,12 @@ def _get_profile_detectors() -> list[_ProfileDetector]:
     circular dependencies (per-model modules import from this file)."""
     from tinker_cookbook.weights._merge_deepseek import detect_profile as _deepseek
     from tinker_cookbook.weights._merge_gpt_oss import detect_profile as _gpt_oss
+    from tinker_cookbook.weights._merge_inkling import detect_profile as _inkling
     from tinker_cookbook.weights._merge_kimi_k25 import detect_profile as _kimi_k25
     from tinker_cookbook.weights._merge_nemotron import detect_profile as _nemotron
     from tinker_cookbook.weights._merge_qwen3_5 import detect_profile as _qwen3_5
 
-    return [_gpt_oss, _deepseek, _nemotron, _qwen3_5, _kimi_k25]
+    return [_inkling, _gpt_oss, _deepseek, _nemotron, _qwen3_5, _kimi_k25]
 
 
 def _get_plan_functions() -> dict[str, _PlanFn]:
@@ -178,12 +183,14 @@ def _get_plan_functions() -> dict[str, _PlanFn]:
     from tinker_cookbook.weights._merge_deepseek import plan_merge_ops as _deepseek_plan
     from tinker_cookbook.weights._merge_default import plan_merge_ops as _default_plan
     from tinker_cookbook.weights._merge_gpt_oss import plan_merge_ops as _gpt_oss_plan
+    from tinker_cookbook.weights._merge_inkling import plan_merge_ops as _inkling_plan
     from tinker_cookbook.weights._merge_kimi_k25 import plan_merge_ops as _kimi_k25_plan
     from tinker_cookbook.weights._merge_qwen3_5 import plan_merge_ops as _qwen3_5_plan
 
     return {
         "default": _default_plan,
         "gpt_oss": _gpt_oss_plan,
+        "inkling": _inkling_plan,
         "deepseek": _deepseek_plan,
         "nemotron": _default_plan,
         "qwen3_5": _qwen3_5_plan,
@@ -221,7 +228,10 @@ class MergeOp:
     """For fused gate/up projections: 0 = gate, 1 = up, None = not fused."""
 
     fused_proj_interleaved: bool = False
-    """GPT-OSS stores fused gate/up projections interleaved rather than concatenated."""
+    """Whether fused gate/up projections alternate instead of concatenate."""
+
+    fused_axis: int | None = None
+    """Explicit fused axis when tensor dimensions make shape-based detection ambiguous."""
 
     slice_start: int | None = None
     """Row offset into a fused target weight for split projections (e.g.
@@ -434,7 +444,9 @@ def validate_merge_op_shapes(
                     # model family:
                     #   Qwen3-VL MoE:  gate_up_proj = (n, hidden, fused)  → dim 2
                     #   Qwen3.5 MoE:   gate_up_proj = (n, fused, hidden)  → dim 1
-                    fused_axis = _detect_fused_axis(target_shape, delta_shape, target_key)
+                    fused_axis = op.fused_axis
+                    if fused_axis is None:
+                        fused_axis = _detect_fused_axis(target_shape, delta_shape, target_key)
                     if fused_axis == 2:
                         # delta (n, in_dim, out_dim) targets slice (n, dim1, dim2//2)
                         expected = (target_shape[0], target_shape[1], target_shape[2] // 2)
@@ -467,7 +479,19 @@ def validate_merge_op_shapes(
             else:
                 # 2D: delta = lora_B @ lora_A → (out_dim, in_dim)
                 delta_shape = (op.lora_B.shape[0], op.lora_A.shape[1])
-                if op.slice_start is not None:
+                if op.fused_proj_idx is not None:
+                    if op.fused_axis != 0:
+                        raise WeightsMergeError(
+                            f"2D fused op for {target_key!r} requires fused_axis=0"
+                        )
+                    expected = (target_shape[0] // 2, target_shape[1])
+                    if target_shape[0] % 2 or delta_shape != expected:
+                        raise WeightsMergeError(
+                            f"Shape mismatch for {target_key!r}: "
+                            f"merge op produces {delta_shape} but interleaved "
+                            f"target slice expects {expected}"
+                        )
+                elif op.slice_start is not None:
                     # Sliced op: check in_dim matches and slice fits within target rows
                     end = op.slice_start + delta_shape[0]
                     if delta_shape[1] != target_shape[1] or end > target_shape[0]:
@@ -507,10 +531,15 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
 
         if op.fused_proj_idx is not None:
             # Determine which target axis is fused (see _detect_fused_axis).
-            fused_axis = _detect_fused_axis(target.shape, delta.shape, op.target_key)
+            fused_axis = op.fused_axis
+            if fused_axis is None:
+                fused_axis = _detect_fused_axis(target.shape, delta.shape, op.target_key)
             if op.fused_proj_interleaved:
-                # Interleaved layout: always along last dim ([g0,u0,g1,u1,...])
-                target_view = target[:, :, op.fused_proj_idx :: 2]
+                if fused_axis == 2:
+                    target_view = target[:, :, op.fused_proj_idx :: 2]
+                else:
+                    delta = delta.transpose(-1, -2)
+                    target_view = target[:, op.fused_proj_idx :: 2, :]
             elif fused_axis == 2:
                 # Concatenated along last dim: (n, hidden, [gate|up])
                 proj_width = target.shape[2] // 2
@@ -533,7 +562,15 @@ def apply_merge_op(tensors: dict[str, torch.Tensor], op: MergeOp) -> None:
     else:
         # 2D: standard linear or per-expert (already sliced during planning)
         delta = merge_lora_matrices(op.lora_A, op.lora_B)
-        if op.slice_start is not None:
+        if op.fused_proj_idx is not None:
+            if op.fused_proj_interleaved:
+                target_view = target[op.fused_proj_idx :: 2]
+            else:
+                projection_size = target.shape[0] // 2
+                start = op.fused_proj_idx * projection_size
+                target_view = target[start : start + projection_size]
+            apply_merged_weight(target_view, delta)
+        elif op.slice_start is not None:
             target = tensors[op.target_key]
             apply_merged_weight(target[op.slice_start : op.slice_start + delta.shape[0]], delta)
         else:
