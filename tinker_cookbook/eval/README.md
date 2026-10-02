@@ -68,7 +68,7 @@ results = await run_benchmarks(
 | arena_hard | Single-turn | LLM-as-judge | Works with self-judge, needs cross-model judge |
 | longbench | Single-turn | Programmatic | Limited by 65K context window |
 | livecodebench | Single-turn | Code execution (Modal) | 47.4% on Qwen3.5-35B-A3B (needs 1800s timeout) |
-| bfcl | Single-turn | Function call AST | Ground truth format mismatch |
+| bfcl | Single-turn | JSON function call | Simple-subset reference matching; full BFCL AST protocol and leaderboard parity not validated |
 | terminal_bench | Multi-turn | Sandbox + tests (Modal) | 27.7% on Qwen3.5-35B-A3B (ctx overflow on 65K model) |
 | swe_bench | Multi-turn | Sandbox + pytest (Modal) | 0% — 65K context too small for multi-turn repo exploration |
 | tau2_bench | Multi-turn | Tool dispatch + user sim | 30% (needs separate user simulator model) |
