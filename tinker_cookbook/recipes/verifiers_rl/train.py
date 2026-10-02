@@ -4,23 +4,26 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any, cast
+from typing import cast
 
 import chz
-from verifiers.utils.async_utils import maybe_semaphore
+import verifiers.v1 as vf
 
-from tinker_cookbook import cli_utils, model_info, renderers
+from tinker_cookbook import cli_utils
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
-from tinker_cookbook.recipes.verifiers_rl.tinker_openai import TinkerAsyncOpenAIClient
+from tinker_cookbook.recipes.verifiers_rl.tinker_generate import TinkerGenerateServer
 from tinker_cookbook.recipes.verifiers_rl.verifiers_env import (
     VerifiersEnvGroupBuilder,
     VerifiersRLDatasetBuilder,
-    convert_states_to_trajectory_group,
+    convert_episodes_to_trajectory_group,
+    get_vf_env,
+    load_vf_env,
+    set_vf_env,
 )
 from tinker_cookbook.rl import rollouts, train
+from tinker_cookbook.rl.rollout_limits import TerminationRewardPolicy
 from tinker_cookbook.rl.rollout_strategy import RolloutStrategy
 from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
-from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +37,7 @@ class CLIConfig:
 
     # environment configuration
     vf_env_id: str = "reverse-text"
-    vf_env_args: str | None = None  # JSON string
+    vf_env_args: str | None = None  # JSON vf.EnvConfig data merged over the taskset id
     dataset_n: int = -1
     dataset_seed: int | None = None
 
@@ -45,9 +48,12 @@ class CLIConfig:
     learning_rate: float = 1e-5
     max_tokens: int = 512
     temperature: float = 1.0
+    # JSON chat-template kwargs passed through verifiers' train client to the
+    # `renderers` chat template that tokenizes
+    # each turn, e.g. '{"enable_thinking": false}' for Qwen thinking control.
+    chat_template_kwargs: str | None = None
     kl_penalty_coef: float = 0.0
-    max_concurrent_generation: int = -1
-    max_concurrent_scoring: int = -1
+    max_concurrent_rollouts: int = 32
 
     # logging configuration
     eval_every: int = 0
@@ -60,7 +66,7 @@ class CLIConfig:
     max_steps: int | None = None
 
 
-async def cli_main(cli_config: CLIConfig, env: Any | None):
+async def cli_main(cli_config: CLIConfig, env: vf.Env | None):
     model_name_short = cli_config.model_name.replace("/", "-")
     date_and_time = datetime.now().strftime("%Y-%m-%d-%H-%M")
     run_name = (
@@ -72,62 +78,54 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
     env_args = json.loads(cli_config.vf_env_args) if cli_config.vf_env_args else {}
+    sampling_extra = (
+        {"chat_template_kwargs": json.loads(cli_config.chat_template_kwargs)}
+        if cli_config.chat_template_kwargs
+        else {}
+    )
+    vf_env = env or get_vf_env()
+    if vf_env is None:
+        vf_env = load_vf_env(cli_config.vf_env_id, env_args)
+    set_vf_env(vf_env)
 
-    shared_client: TinkerAsyncOpenAIClient | None = None
-    shared_renderer: renderers.Renderer | None = None
-    local_tokenizer: Tokenizer | None = None
+    generate_server = TinkerGenerateServer()
+    # Bounds concurrent episodes across the whole batch (each live episode is a
+    # harness program plus a sampling stream).
+    rollout_semaphore = asyncio.Semaphore(cli_config.max_concurrent_rollouts)
 
-    async def custom_do_group_rollout(
+    async def verifiers_do_group_rollout(
         builder: EnvGroupBuilder,
         policy: TokenCompleter,
         strategy: RolloutStrategy | None = None,
+        termination: TerminationRewardPolicy | None = None,
     ) -> TrajectoryGroup:
-        # `strategy` is accepted for signature compatibility but unused: the
-        # verifiers environment runs and scores the whole group itself.
-        del strategy
-        nonlocal shared_client, shared_renderer, local_tokenizer
-
-        # initialize tokenizer and renderer lazily
-        if local_tokenizer is None:
-            local_tokenizer = get_tokenizer(cli_config.model_name)
-        if shared_renderer is None:
-            renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
-                cli_config.model_name
-            )
-            shared_renderer = renderers.get_renderer(renderer_name, local_tokenizer)
-
-        sampling_client = cast(TinkerTokenCompleter, policy).sampling_client
-        if shared_client is None:
-            shared_client = TinkerAsyncOpenAIClient(
-                sampling_client, shared_renderer, local_tokenizer
-            )
-        else:
-            shared_client.set_sampling_client(sampling_client)
-
-        vf_builder = cast(VerifiersEnvGroupBuilder, builder)
-        rollout_inputs = vf_builder.get_rollout_inputs(cli_config.group_size)
-
-        gen_sem = await maybe_semaphore(cli_config.max_concurrent_generation)
-        score_sem = await maybe_semaphore(cli_config.max_concurrent_scoring)
-
-        states = await vf_builder.vf_env.run_group(
-            group_inputs=rollout_inputs,
-            client=shared_client,
-            model="tinker",
-            gen_sampling_args={
-                "max_tokens": cli_config.max_tokens,
-                "temperature": cli_config.temperature,
-            },
-            gen_sem=gen_sem,
-            score_sem=score_sem,
+        # `strategy` and `termination` are accepted for signature compatibility
+        # but unused: the verifiers environment runs and scores each episode
+        # itself.
+        del strategy, termination
+        generate_server.set_sampling_client(cast(TinkerTokenCompleter, policy).sampling_client)
+        ctx = vf.ModelContext(
+            model=cli_config.model_name,
+            client=generate_server.train_client_config(cli_config.model_name),
+            sampling=vf.SamplingConfig.model_validate(
+                {
+                    "max_tokens": cli_config.max_tokens,
+                    "temperature": cli_config.temperature,
+                    **sampling_extra,
+                }
+            ),
         )
-
-        return convert_states_to_trajectory_group(states)
+        vf_builder = cast(VerifiersEnvGroupBuilder, builder)
+        slots = vf_builder.vf_env.slots(vf_builder.task, cli_config.group_size)
+        episodes = await asyncio.gather(
+            *(vf_builder.vf_env.run_slot(slot, ctx, rollout_semaphore) for slot in slots)
+        )
+        return convert_episodes_to_trajectory_group(episodes)
 
     # Override do_group_rollout in the rollouts module, where the rollout
     # pipeline resolves it. (Rebinding the name re-exported on rl.train has
     # no effect on calls made inside tinker_cookbook.rl.rollouts.)
-    rollouts.do_group_rollout = custom_do_group_rollout
+    rollouts.do_group_rollout = verifiers_do_group_rollout
 
     dataset_builder = VerifiersRLDatasetBuilder(
         vf_env_id=cli_config.vf_env_id,
@@ -157,7 +155,8 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         max_steps=cli_config.max_steps,
     )
 
-    await train.main(config)
+    async with generate_server, vf_env.serving():
+        await train.main(config)
 
 
 if __name__ == "__main__":
