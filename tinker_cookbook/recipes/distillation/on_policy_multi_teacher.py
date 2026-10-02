@@ -69,7 +69,7 @@ class CLIConfig:
     num_substeps: int = 1
 
     # Loss function and configuration.
-    # See https://tinker-docs.thinkingmachines.ai/losses
+    # See https://tinker-docs.thinkingmachines.ai/tinker/losses
     loss_fn: LossFnType = "importance_sampling"
     loss_fn_config: dict[str, Any] | None = None
 
