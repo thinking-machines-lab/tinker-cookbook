@@ -521,7 +521,16 @@ class GptOssRenderer(Renderer):
         dangling = self._detect_dangling_tool_block(str_response, tool_calls, unparsed)
         if dangling is not None:
             unparsed = [*unparsed, dangling]
-        content: list[ContentPart] | str = parts if parts else str_response
+        content: list[ContentPart] | str
+        # parts consists of reasoning and non-tool call text output from the model's response.
+        if parts:
+            content = parts
+        elif tool_calls:
+            # The model returned tool calls but no text to go along with it. Return empty instead of
+            # str_response here, which would duplicate the call in the next rendered prompt.
+            content = ""
+        else:
+            content = str_response
 
         message: Message = {"role": "assistant", "content": content}
         if tool_calls:

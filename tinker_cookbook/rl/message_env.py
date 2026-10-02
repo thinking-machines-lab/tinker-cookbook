@@ -17,7 +17,12 @@ import tinker
 
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.renderers import Renderer
-from tinker_cookbook.renderers.base import Message, ParseTermination, classify_parse_failure
+from tinker_cookbook.renderers.base import (
+    Message,
+    ParseTermination,
+    RenderContext,
+    classify_parse_failure,
+)
 from tinker_cookbook.rl import types
 from tinker_cookbook.rl.rollout_limits import ParseErrorPolicy, RolloutLimits
 
@@ -34,6 +39,9 @@ class MessageStepResult:
     metrics: dict[str, float] = field(default_factory=dict)
     logs: types.Logs = field(default_factory=dict)
     next_stop_condition: StopCondition | None = None
+    # Messages added to the conversation by the environment at this step. Can contain
+    # tool call results or other kinds of environment feedback.
+    appended_messages: list[Message] | None = None
 
 
 class MessageEnv(ABC):
@@ -100,6 +108,7 @@ class EnvFromMessageEnv(types.Env):
         terminate_on_length: bool = True,
         parse_error_policy: ParseErrorPolicy | None = None,
         rollout_limits: RolloutLimits | None = None,
+        preserve_sampled_tokens: bool = False,
     ):
         self.renderer = renderer
         self.message_env = message_env
@@ -110,6 +119,8 @@ class EnvFromMessageEnv(types.Env):
         self.context_overflow_reward = context_overflow_reward
         self.terminate_on_length = terminate_on_length
         self.parse_error_policy = parse_error_policy
+        self.preserve_sampled_tokens = preserve_sampled_tokens
+        self._latest_observation: tinker.ModelInput | None = None
         # Budgets this env wants a rollout runner to enforce. The runner reads
         # this when it is given no limits of its own (run_rollout's fallback),
         # so envs built from a RolloutConfig keep their token budgets in the
@@ -129,7 +140,65 @@ class EnvFromMessageEnv(types.Env):
         loop, running it synchronously starves other coroutines. HuggingFace
         tokenizers release the GIL, so threads give true parallelism.
         """
-        return await asyncio.to_thread(self.renderer.build_generation_prompt, messages, **kwargs)
+        observation = await asyncio.to_thread(
+            self.renderer.build_generation_prompt, messages, **kwargs
+        )
+        self._latest_observation = observation
+        return observation
+
+    def _append_sampled_tokens(
+        self, action: types.Action, step: MessageStepResult
+    ) -> tinker.ModelInput:
+        """Build the next observation from raw action tokens and appended messages."""
+        assert self._latest_observation is not None
+        assert step.appended_messages is not None
+        messages = step.next_messages
+        start = len(messages) - len(step.appended_messages)
+        if start < 1 or messages[start:] != step.appended_messages:
+            raise ValueError("appended_messages must be the tail of next_messages")
+        if messages[start - 1]["role"] != "assistant":
+            raise ValueError("appended_messages must immediately follow the assistant action")
+
+        # chunks hold all the previous tokens.
+        chunks = list(self._latest_observation.chunks)
+        if action:
+            chunks.append(tinker.EncodedTextChunk(tokens=action))
+        last_user_idx = max(
+            (idx for idx, message in enumerate(messages) if message["role"] == "user"),
+            default=-1,
+        )
+        turn_start = self.renderer._last_assistant_turn_start_index(messages)
+        # Render each of the messaged appended by the environment.
+        for idx in range(start, len(messages)):
+            ctx = RenderContext(
+                idx=idx,
+                is_last=idx == len(messages) - 1,
+                prev_message=messages[idx - 1],
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
+                last_user_index=last_user_idx,
+                in_last_assistant_turn=idx >= turn_start,
+            )
+            rendered = self.renderer.render_message(messages[idx], ctx)
+            if rendered.header and rendered.header.tokens:
+                chunks.append(rendered.header)
+            chunks.extend(
+                chunk
+                for chunk in rendered.output
+                if not isinstance(chunk, tinker.EncodedTextChunk) or chunk.tokens
+            )
+        suffix = self.renderer._get_generation_suffix(
+            "assistant",
+            RenderContext(
+                idx=len(messages),
+                is_last=True,
+                prev_message=messages[-1],
+                last_user_index=last_user_idx,
+                in_last_assistant_turn=True,
+            ),
+        )
+        if suffix:
+            chunks.append(tinker.EncodedTextChunk(tokens=suffix))
+        return tinker.ModelInput(chunks=chunks)
 
     def _exceeds_context_limit(self, observation_length: int) -> bool:
         """Check if the observation + generation budget exceeds the context limit."""
@@ -205,6 +274,7 @@ class EnvFromMessageEnv(types.Env):
             # state is corrupted. Never retried (unlike content failures):
             # re-rendering a broken-framing turn would put the model on a
             # garbage observation.
+            self._latest_observation = None
             if self.parse_error_policy is not None:
                 return self._structural_parse_error_step(assistant_message, termination)
             parse_metrics: types.Metrics = {"parse_error": 1.0}
@@ -219,7 +289,18 @@ class EnvFromMessageEnv(types.Env):
             )
 
         msg_step = await self.message_env.step(assistant_message)
-        next_observation = await self._render_in_thread(msg_step.next_messages)
+
+        if (
+            self.preserve_sampled_tokens
+            and self._latest_observation is not None
+            and msg_step.appended_messages is not None
+        ):
+            next_observation = await asyncio.to_thread(
+                self._append_sampled_tokens, action, msg_step
+            )
+        else:
+            next_observation = await self._render_in_thread(msg_step.next_messages)
+        self._latest_observation = next_observation
         next_stop_condition = msg_step.next_stop_condition or self._base_stop_condition
 
         # Check if the full trajectory + generation budget fits in the context window.
