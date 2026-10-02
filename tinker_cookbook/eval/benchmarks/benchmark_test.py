@@ -619,3 +619,144 @@ class TestTokenTurnSummary:
         )
         assert result["total_turns"] == 0
         assert "ac_tokens_per_turn" not in result
+
+
+class TestIFEvalDuplicateInstructions:
+    """Grading a prompt that carries the same instruction id more than once.
+
+    17 of the 541 google/IFEval prompts repeat an id with different kwargs
+    (e.g. key 19 has two ``length_constraints:number_words`` constraints), so
+    every constraint has to be scored on its own, not folded together.
+    """
+
+    def test_first_of_duplicate_pair_violated(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        # Only 3 words: the "at least 20" constraint fails, "at least 2" passes.
+        fraction, results = verify_all_instructions(
+            "one two three",
+            ["length_constraints:number_words", "length_constraints:number_words"],
+            [
+                {"relation": "at least", "num_words": 20},
+                {"relation": "at least", "num_words": 2},
+            ],
+        )
+        assert fraction == 0.5
+        assert list(results) == [False, True]
+
+    def test_second_of_duplicate_pair_violated(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        fraction, results = verify_all_instructions(
+            "one two three",
+            ["length_constraints:number_words", "length_constraints:number_words"],
+            [
+                {"relation": "at least", "num_words": 2},
+                {"relation": "at least", "num_words": 20},
+            ],
+        )
+        assert fraction == 0.5
+        assert list(results) == [True, False]
+
+    def test_both_of_duplicate_pair_satisfied(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        fraction, results = verify_all_instructions(
+            "one two three",
+            ["length_constraints:number_words", "length_constraints:number_words"],
+            [
+                {"relation": "at least", "num_words": 2},
+                {"relation": "at least", "num_words": 3},
+            ],
+        )
+        assert fraction == 1.0
+        assert list(results) == [True, True]
+
+    def test_both_of_duplicate_pair_violated(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        fraction, results = verify_all_instructions(
+            "one two three",
+            ["length_constraints:number_words", "length_constraints:number_words"],
+            [
+                {"relation": "at least", "num_words": 20},
+                {"relation": "at least", "num_words": 30},
+            ],
+        )
+        assert fraction == 0.0
+        assert list(results) == [False, False]
+
+    def test_duplicate_pair_counts_twice_in_denominator(self):
+        """Two constraints sharing an id must divide by 2, not by 1."""
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        fraction, results = verify_all_instructions(
+            "one two three",
+            ["length_constraints:number_words", "length_constraints:number_words"],
+            [
+                {"relation": "at least", "num_words": 20},
+                {"relation": "at least", "num_words": 2},
+            ],
+        )
+        assert len(results) == 2
+        assert fraction == 0.5
+
+    def test_ifeval_key_19_shape(self):
+        """Mirrors IFEval key 19: two word-count bounds, only one of them met."""
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        response = " ".join(["word"] * 40)
+        fraction, _ = verify_all_instructions(
+            response,
+            ["length_constraints:number_words", "length_constraints:number_words"],
+            [
+                {"relation": "at least", "num_words": 30},
+                {"relation": "at least", "num_words": 100},
+            ],
+        )
+        # A response that misses one of the two bounds isn't a correct answer.
+        assert fraction == 0.5
+        assert fraction != 1.0
+
+    def test_duplicate_ids_with_a_third_constraint(self):
+        """Shaped like key 1418: a repeated id alongside an unrelated one."""
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        fraction, results = verify_all_instructions(
+            "One. Two. Three.",
+            [
+                "punctuation:no_comma",
+                "length_constraints:number_sentences",
+                "length_constraints:number_sentences",
+            ],
+            [
+                {},
+                {"relation": "at least", "num_sentences": 2},
+                {"relation": "at least", "num_sentences": 10},
+            ],
+        )
+        assert len(results) == 3
+        assert fraction == pytest.approx(2 / 3)
+
+    def test_distinct_ids_unchanged(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        fraction, results = verify_all_instructions(
+            "hello world",
+            ["keywords:existence", "punctuation:no_comma", "keywords:forbidden_words"],
+            [
+                {"keywords": ["hello"]},
+                {},
+                {"forbidden_words": ["world"]},
+            ],
+        )
+        assert len(results) == 3
+        assert fraction == pytest.approx(2 / 3)
+        assert list(results) == [True, True, False]
+
+    def test_no_instructions(self):
+        from tinker_cookbook.eval.benchmarks._ifeval_verify import verify_all_instructions
+
+        fraction, results = verify_all_instructions("anything", [], [])
+        assert fraction == 1.0
+        assert len(results) == 0

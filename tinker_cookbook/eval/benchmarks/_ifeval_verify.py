@@ -329,7 +329,7 @@ def verify_all_instructions(
     response: str,
     instruction_id_list: list[str],
     kwargs_list: list[dict],
-) -> tuple[float, dict[str, bool]]:
+) -> tuple[float, list[bool]]:
     """Verify all instructions for a prompt.
 
     Args:
@@ -338,15 +338,19 @@ def verify_all_instructions(
         kwargs_list: Per-instruction kwargs (e.g. ``{"keywords": ["hello"]}``)
 
     Returns:
-        Tuple of (fraction_correct, per_instruction_results).
+        Tuple of (fraction_correct, per_instruction_results), where the results
+        are in the same order as ``instruction_id_list``.
     """
     if not instruction_id_list:
-        return 1.0, {}
+        return 1.0, []
 
-    results = {}
+    # A prompt can repeat an instruction id with different kwargs (17 of the 541
+    # google/IFEval prompts do), so results are kept positionally — keying them
+    # by id would drop all but the last constraint of each repeated id.
+    results = []
     for inst_id, kw in zip(instruction_id_list, kwargs_list):
-        results[inst_id] = verify_instruction(inst_id, response, kw)
+        results.append(verify_instruction(inst_id, response, kw))
 
-    n_correct = sum(results.values())
+    n_correct = sum(results)
     fraction = n_correct / len(results)
     return fraction, results
