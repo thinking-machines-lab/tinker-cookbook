@@ -39,6 +39,21 @@ The point (0,3): x=0, y=3. r = sqrt(0^2+3^2)=3. \theta = arctan(y/x) but x=0, y>
 \boxed{(3,\frac{\pi}{2})}<|im_end|>
 ```
 
+## DAPO preset
+
+DAPO is a PPO recipe for math RL that combines asymmetric clipping ("clip higher") with dynamic sampling. The preset uses the existing `ppo` loss with `clip_low_threshold=0.8` and `clip_high_threshold=1.28`, and enables constant-reward group filtering so fully solved or fully failed groups are skipped during training. See the DAPO paper: https://arxiv.org/abs/2503.14476.
+
+```bash
+uv run python -m tinker_cookbook.recipes.math_rl.dapo_train \
+  env=math \
+  model_name=Qwen/Qwen3-4B-Instruct-2507 \
+  group_size=8 \
+  groups_per_batch=64 \
+  learning_rate=1e-5
+```
+
+This is a configuration over the existing `ppo` loss; no new algorithm is added to the library. Token-level loss aggregation is handled by the loss implementation, and dynamic sampling is provided by the existing constant-reward group filter in the RL trainer.
+
 # RL on GSM8K
 
 ```bash
