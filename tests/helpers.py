@@ -7,6 +7,12 @@ import time
 
 import pytest
 
+from tinker_cookbook.preflight import (
+    PreflightConfig,
+    PreflightSnapshot,
+    validate_training_run,
+)
+
 # Timeout for each recipe (seconds). Override with SMOKE_TEST_TIMEOUT env var.
 DEFAULT_TIMEOUT = int(os.environ.get("SMOKE_TEST_TIMEOUT", "1800"))
 
@@ -19,7 +25,9 @@ def run_recipe(
     args: list[str] | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     max_steps: int = DEFAULT_MAX_STEPS,
-):
+    preflight: PreflightConfig | None = None,
+    preflight_after: PreflightSnapshot | None = None,
+) -> str:
     """Run a recipe module for a limited number of steps and verify clean exit.
 
     Passes max_steps to the recipe so it exits naturally after N training steps.
@@ -30,7 +38,11 @@ def run_recipe(
         args: CLI arguments to pass to the module
         timeout: Maximum seconds to wait for the recipe to complete
         max_steps: Number of training steps to run (passed as CLI arg)
+        preflight: Optional evidence requirements checked after a clean exit
+        preflight_after: Optional artifact boundary captured before this command
     """
+    if preflight_after is not None and preflight is None:
+        raise ValueError("preflight_after requires preflight")
     cmd = ["uv", "run", "python", "-m", module] + (args or []) + [f"max_steps={max_steps}"]
     print(f"\n>>> {' '.join(cmd)}", flush=True)
 
@@ -85,8 +97,12 @@ def run_recipe(
     elapsed = time.monotonic() - start_time
 
     if proc.returncode == 0:
+        if preflight is not None:
+            report = validate_training_run(preflight, after=preflight_after)
+            if not report.passed:
+                pytest.fail(f"Recipe {module} failed preflight: {report.failure_summary()}")
         print(f"\n>>> PASSED: recipe completed cleanly in {elapsed:.0f}s", flush=True)
-        return
+        return "\n".join(output_lines)
 
     # Non-zero exit code
     last_lines = "\n".join(output_lines[-30:])
