@@ -4,6 +4,7 @@ import asyncio
 import json
 import pickle
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from tinker_cookbook.recipes.harbor_rl.harbor_env import HarborEnvGroupBuilder, HarborTask
 from tinker_cookbook.recipes.harbor_rl.harbor_tools import (
@@ -252,3 +253,102 @@ class TestHarborEnvGroupBuilderPickle:
         assert restored.command_timeout == 60
         assert restored.grader_timeout == 30
         assert restored.max_trajectory_tokens == 16 * 1024
+
+
+# ---------------------------------------------------------------------------
+# Sandbox lifecycle: retries must not leak Harbor containers
+# ---------------------------------------------------------------------------
+
+
+class _CountingSandbox(FakeSandbox):
+    """Fake sandbox that records construct/cleanup onto shared lists."""
+
+    def __init__(self, created: list[object], cleaned: list[object]) -> None:
+        super().__init__()
+        self._cleaned_into = cleaned
+        created.append(self)
+
+    async def cleanup(self) -> None:
+        self._cleaned_into.append(self)
+
+
+class TestHarborSandboxLifecycle:
+    def _builder(self, tmp_path: Path, factory) -> HarborEnvGroupBuilder:
+        return HarborEnvGroupBuilder(
+            task=HarborTask(
+                task_name="leak-task",
+                instruction="do the task",
+                task_dir=tmp_path,
+                config={},
+            ),
+            model_name="fake/model",
+            renderer_name="role_colon",
+            max_turns=2,
+            group_size=4,
+            sandbox_factory=factory,
+        )
+
+    def _renderer_patches(self):
+        renderer = MagicMock()
+        renderer.create_conversation_prefix_with_tools.return_value = []
+        return (
+            patch(
+                "tinker_cookbook.recipes.harbor_rl.harbor_env.tokenizer_utils.get_tokenizer",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "tinker_cookbook.recipes.harbor_rl.harbor_env.get_renderer",
+                return_value=renderer,
+            ),
+        )
+
+    def test_second_make_envs_does_not_drop_first_generation(self, tmp_path: Path) -> None:
+        """Harbor used to do ``self._sandboxes = []`` at the start of make_envs.
+
+        Retry strategies called make_envs again while the original group was
+        still live; dropping the list made cleanup() miss the first generation.
+        """
+        created: list[object] = []
+        cleaned: list[object] = []
+
+        async def factory(env_dir: Path, timeout: int) -> _CountingSandbox:
+            return _CountingSandbox(created, cleaned)
+
+        builder = self._builder(tmp_path, factory)
+
+        async def _run() -> None:
+            first = await builder.make_envs()
+            assert len(first) == 4
+            second = await builder.make_envs()
+            assert len(second) == 4
+            await builder.cleanup()
+
+        tok_patch, rend_patch = self._renderer_patches()
+        with tok_patch, rend_patch:
+            asyncio.run(_run())
+
+        assert len(created) == 8
+        assert len(cleaned) == 8
+
+    def test_make_env_provisions_one_sandbox_and_cleanup_reaches_it(self, tmp_path: Path) -> None:
+        created: list[object] = []
+        cleaned: list[object] = []
+
+        async def factory(env_dir: Path, timeout: int) -> _CountingSandbox:
+            return _CountingSandbox(created, cleaned)
+
+        builder = self._builder(tmp_path, factory)
+
+        async def _run() -> None:
+            envs = await builder.make_envs()
+            assert len(envs) == 4
+            extra = await builder.make_env()
+            assert extra is not None
+            await builder.cleanup()
+
+        tok_patch, rend_patch = self._renderer_patches()
+        with tok_patch, rend_patch:
+            asyncio.run(_run())
+
+        assert len(created) == 5
+        assert len(cleaned) == 5
