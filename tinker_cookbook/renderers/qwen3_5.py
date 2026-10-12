@@ -19,7 +19,6 @@ Reference: https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/tokenizer_config.jso
 
 import json
 import re
-from copy import deepcopy
 
 import tinker
 
@@ -101,30 +100,35 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         return _strip_visible_content(content)
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        message = {**message, "content": self._trim_content(message["content"])}
+        rendered = super().render_message(message, ctx)
         original = message.get("parsed_response")
+        if original is None:
+            return rendered
+
+        sampling_header = tinker.EncodedTextChunk(
+            tokens=self._get_generation_suffix("assistant", ctx)
+        )
         if (
-            original is not None
-            and original["renderer"] == type(self).__name__
+            original["renderer"] == type(self).__name__
             and original["tokenizer"] == self.tokenizer.name_or_path
-            and {k: v for k, v in message.items() if k != "parsed_response"} == original["message"]
-            and self._assistant_header_suffix(message, ctx) == "<think>\n\n</think>\n\n"
+            and original["output"] == rendered.output
+            and rendered.header == sampling_header
         ):
             return RenderedMessage(
-                header=tinker.EncodedTextChunk(
-                    tokens=self._get_generation_suffix("assistant", ctx)
-                ),
+                header=rendered.header,
                 output=[tinker.EncodedTextChunk(tokens=original["tokens"])],
             )
-        message = {**message, "content": self._trim_content(message["content"])}
-        return super().render_message(message, ctx)
+        return rendered
 
     def _preserve_response(self, message: Message, response: list[int]) -> None:
         if self.disables_thinking and response and response[-1] == self._end_message_token:
+            rendered = self.render_message(message, RenderContext(idx=0, is_last=True))
             message["parsed_response"] = {
                 "renderer": type(self).__name__,
                 "tokenizer": self.tokenizer.name_or_path,
                 "tokens": list(response),
-                "message": deepcopy(message),
+                "output": rendered.output,
             }
 
     def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:

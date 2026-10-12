@@ -666,7 +666,7 @@ class Message(TypedDict):
         When constructing tool results, include both name and tool_call_id when available
         since different renderers require different fields.
     parsed_response: NotRequired[ParsedResponse]
-        Renderer-owned tokens and message snapshot for lossless sampled-response rendering.
+        Renderer-owned tokens and canonical output for lossless sampled-response rendering.
 
     """
 
@@ -682,17 +682,16 @@ class Message(TypedDict):
 
 
 class ParsedResponse(TypedDict):
-    """Original sampled tokens and a snapshot of their parsed message.
+    """Sampled tokens and the canonical rendering of their parsed response.
 
-    A renderer may reuse these tokens when the message and rendering mode still
-    match. This preserves sampling-time whitespace and tokenization without
-    making edited messages render stale text. The snapshot has no parsed_response.
+    Reuse is valid while the canonical output and sampling prefix still match.
+    Comparing rendered output allows metadata edits without replaying stale text.
     """
 
     renderer: str
     tokenizer: str
     tokens: list[int]
-    message: Message
+    output: list[tinker.ModelInputChunk]
 
 
 @dataclass
@@ -886,7 +885,7 @@ def message_to_jsonable(message: Message) -> dict[str, Any]:
         response = message["parsed_response"]
         result["parsed_response"] = {
             **response,
-            "message": message_to_jsonable(response["message"]),
+            "output": [chunk.model_dump(mode="json") for chunk in response["output"]],
         }
     return result
 

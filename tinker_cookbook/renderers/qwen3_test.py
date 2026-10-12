@@ -1004,6 +1004,8 @@ def test_qwen_no_thinking_sampled_tool_tokens_are_preserved(
         streamed = list(renderer.parse_response_streaming(sampled))[-1]
         assert streamed == parsed
         json.dumps(message_to_jsonable(parsed))
+        # Training metadata does not change the response's rendered content.
+        parsed["trainable"] = True
         messages.extend([parsed, Message(role="tool", content="page text")])
         next_prompt = renderer.build_generation_prompt(messages).to_ints()
         assert next_prompt[: len(prompt) + len(sampled)] == prompt + sampled
@@ -1037,6 +1039,30 @@ def test_qwen_preserved_response_does_not_override_edits(edit: str):
     assert renderer.build_generation_prompt([*history, edited]).to_ints() == (
         renderer.build_generation_prompt([*history, authored]).to_ints()
     )
+
+
+@pytest.mark.parametrize("renderer_name", ["qwen3_5_disable_thinking", "qwen3_8_disable_thinking"])
+def test_qwen_preserved_response_respects_history_framing(renderer_name: str):
+    tokenizer = get_tokenizer("Qwen/Qwen3.8-27B")
+    renderer = get_renderer(renderer_name, tokenizer)
+    sampled = tokenizer.encode("  Answer.  <|im_end|>", add_special_tokens=False)
+    parsed, _ = renderer.parse_response(sampled)
+    history: list[Message] = [Message(role="user", content="First question.")]
+    prompt = renderer.build_generation_prompt(history).to_ints()
+    next_prompt = renderer.build_generation_prompt(
+        [*history, parsed, Message(role="user", content="Next question.")]
+    ).to_ints()
+    if renderer_name == "qwen3_8_disable_thinking":
+        assert next_prompt[: len(prompt) + len(sampled)] == prompt + sampled
+    else:
+        # Qwen3.5 strips the historical empty think block after a new user turn.
+        del parsed["parsed_response"]
+        assert (
+            next_prompt
+            == renderer.build_generation_prompt(
+                [*history, parsed, Message(role="user", content="Next question.")]
+            ).to_ints()
+        )
 
 
 @pytest.mark.parametrize("role", ["user", "assistant"])
