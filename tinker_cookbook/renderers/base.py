@@ -690,6 +690,7 @@ class ParsedResponse(TypedDict):
     """
 
     renderer: str
+    tokenizer: str
     tokens: list[int]
     message: Message
 

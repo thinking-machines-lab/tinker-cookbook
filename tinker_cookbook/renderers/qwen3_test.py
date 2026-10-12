@@ -1010,7 +1010,7 @@ def test_qwen_no_thinking_sampled_tool_tokens_are_preserved(
         prompt = next_prompt
 
 
-@pytest.mark.parametrize("edit", ["content", "arguments", "role", "renderer"])
+@pytest.mark.parametrize("edit", ["content", "arguments", "role", "renderer", "tokenizer"])
 def test_qwen_preserved_response_does_not_override_edits(edit: str):
     tokenizer = get_tokenizer("Qwen/Qwen3.8-27B")
     renderer = get_renderer("qwen3_8_disable_thinking", tokenizer)
@@ -1027,8 +1027,10 @@ def test_qwen_preserved_response_does_not_override_edits(edit: str):
         edited["tool_calls"][0].function.arguments = '{"page": 2}'
     elif edit == "role":
         edited["role"] = "user"
-    else:
+    elif edit == "renderer":
         renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
+    else:
+        renderer = get_renderer("qwen3_8_disable_thinking", get_tokenizer("Qwen/Qwen3-8B"))
     authored = deepcopy(edited)
     del authored["parsed_response"]
     history: list[Message] = [Message(role="user", content="Read a page.")]

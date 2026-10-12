@@ -105,6 +105,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         if (
             original is not None
             and original["renderer"] == type(self).__name__
+            and original["tokenizer"] == self.tokenizer.name_or_path
             and {k: v for k, v in message.items() if k != "parsed_response"} == original["message"]
             and self._assistant_header_suffix(message, ctx) == "<think>\n\n</think>\n\n"
         ):
@@ -121,6 +122,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         if self.disables_thinking and response and response[-1] == self._end_message_token:
             message["parsed_response"] = {
                 "renderer": type(self).__name__,
+                "tokenizer": self.tokenizer.name_or_path,
                 "tokens": list(response),
                 "message": deepcopy(message),
             }
