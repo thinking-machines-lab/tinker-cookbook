@@ -4,6 +4,8 @@ Also covers Qwen3.5 response normalization (prefilled <think> tag restoration) f
 both batch and streaming paths.
 """
 
+import json
+from copy import deepcopy
 from typing import TypeGuard, cast
 
 import pytest
@@ -20,7 +22,7 @@ from tinker_cookbook.renderers import (
     ToolCall,
     get_renderer,
 )
-from tinker_cookbook.renderers.base import ensure_list
+from tinker_cookbook.renderers.base import ensure_list, message_to_jsonable
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
 from tinker_cookbook.renderers.testing_utils import extract_token_ids
@@ -956,6 +958,83 @@ def test_qwen3_5_preserve_thinking_tool_turn_without_reasoning_is_not_extended()
     }
     next_prompt = renderer.build_generation_prompt([*convo, parsed, tool_message]).to_ints()
     assert next_prompt[: len(prompt) + len(sampled_tokens)] != prompt + sampled_tokens
+
+
+@pytest.mark.parametrize(
+    "renderer_name,model_name",
+    [
+        ("qwen3_5_disable_thinking", "Qwen/Qwen3.6-35B-A3B"),
+        ("qwen3_8_disable_thinking", "Qwen/Qwen3.8-27B"),
+    ],
+)
+@pytest.mark.parametrize(
+    "parts",
+    [
+        [
+            "<tool_call>\n<function=read_page>\n<parameter=page>\n1\n</parameter>\n</function>\n</tool_call>"
+        ],
+        [
+            "  Reading now.\n\n<tool_call><function=read_page><parameter=page>1</parameter></function></tool_call>\n"
+        ],
+        # Sampling can produce two newline tokens instead of the tokenizer's merged token.
+        [
+            "Reading now.",
+            "\n",
+            "\n",
+            "<tool_call><function=read_page><parameter=page>1</parameter></function></tool_call>",
+        ],
+    ],
+)
+def test_qwen_no_thinking_sampled_tool_tokens_are_preserved(
+    renderer_name: str, model_name: str, parts: list[str]
+):
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    messages: list[Message] = [Message(role="user", content="Read page 1.")]
+    prompt = renderer.build_generation_prompt(messages).to_ints()
+    sampled = [t for part in parts for t in tokenizer.encode(part, add_special_tokens=False)]
+    sampled += tokenizer.encode("<|im_end|>", add_special_tokens=False)
+    for _ in range(2):
+        parsed, termination = renderer.parse_response(sampled)
+        assert termination.is_clean
+        assert "tool_calls" in parsed
+        call = parsed["tool_calls"][0]
+        assert call.function.name == "read_page"
+        assert json.loads(call.function.arguments) == {"page": 1}
+        streamed = list(renderer.parse_response_streaming(sampled))[-1]
+        assert streamed == parsed
+        json.dumps(message_to_jsonable(parsed))
+        messages.extend([parsed, Message(role="tool", content="page text")])
+        next_prompt = renderer.build_generation_prompt(messages).to_ints()
+        assert next_prompt[: len(prompt) + len(sampled)] == prompt + sampled
+        prompt = next_prompt
+
+
+@pytest.mark.parametrize("edit", ["content", "arguments", "role", "renderer"])
+def test_qwen_preserved_response_does_not_override_edits(edit: str):
+    tokenizer = get_tokenizer("Qwen/Qwen3.8-27B")
+    renderer = get_renderer("qwen3_8_disable_thinking", tokenizer)
+    sampled = tokenizer.encode(
+        "<tool_call><function=read_page><parameter=page>1</parameter></function></tool_call><|im_end|>",
+        add_special_tokens=False,
+    )
+    parsed, _ = renderer.parse_response(sampled)
+    edited = deepcopy(parsed)
+    if edit == "content":
+        edited["content"] = "Updated text."
+    elif edit == "arguments":
+        assert "tool_calls" in edited
+        edited["tool_calls"][0].function.arguments = '{"page": 2}'
+    elif edit == "role":
+        edited["role"] = "user"
+    else:
+        renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
+    authored = deepcopy(edited)
+    del authored["parsed_response"]
+    history: list[Message] = [Message(role="user", content="Read a page.")]
+    assert renderer.build_generation_prompt([*history, edited]).to_ints() == (
+        renderer.build_generation_prompt([*history, authored]).to_ints()
+    )
 
 
 @pytest.mark.parametrize("role", ["user", "assistant"])

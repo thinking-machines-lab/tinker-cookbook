@@ -19,6 +19,9 @@ Reference: https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/tokenizer_config.jso
 
 import json
 import re
+from copy import deepcopy
+
+import tinker
 
 from tinker_cookbook.renderers.base import (
     UNTERMINATED_TOOL_BLOCK_ERROR,
@@ -98,8 +101,29 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         return _strip_visible_content(content)
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        original = message.get("parsed_response")
+        if (
+            original is not None
+            and original["renderer"] == type(self).__name__
+            and {k: v for k, v in message.items() if k != "parsed_response"} == original["message"]
+            and self._assistant_header_suffix(message, ctx) == "<think>\n\n</think>\n\n"
+        ):
+            return RenderedMessage(
+                header=tinker.EncodedTextChunk(
+                    tokens=self._get_generation_suffix("assistant", ctx)
+                ),
+                output=[tinker.EncodedTextChunk(tokens=original["tokens"])],
+            )
         message = {**message, "content": self._trim_content(message["content"])}
         return super().render_message(message, ctx)
+
+    def _preserve_response(self, message: Message, response: list[int]) -> None:
+        if self.disables_thinking and response and response[-1] == self._end_message_token:
+            message["parsed_response"] = {
+                "renderer": type(self).__name__,
+                "tokens": list(response),
+                "message": deepcopy(message),
+            }
 
     def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
         """The header the generation prompt ends with, including the `<think>` prefill."""
@@ -262,6 +286,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             return message, termination
 
         self._postprocess_parsed_message(message)
+        self._preserve_response(message, response)
         return message, termination
 
     def _parse_response_for_streaming(
@@ -270,6 +295,8 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         """Parse response for streaming with Qwen3.5-specific post-processing."""
         message, termination = super()._parse_response_for_streaming(response)
         self._postprocess_parsed_message(message)
+        if termination.is_clean:
+            self._preserve_response(message, response)
         return message, termination
 
     def _format_tool_call_argument(self, value: object) -> str:
