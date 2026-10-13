@@ -11,6 +11,7 @@ import importlib
 import importlib.util
 import os
 import sys
+import weakref
 from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
@@ -211,6 +212,35 @@ def get_tokenizer(model_name: str) -> Tokenizer:
         return cast(Tokenizer, TmlRenderersTokenizerAdapter(model_name))
 
     return _get_hf_tokenizer(model_name)
+
+
+_VOCAB_SIZES: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+
+
+def get_vocab_size(tokenizer: Tokenizer) -> int:
+    """Return ``len(tokenizer)``, computed once per tokenizer object.
+
+    ``len()`` on a Hugging Face fast tokenizer rebuilds the full vocabulary on every
+    call (about 0.2 s for the ~200K-token gpt-oss tokenizer). That is easy to miss
+    when it is called per request or per sample, and inside an ``async`` coroutine it
+    blocks the event loop, so concurrent Tinker requests stall behind it. Use this
+    helper for per-request bounds such as out-of-vocabulary checks on sampled tokens.
+
+    Note that ``tokenizer.vocab_size`` is not a substitute: it excludes added tokens,
+    which for many models include the stop tokens (e.g. gpt-oss ``<|return|>``).
+
+    The cached value assumes the tokenizer's vocabulary is not modified afterwards
+    (e.g. via ``add_tokens``).
+
+    Args:
+        tokenizer (Tokenizer): A tokenizer that supports ``len()``.
+
+    Returns:
+        int: The vocabulary size including added tokens.
+    """
+    if (size := _VOCAB_SIZES.get(tokenizer)) is None:
+        size = _VOCAB_SIZES[tokenizer] = len(tokenizer)
+    return size
 
 
 # Pinned revisions for Kimi K2 tokenizers, loaded directly via the custom
