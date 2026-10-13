@@ -159,6 +159,7 @@ async def cli_main(cli_config: CLIConfig):
         renderer_name=renderer_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
+        temperature=cli_config.temperature,
         kl_penalty_coef=cli_config.kl_penalty_coef,
         kl_discount_factor=cli_config.kl_discount_factor,
         num_substeps=cli_config.num_substeps,
