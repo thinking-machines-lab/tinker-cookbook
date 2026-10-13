@@ -159,10 +159,12 @@ a `search` tool backed by [Linkup Rewind](https://linkup.so), which answers
 what had been crawled by then.
 
 ```bash
-export LINKUP_API_KEY=...
 python -m tinker_cookbook.recipes.forecasting.train search=True
 ```
 
+- No API key is needed: without `LINKUP_API_KEY`, requests use Linkup's shared,
+  rate-limited keyless tier. Set `LINKUP_API_KEY` for higher limits on full
+  training runs.
 - Each question searches as of the last full UTC day before its snapshot, so
   nothing from the snapshot day or later can appear.
 - The model may search for up to `search_max_turns - 1` turns (default `4`) and

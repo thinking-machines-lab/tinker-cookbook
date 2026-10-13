@@ -47,7 +47,7 @@ class Config:
     train_epochs: int = 3
     seed: int = 0
 
-    # Optional web search as of each snapshot, via Linkup Rewind (needs LINKUP_API_KEY)
+    # Optional web search as of each snapshot, via Linkup Rewind (LINKUP_API_KEY optional)
     search: bool = False
     search_max_turns: int = 4
     search_num_results: int = 5

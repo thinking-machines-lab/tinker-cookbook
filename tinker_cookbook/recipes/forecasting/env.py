@@ -407,7 +407,7 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
     max_train_questions: int | None = DEFAULT_MAX_TRAIN_QUESTIONS
     max_validation_questions: int | None = DEFAULT_MAX_VALIDATION_QUESTIONS
     seed: int = 0
-    # Optional web search as of each snapshot, via Linkup Rewind (needs LINKUP_API_KEY).
+    # Optional web search as of each snapshot, via Linkup Rewind (LINKUP_API_KEY optional).
     search: bool = False
     search_max_turns: int = 4
     search_num_results: int = 5
@@ -431,11 +431,8 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
         )
         search = None
         if self.search:
-            api_key = os.environ.get("LINKUP_API_KEY")
-            if not api_key:
-                raise ValueError("search=True requires the LINKUP_API_KEY environment variable")
             search = SearchSettings(
-                api_key=api_key,
+                api_key=os.environ.get("LINKUP_API_KEY") or None,
                 max_turns=self.search_max_turns,
                 num_results=self.search_num_results,
             )

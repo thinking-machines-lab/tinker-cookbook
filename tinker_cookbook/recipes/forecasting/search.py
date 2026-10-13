@@ -18,6 +18,7 @@ import aiohttp
 from tinker_cookbook.tool_use import ToolResult, simple_tool_result, tool
 
 REWIND_SEARCH_URL = "https://api.linkup.so/v1/rewind/search"
+RATE_LIMIT_RETRIES = 4
 
 
 def search_as_of_day(snapshot_time: datetime) -> str:
@@ -42,9 +43,12 @@ def format_results(
 
 @dataclass(frozen=True)
 class SearchSettings:
-    """How forecasting rollouts may search before answering."""
+    """How forecasting rollouts may search before answering.
 
-    api_key: str
+    Without ``api_key``, requests use Linkup's shared, rate-limited keyless tier.
+    """
+
+    api_key: str | None = None
     max_turns: int = 4
     num_results: int = 5
     content_chars: int = 1500
@@ -63,22 +67,30 @@ class RewindSearchTool:
     """Web search pinned to one day, shared by every rollout of a question."""
 
     as_of: str
-    api_key: str
+    api_key: str | None = None
     num_results: int = 5
     content_chars: int = 1500
     timeout_seconds: float = 30.0
 
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
     async def _fetch(self, session: aiohttp.ClientSession, query: str) -> dict[str, Any]:
-        async with session.post(
-            REWIND_SEARCH_URL,
-            json={"q": query, "asOf": self.as_of},
-            headers={"Authorization": f"Bearer {self.api_key}"},
-        ) as response:
-            if response.status != 200:
-                raise RuntimeError(
-                    f"Rewind returned HTTP {response.status}: {await response.text()}"
-                )
-            return await response.json()
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            async with session.post(
+                REWIND_SEARCH_URL,
+                json={"q": query, "asOf": self.as_of},
+                headers=self.headers(),
+            ) as response:
+                if response.status == 429 and attempt < RATE_LIMIT_RETRIES:
+                    await asyncio.sleep(2**attempt)
+                    continue
+                if response.status != 200:
+                    raise RuntimeError(
+                        f"Rewind returned HTTP {response.status}: {await response.text()}"
+                    )
+                return await response.json()
+        raise AssertionError("unreachable")
 
     @tool
     async def search(

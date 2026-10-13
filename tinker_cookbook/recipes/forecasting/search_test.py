@@ -98,6 +98,55 @@ def test_search_tool_sends_its_day_for_every_query(monkeypatch: pytest.MonkeyPat
     assert "Query: a" in content and "Query: b" in content
 
 
+def test_search_sends_a_key_only_when_configured() -> None:
+    assert RewindSearchTool(as_of="2025-07-07").headers() == {}
+    assert RewindSearchTool(as_of="2025-07-07", api_key="key").headers() == {
+        "Authorization": "Bearer key"
+    }
+
+
+class FakeResponse:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    async def __aenter__(self) -> FakeResponse:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def json(self) -> dict[str, Any]:
+        return PAYLOAD
+
+    async def text(self) -> str:
+        return "rate limited"
+
+
+class FakeSession:
+    def __init__(self, statuses: list[int]) -> None:
+        self.statuses = statuses
+        self.calls = 0
+
+    def post(self, url: str, json: dict[str, Any], headers: dict[str, str]) -> FakeResponse:
+        self.calls += 1
+        return FakeResponse(self.statuses.pop(0))
+
+
+def test_search_retries_when_rate_limited(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    tool = RewindSearchTool(as_of="2025-07-07")
+
+    session = FakeSession([429, 429, 200])
+    assert asyncio.run(tool._fetch(cast(Any, session), "q")) == PAYLOAD
+    assert session.calls == 3
+
+    with pytest.raises(RuntimeError, match="HTTP 429"):
+        asyncio.run(tool._fetch(cast(Any, FakeSession([429] * 5)), "q"))
+
+
 def test_search_env_scores_forecast_after_a_search(monkeypatch: pytest.MonkeyPatch) -> None:
     requests = _patch_fetch(monkeypatch)
     tool = SearchSettings(api_key="key").tool_for(_example().snapshot_time)
