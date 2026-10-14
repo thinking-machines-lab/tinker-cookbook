@@ -1569,6 +1569,13 @@ async def do_train_step_streaming_and_get_sampling_client(
             i_minibatch += 1
             wrapped_trajectory_groups = []
 
+        if not forward_backward_futures:
+            logger.info(
+                f"[stream_minibatch] Step {i_batch}, Substep {i_substep}/{config.num_substeps}: "
+                "No valid trajectory groups; skipping optimizer substep"
+            )
+            continue
+
         # Enqueue optim_step before awaiting results (so they land on same clock cycle)
         adam_params = tinker.AdamParams(
             learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
@@ -1587,6 +1594,16 @@ async def do_train_step_streaming_and_get_sampling_client(
 
         if optim_result.metrics:
             metrics.update(optim_result.metrics)
+
+    if not all_data_D:
+        logger.info(
+            f"[stream_minibatch] Step {i_batch}: No valid trajectory groups; skipping training step"
+        )
+        sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
+            training_client, checkpoint_mgr, i_batch + 1
+        )
+        metrics.update(checkpoint_metrics)
+        return sampling_client, metrics, all_wrapped_trajectory_groups
 
     # Aggregate metrics across the entire batch
     metrics.update(compute_sampling_client_metrics(all_wrapped_trajectory_groups))
