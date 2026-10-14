@@ -147,7 +147,7 @@ class Config:
     kl_discount_factor: float = 0.0
 
     # Loss function and configuration.
-    # See https://tinker-docs.thinkingmachines.ai/losses
+    # See https://tinker-docs.thinkingmachines.ai/tinker/losses
     loss_fn: LossFnType = "importance_sampling"
     loss_fn_config: dict[str, Any] | None = None
 
