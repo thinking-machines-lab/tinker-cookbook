@@ -39,10 +39,11 @@ def _():
     warnings.filterwarnings("ignore", message="IProgress not found")
 
     import tinker
-    import torch
-    from tinker import TensorData
 
-    return TensorData, tinker, torch
+    from tinker_cookbook import model_info, renderers
+    from tinker_cookbook.supervised.data import conversation_to_datum
+
+    return conversation_to_datum, model_info, renderers, tinker
 
 
 @app.cell(hide_code=True)
@@ -50,7 +51,7 @@ def _(mo):
     mo.md(r"""
     ## Setup: train for one step
 
-    We need a trained checkpoint to work with. Let's create a training client and run a single training step.
+    We need a trained checkpoint to work with. Let's create a training client and run a single training step. Because Qwen3.5 is a chat-tuned model, we use its recommended renderer and `conversation_to_datum()` so the example includes the model's chat template.
     """)
     return
 
@@ -63,7 +64,7 @@ def _(mo):
 
 
 @app.cell
-async def _(TensorData, api_key, mo, tinker, torch):
+async def _(api_key, conversation_to_datum, mo, model_info, renderers, tinker):
     import os
 
     mo.stop(
@@ -81,20 +82,21 @@ async def _(TensorData, api_key, mo, tinker, torch):
         base_model=MODEL_NAME, rank=16
     )
     tokenizer = training_client.get_tokenizer()
+    renderer_name = model_info.get_recommended_renderer_name(MODEL_NAME)
+    renderer = renderers.get_renderer(renderer_name, tokenizer)
 
     # One quick SFT step
-    text = "The Pythagorean theorem states that a^2 + b^2 = c^2."
-    ids = tokenizer.encode(text)
-    model_input = tinker.ModelInput.from_ints(ids[:-1])
-    target_tokens = ids[1:]
-    _weights = [1.0] * len(target_tokens)
-
-    datum = tinker.Datum(
-        model_input=model_input,
-        loss_fn_inputs={
-            "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-            "weights": TensorData.from_torch(torch.tensor(_weights)),
-        },
+    datum = conversation_to_datum(
+        [
+            {"role": "user", "content": "State the Pythagorean theorem."},
+            {
+                "role": "assistant",
+                "content": "The Pythagorean theorem states that a^2 + b^2 = c^2.",
+            },
+        ],
+        renderer,
+        max_length=512,
+        train_on_what=renderers.TrainOnWhat.LAST_ASSISTANT_MESSAGE,
     )
 
     fb_future = await training_client.forward_backward_async([datum], loss_fn="cross_entropy")
@@ -102,7 +104,7 @@ async def _(TensorData, api_key, mo, tinker, torch):
     optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
     await optim_future.result_async()
     print("Training step complete")
-    return service_client, tokenizer, training_client
+    return renderer, service_client, training_client
 
 
 @app.cell(hide_code=True)
@@ -186,28 +188,36 @@ def _(mo):
     mo.md(r"""
     ## Using the sampler checkpoint for inference
 
-    The sampler checkpoint can be loaded as a `SamplingClient` for inference. Use `service_client.create_sampling_client(model_path=...)`.
+    The sampler checkpoint can be loaded as a `SamplingClient` for inference. Use `service_client.create_sampling_client(model_path=...)`. Build the prompt and parse the response with the same renderer used for training.
     """)
     return
 
 
 @app.cell
-async def _(sampler_path, service_client, tinker, tokenizer):
+async def _(renderer, renderers, sampler_path, service_client, tinker):
     # Create a sampling client from the saved checkpoint
     fine_tuned_sampler = await service_client.create_sampling_client_async(model_path=sampler_path)
 
-    prompt_text = "The Pythagorean theorem"
-    prompt_ids = tokenizer.encode(prompt_text)
-    prompt = tinker.ModelInput.from_ints(prompt_ids)
+    prompt = renderer.build_generation_prompt(
+        [{"role": "user", "content": "State the Pythagorean theorem."}]
+    )
 
     result = await fine_tuned_sampler.sample_async(
         prompt=prompt,
-        sampling_params=tinker.SamplingParams(max_tokens=50, temperature=0.5, stop=["\n"]),
+        sampling_params=tinker.SamplingParams(
+            max_tokens=200,
+            temperature=0.5,
+            stop=renderer.get_stop_sequences(),
+        ),
         num_samples=3,
     )
 
     for sequence in result.sequences:
-        print(prompt_text + tokenizer.decode(sequence.tokens))
+        response, termination = renderer.parse_response(sequence.tokens)
+        if not termination.is_clean:
+            print(f"[Incomplete response: {termination}]")
+            continue
+        print(renderers.get_text_content(response))
     return
 
 
