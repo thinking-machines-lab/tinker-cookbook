@@ -57,6 +57,7 @@ from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingCli
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
+    successful_rollout_indices,
 )
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.rollouts import do_group_rollout_and_filter_constant_reward
@@ -96,6 +97,44 @@ class SDFTBatchProvider(Protocol):
         ...
 
     def __len__(self) -> int: ...
+
+
+def drop_failed_rollouts(
+    trajectory_groups_raw: Sequence[TrajectoryGroup | None],
+    builders_P: Sequence[EnvGroupBuilder],
+    questions_P: Sequence[str],
+    golden_answers_P: Sequence[str],
+) -> tuple[list[TrajectoryGroup], list[EnvGroupBuilder], list[str], list[str]]:
+    """Drop the problems whose rollout failed, keeping the parallel lists in step.
+
+    A group rollout returns ``None`` when every trajectory in it errored out.
+    Those problems have nothing to train on, but the builders, questions and
+    golden answers still run parallel to the full batch, and each surviving
+    datum is stamped with the *index* of its trajectory group -- the index the
+    teacher prompt is later looked up by. Filtering the groups alone renumbers
+    them, so every problem after the first failure is teacher-forced against an
+    earlier problem's prompt and the student learns against a distribution
+    conditioned on the wrong question.
+
+    Args:
+        trajectory_groups_raw (Sequence[TrajectoryGroup | None]): Rollout
+            results, one per problem, ``None`` where the rollout failed.
+        builders_P (Sequence[EnvGroupBuilder]): Builders for the batch.
+        questions_P (Sequence[str]): Questions for the batch.
+        golden_answers_P (Sequence[str]): Golden answers for the batch.
+
+    Returns:
+        tuple[list[TrajectoryGroup], list[EnvGroupBuilder], list[str], list[str]]:
+        The four lists restricted to the problems that produced a trajectory
+        group, still index-aligned with one another.
+    """
+    kept_P = successful_rollout_indices(trajectory_groups_raw)
+    return (
+        [cast(TrajectoryGroup, trajectory_groups_raw[i]) for i in kept_P],
+        [builders_P[i] for i in kept_P],
+        [questions_P[i] for i in kept_P],
+        [golden_answers_P[i] for i in kept_P],
+    )
 
 
 def build_sdft_teacher_prompt(
@@ -948,9 +987,9 @@ async def main(
                         for i, builder in enumerate(builders_P)
                     ],
                 )
-            trajectory_groups_P: list[TrajectoryGroup] = [
-                tg for tg in trajectory_groups_raw if tg is not None
-            ]
+            trajectory_groups_P, builders_P, questions_P, golden_answers_P = drop_failed_rollouts(
+                trajectory_groups_raw, builders_P, questions_P, golden_answers_P
+            )
 
             # Compute trajectory metrics
             taglist_P = [b.logging_tags() for b in builders_P]
