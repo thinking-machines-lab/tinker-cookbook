@@ -215,7 +215,11 @@ def main(config: Config):
                 sampled_tokens_G_T, logprobs_G_T, advantages_G
             ):
                 ob_len = prompt.length - 1
-                model_input = prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))
+                # A one-token completion has an empty shift; keep it as a target and
+                # skip the empty input chunk (the server rejects empty chunks).
+                model_input = prompt
+                if len(sampled_tokens) > 1:
+                    model_input = prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))
                 target_tokens = [0] * ob_len + sampled_tokens
                 padded_logprobs = [0.0] * ob_len + logprobs
                 padded_advantages = [0.0] * ob_len + [advantage] * (model_input.length - ob_len)
