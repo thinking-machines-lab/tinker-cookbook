@@ -11,6 +11,7 @@ import tinker
 
 from tinker_cookbook.renderers.base import Renderer
 from tinker_cookbook.rl.types import Env
+from tinker_cookbook.sandbox import CloudSandboxBackend
 
 # ---------------------------------------------------------------------------
 # Type aliases — reuse RL conventions where possible
@@ -301,11 +302,17 @@ class BenchmarkConfig:
     """Renderer for the judge model. If None, uses the candidate renderer."""
 
     # Sandbox (for benchmarks that execute code: mbpp, livecodebench, terminal_bench, swe_bench)
+    sandbox_backend: CloudSandboxBackend = "modal"
+    """Backend that creates sandboxes when ``sandbox_factory`` is ``None``.
+    Modal needs ``pip install 'tinker-cookbook[modal]'``; Sail needs
+    ``pip install 'tinker-cookbook[sail]'`` and ``SAIL_API_KEY``.
+    """
+
     sandbox_factory: Callable[[], Any] | None = None
     """Async callable returning a :class:`~tinker_cookbook.sandbox.SandboxInterface`.
     Signature: ``async def factory() -> SandboxInterface``.
     Called once per eval example to create an isolated execution environment.
-    When ``None``, defaults to Modal (requires ``pip install 'tinker-cookbook[modal]'``).
+    When ``None``, sandboxes come from ``sandbox_backend``.
 
     Example::
 
