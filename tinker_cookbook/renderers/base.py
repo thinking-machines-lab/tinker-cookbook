@@ -665,6 +665,8 @@ class Message(TypedDict):
         Required by GptOss (renders "<|start|>functions.{name}..."), optional for others.
         When constructing tool results, include both name and tool_call_id when available
         since different renderers require different fields.
+    parsed_response: NotRequired[ParsedResponse]
+        Renderer-owned tokens and canonical output for lossless sampled-response rendering.
 
     """
 
@@ -676,6 +678,20 @@ class Message(TypedDict):
     trainable: NotRequired[bool]
     tool_call_id: NotRequired[str]
     name: NotRequired[str]
+    parsed_response: NotRequired["ParsedResponse"]
+
+
+class ParsedResponse(TypedDict):
+    """Sampled tokens and the canonical rendering of their parsed response.
+
+    Reuse is valid while the canonical output and sampling prefix still match.
+    Comparing rendered output allows metadata edits without replaying stale text.
+    """
+
+    renderer: str
+    tokenizer: str
+    tokens: list[int]
+    output: list[tinker.ModelInputChunk]
 
 
 @dataclass
@@ -840,7 +856,7 @@ def message_to_jsonable(message: Message) -> dict[str, Any]:
     """Convert a Message TypedDict to a JSON-serializable dict without losing metadata.
 
     Preserves all optional fields (tool_calls, unparsed_tool_calls, trainable,
-    tool_call_id, name) when present. ToolCall and UnparsedToolCall objects are
+    tool_call_id, name, parsed_response) when present. ToolCall and UnparsedToolCall objects are
     serialized via their ``model_dump`` method.
 
     Args:
@@ -865,6 +881,12 @@ def message_to_jsonable(message: Message) -> dict[str, Any]:
         result["tool_call_id"] = message["tool_call_id"]
     if "name" in message:
         result["name"] = message["name"]
+    if "parsed_response" in message:
+        response = message["parsed_response"]
+        result["parsed_response"] = {
+            **response,
+            "output": [chunk.model_dump(mode="json") for chunk in response["output"]],
+        }
     return result
 
 

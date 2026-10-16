@@ -20,6 +20,8 @@ Reference: https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/tokenizer_config.jso
 import json
 import re
 
+import tinker
+
 from tinker_cookbook.renderers.base import (
     UNTERMINATED_TOOL_BLOCK_ERROR,
     ContentPart,
@@ -99,7 +101,35 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         message = {**message, "content": self._trim_content(message["content"])}
-        return super().render_message(message, ctx)
+        rendered = super().render_message(message, ctx)
+        original = message.get("parsed_response")
+        if original is None:
+            return rendered
+
+        sampling_header = tinker.EncodedTextChunk(
+            tokens=self._get_generation_suffix("assistant", ctx)
+        )
+        if (
+            original["renderer"] == type(self).__name__
+            and original["tokenizer"] == self.tokenizer.name_or_path
+            and original["output"] == rendered.output
+            and rendered.header == sampling_header
+        ):
+            return RenderedMessage(
+                header=rendered.header,
+                output=[tinker.EncodedTextChunk(tokens=original["tokens"])],
+            )
+        return rendered
+
+    def _preserve_response(self, message: Message, response: list[int]) -> None:
+        if self.disables_thinking and response and response[-1] == self._end_message_token:
+            rendered = self.render_message(message, RenderContext(idx=0, is_last=True))
+            message["parsed_response"] = {
+                "renderer": type(self).__name__,
+                "tokenizer": self.tokenizer.name_or_path,
+                "tokens": list(response),
+                "output": rendered.output,
+            }
 
     def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
         """The header the generation prompt ends with, including the `<think>` prefill."""
@@ -262,6 +292,7 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
             return message, termination
 
         self._postprocess_parsed_message(message)
+        self._preserve_response(message, response)
         return message, termination
 
     def _parse_response_for_streaming(
@@ -270,6 +301,8 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         """Parse response for streaming with Qwen3.5-specific post-processing."""
         message, termination = super()._parse_response_for_streaming(response)
         self._postprocess_parsed_message(message)
+        if termination.is_clean:
+            self._preserve_response(message, response)
         return message, termination
 
     def _format_tool_call_argument(self, value: object) -> str:
