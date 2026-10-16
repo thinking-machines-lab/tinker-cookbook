@@ -66,7 +66,7 @@ record = checkpoint_utils.get_last_checkpoint(log_path, required_key="state_path
 behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"  # "ask", "delete", "resume"
 
 if config.load_checkpoint_path:
-    tc.load_state_with_optimizer(config.load_checkpoint_path)
+    tc = svc.create_training_client_from_state_with_optimizer(config.load_checkpoint_path)
 ```
 
 ### REST API / CLI management

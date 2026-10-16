@@ -67,7 +67,7 @@ training_client = service_client.create_lora_training_client(
 training_client.forward_backward(...)
 training_client.optim_step(...)
 training_client.save_state(...)
-training_client.load_state(...)
+resumed_client = service_client.create_training_client_from_state(...)
 
 sampling_client = training_client.save_weights_and_get_sampling_client()
 sampling_client.sample(...)
