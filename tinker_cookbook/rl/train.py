@@ -757,7 +757,7 @@ async def do_sync_training_with_stream_minibatch(
                 # Samplers will produce trajectory groups asynchronously,
                 # and the trainer will consume them as soon as they are ready
                 trajectory_groups_queue: asyncio.Queue[
-                    WrappedTrajectoryGroup | _Shutdown | None
+                    WrappedTrajectoryGroup | _Shutdown | _WorkerFailed | None
                 ] = asyncio.Queue()
                 env_group_builders_P = dataset.get_batch(i_batch)
 
@@ -765,57 +765,72 @@ async def do_sync_training_with_stream_minibatch(
                 async def trajectory_group_worker_task(
                     builder: EnvGroupBuilder, enable_logging: bool
                 ) -> None:
-                    worker_metrics: dict[str, Any] = {}
-                    t_start = time.time()
-                    async with trace.scope_span("trajectory_group_worker"):
-                        trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                            sampling_client,
-                            builder,
-                            max_tokens=config.max_tokens,
-                            temperature=config.temperature,
-                            do_remove_constant_reward_groups=config.remove_constant_reward_groups,
-                            enable_logging=enable_logging,
-                            strategy=strategy,
-                            termination=config.effective_termination(),
-                        )
-                    worker_metrics["time/trajectory_group_worker_loop/total"] = (
-                        time.time() - t_start
-                    )
-                    # Ingest error info (safe: same event loop thread)
-                    if error_counter is not None:
-                        error_counter.ingest(trajectory_group)
-                    if trajectory_group is not None:
-                        trajectory_groups_queue.put_nowait(
-                            WrappedTrajectoryGroup(
-                                trajectory_group=trajectory_group,
-                                env_group_builder=builder,
-                                sampling_client_step=i_batch,
-                                metrics=worker_metrics,
+                    try:
+                        worker_metrics: dict[str, Any] = {}
+                        t_start = time.time()
+                        async with trace.scope_span("trajectory_group_worker"):
+                            trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                                sampling_client,
+                                builder,
+                                max_tokens=config.max_tokens,
+                                temperature=config.temperature,
+                                do_remove_constant_reward_groups=config.remove_constant_reward_groups,
+                                enable_logging=enable_logging,
+                                strategy=strategy,
+                                termination=config.effective_termination(),
                             )
+                        worker_metrics["time/trajectory_group_worker_loop/total"] = (
+                            time.time() - t_start
                         )
-                    else:
-                        trajectory_groups_queue.put_nowait(None)
+                        # Ingest error info (safe: same event loop thread)
+                        if error_counter is not None:
+                            error_counter.ingest(trajectory_group)
+                        if trajectory_group is not None:
+                            trajectory_groups_queue.put_nowait(
+                                WrappedTrajectoryGroup(
+                                    trajectory_group=trajectory_group,
+                                    env_group_builder=builder,
+                                    sampling_client_step=i_batch,
+                                    metrics=worker_metrics,
+                                )
+                            )
+                        else:
+                            trajectory_groups_queue.put_nowait(None)
+                    except Exception as exc:
+                        # The trainer is blocked on queue.get(). Dying without a
+                        # put hangs the run. None is the filtered-group signal;
+                        # putting it here would swallow FailFast.
+                        trajectory_groups_queue.put_nowait(_WorkerFailed(exc))
+                        return
 
                 # Sample all trajectories asynchronously. If we have multiple minibatches,
                 # then sampling can overlap with training.
-                for i, builder in enumerate(env_group_builders_P):
+                worker_tasks = [
                     asyncio.create_task(
                         trajectory_group_worker_task(
                             builder, enable_logging=i < config.num_groups_to_log
                         ),
                         name=f"trajectory_group_worker_task_{i}",
                     )
+                    for i, builder in enumerate(env_group_builders_P)
+                ]
 
                 # Run multiple optimizer substeps per training iteration
-                streaming_result = await do_train_step_streaming_and_get_sampling_client(
-                    config,
-                    i_batch,
-                    trajectory_groups_queue,
-                    training_client,
-                    checkpoint_mgr,
-                    kl_reference_client,
-                    tokenizer,
-                )
+                try:
+                    streaming_result = await do_train_step_streaming_and_get_sampling_client(
+                        config,
+                        i_batch,
+                        trajectory_groups_queue,
+                        training_client,
+                        checkpoint_mgr,
+                        kl_reference_client,
+                        tokenizer,
+                    )
+                finally:
+                    for task in worker_tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*worker_tasks, return_exceptions=True)
                 # _Shutdown cannot appear in the sync path's local queue
                 assert streaming_result is not None, "Unexpected shutdown in sync streaming path"
                 (
@@ -900,6 +915,26 @@ class _Shutdown:
     pass
 
 
+@dataclass
+class _WorkerFailed:
+    """Sentinel: a trajectory-group worker raised before it could enqueue a result.
+
+    Stream-minibatch and async trainers block on ``queue.get()``. If a fire-and-forget
+    worker dies without putting anything, that get hangs forever (``Task exception
+    was never retrieved`` plus a stuck step). Putting this sentinel unblocks the
+    consumer so it can re-raise the original error.
+    """
+
+    exc: Exception
+
+
+def _raise_if_worker_failed(item: T | _WorkerFailed) -> T:
+    """Re-raise a worker crash that was forwarded through an asyncio queue."""
+    if isinstance(item, _WorkerFailed):
+        raise item.exc
+    return item
+
+
 class _AsyncCounter:
     """Async-safe counter for tracking the number of alive worker tasks."""
 
@@ -974,7 +1009,9 @@ async def do_async_training(
     env_group_builders_queue = asyncio.Queue[EnvGroupBuilder | _Shutdown](
         maxsize=config.async_config.groups_per_batch
     )
-    trajectory_groups_queue = asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None]()
+    trajectory_groups_queue = asyncio.Queue[
+        WrappedTrajectoryGroup | _Shutdown | _WorkerFailed | None
+    ]()
 
     # Initial sampling client to use
     path_dict = await checkpoint_utils.save_checkpoint_async(
@@ -1027,51 +1064,66 @@ async def do_async_training(
     @trace.scope
     async def trajectory_group_worker_loop():
         """Generates trajectories for a single env builder"""
-        while True:
-            env_group_builder = await env_group_builders_queue.get()
-            if isinstance(env_group_builder, _Shutdown):
-                logger.info("[trajectory_group_worker_loop] Received shutdown signal")
-                break
+        worker_failed = False
+        try:
+            while True:
+                env_group_builder = await env_group_builders_queue.get()
+                if isinstance(env_group_builder, _Shutdown):
+                    logger.info("[trajectory_group_worker_loop] Received shutdown signal")
+                    break
 
-            # Save a reference to the sampling client step in case it changes
-            # while we're running the rollout
-            sampling_client_step_copy = sampling_client_step
-            worker_metrics: dict[str, Any] = {}
-            t_start = time.time()
-            async with trace.scope_span("trajectory_group_worker"):
-                trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                    sampling_client,
-                    env_group_builder,
-                    max_tokens=config.max_tokens,
-                    temperature=config.temperature,
-                    do_remove_constant_reward_groups=config.remove_constant_reward_groups,
-                    strategy=strategy,
-                    termination=config.effective_termination(),
-                )
-            worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
-            # Ingest error info (safe: same event loop thread)
-            if error_counter is not None:
-                error_counter.ingest(trajectory_group)
-            if trajectory_group is None:
-                trajectory_groups_queue.put_nowait(None)
-            else:
-                trajectory_groups_queue.put_nowait(
-                    WrappedTrajectoryGroup(
-                        trajectory_group=trajectory_group,
-                        env_group_builder=env_group_builder,
-                        sampling_client_step=sampling_client_step_copy,
-                        metrics=worker_metrics,
+                # Save a reference to the sampling client step in case it changes
+                # while we're running the rollout
+                sampling_client_step_copy = sampling_client_step
+                worker_metrics: dict[str, Any] = {}
+                t_start = time.time()
+                try:
+                    async with trace.scope_span("trajectory_group_worker"):
+                        trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                            sampling_client,
+                            env_group_builder,
+                            max_tokens=config.max_tokens,
+                            temperature=config.temperature,
+                            do_remove_constant_reward_groups=config.remove_constant_reward_groups,
+                            strategy=strategy,
+                            termination=config.effective_termination(),
+                        )
+                    worker_metrics["time/trajectory_group_worker_loop/total"] = (
+                        time.time() - t_start
                     )
+                    # Ingest error info (safe: same event loop thread)
+                    if error_counter is not None:
+                        error_counter.ingest(trajectory_group)
+                    if trajectory_group is None:
+                        trajectory_groups_queue.put_nowait(None)
+                    else:
+                        trajectory_groups_queue.put_nowait(
+                            WrappedTrajectoryGroup(
+                                trajectory_group=trajectory_group,
+                                env_group_builder=env_group_builder,
+                                sampling_client_step=sampling_client_step_copy,
+                                metrics=worker_metrics,
+                            )
+                        )
+                except Exception as exc:
+                    # Same contract as the sync stream-minibatch worker: the
+                    # consumer blocks on queue.get(), so a silent crash hangs
+                    # the run. Return after putting the sentinel so gather()
+                    # surfaces the error from the training loop, not as an
+                    # unretrieved worker exception.
+                    worker_failed = True
+                    trajectory_groups_queue.put_nowait(_WorkerFailed(exc))
+                    return
+        finally:
+            # When this is the last worker to exit, signal the training loop to shut down
+            # unless we already forwarded a crash — training_loop will re-raise that.
+            num_alive = await asyncio.shield(worker_alive_counter.decrement_and_get())
+            if num_alive == 0 and not worker_failed:
+                logger.info(
+                    "[trajectory_group_worker_loop] Last worker exited, shutting down training loop"
                 )
-
-        # When this is the last worker to exit, signal the training loop to shut down
-        num_alive = await worker_alive_counter.decrement_and_get()
-        if num_alive == 0:
-            logger.info(
-                "[trajectory_group_worker_loop] Last worker exited, shutting down training loop"
-            )
-            trajectory_groups_queue.put_nowait(_Shutdown())
-        logger.info("[trajectory_group_worker_loop] Terminated")
+                trajectory_groups_queue.put_nowait(_Shutdown())
+            logger.info("[trajectory_group_worker_loop] Terminated")
 
     @trace.scope
     async def training_loop():
@@ -1129,7 +1181,9 @@ async def do_async_training(
                 # Streaming minibatch: delegate queue consumption to the streaming function.
                 # We need to check for shutdown before entering the streaming function,
                 # since it will block on queue.get() internally.
-                wrapped_trajectory_group = await trajectory_groups_queue.get()
+                wrapped_trajectory_group = _raise_if_worker_failed(
+                    await trajectory_groups_queue.get()
+                )
                 if isinstance(wrapped_trajectory_group, _Shutdown):
                     logger.info("[training_loop] Received shutdown signal")
                     break
@@ -1173,7 +1227,9 @@ async def do_async_training(
                     store=ml_logger.store,
                 )
             else:
-                wrapped_trajectory_group = await trajectory_groups_queue.get()
+                wrapped_trajectory_group = _raise_if_worker_failed(
+                    await trajectory_groups_queue.get()
+                )
                 if isinstance(wrapped_trajectory_group, _Shutdown):
                     logger.info("[training_loop] Received shutdown signal")
                     break
@@ -1458,7 +1514,9 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 async def do_train_step_streaming_and_get_sampling_client(
     config: Config,
     i_batch: int,
-    trajectory_groups_queue: asyncio.Queue[WrappedTrajectoryGroup | _Shutdown | None],
+    trajectory_groups_queue: asyncio.Queue[
+        WrappedTrajectoryGroup | _Shutdown | _WorkerFailed | None
+    ],
     training_client: tinker.TrainingClient,
     checkpoint_mgr: checkpoint_utils.CheckpointManager,
     kl_reference_client: tinker.SamplingClient | None,
@@ -1477,8 +1535,8 @@ async def do_train_step_streaming_and_get_sampling_client(
             ``stream_minibatch_config`` set.
         i_batch (int): Current training iteration index.
         trajectory_groups_queue (asyncio.Queue): Queue yielding
-            ``WrappedTrajectoryGroup``, ``None`` (filtered/failed group), or
-            ``_Shutdown`` sentinel.
+            ``WrappedTrajectoryGroup``, ``None`` (filtered/failed group),
+            ``_WorkerFailed`` (worker crash; re-raised), or ``_Shutdown``.
         training_client (tinker.TrainingClient): Client connected to the
             Tinker training service.
         kl_reference_client (tinker.SamplingClient | None): Sampling client
@@ -1521,7 +1579,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         forward_backward_futures: list[tinker.APIFuture[tinker.ForwardBackwardOutput]] = []
         i_minibatch = 0
         while i_minibatch < config.stream_minibatch_config.num_minibatches:
-            wrapped_trajectory_group = await trajectory_groups_queue.get()
+            wrapped_trajectory_group = _raise_if_worker_failed(await trajectory_groups_queue.get())
             if isinstance(wrapped_trajectory_group, _Shutdown):
                 logger.info("[do_train_step_streaming] Received shutdown signal")
                 return None
