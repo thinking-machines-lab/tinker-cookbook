@@ -37,7 +37,7 @@ async def get_row(
         print(f"========== Testing {model_name} ==========")
         if saved_path_for_trainer is not None:
             training_client = await service_client.create_training_client_from_state_async(
-                saved_path_for_trainer
+                saved_path_for_trainer, base_model=model_name
             )
         else:
             training_client = await service_client.create_lora_training_client_async(
