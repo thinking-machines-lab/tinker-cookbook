@@ -355,6 +355,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 584_832,
         (False, False, True): 133_760,
     },
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": {
+        (True, True, True): 113_160_192,
+        (True, True, False): 113_025_024,
+        (True, False, True): 111_484_928,
+        (True, False, False): 111_349_760,
+        (False, True, True): 1_810_432,
+        (False, True, False): 1_675_264,
+        (False, False, True): 135_168,
+    },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
         (True, True, True): 113_160_192,
         (True, True, False): 113_025_024,

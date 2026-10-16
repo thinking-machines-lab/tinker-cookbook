@@ -2168,6 +2168,14 @@ def image_to_chunk(
     elif hasattr(image_processor, "get_resize_config"):
         config = image_processor.get_resize_config({"type": "image", "image": pil_image})
         num_image_tokens = config["num_tokens"]
+    elif hasattr(image_processor, "_compute_target_patches"):
+        # Nemotron 3.5 Super
+        processor: Any = image_processor
+        pixel_shuffle = processor._downsample_factor**2
+        budget = min((processor.max_model_len - 4) * pixel_shuffle, processor.max_num_patches)
+        budget = max(budget, processor.min_num_patches)
+        w_patches, h_patches = processor._compute_target_patches(pil_image, budget)
+        num_image_tokens = w_patches * h_patches // pixel_shuffle
     else:
         raise RendererError(
             f"Don't know how to get the number of image tokens for image processor: {image_processor}"

@@ -144,6 +144,7 @@ def _get_hidden_size(model_name: str) -> int:
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 4096,
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": 2688,
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": 2688,
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": 4096,
         # Thinking Machines Lab Inkling
         "thinkingmachines/Inkling": 6144,
         "thinkingmachines/Inkling-Small": 4096,
@@ -223,6 +224,11 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
         "mlp": 11_346_176,
         "attn": 584_832,
         "unembed": 133_760,
+    },
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": {
+        "mlp": 111_349_760,
+        "attn": 1_675_264,
+        "unembed": 135_168,
     },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
         "mlp": 111_349_760,
@@ -321,6 +327,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
         # TODO: calibrate Inkling models' recommended LR before
         # returning it from get_lr (covered by the startswith check above).
     ):

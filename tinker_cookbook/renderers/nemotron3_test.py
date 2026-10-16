@@ -1317,6 +1317,9 @@ def test_preserve_thinking_registered_in_model_info():
     assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     )
+    assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+    )
 
 
 # The preserve-thinking behavior isn't limited to the two named variants above:

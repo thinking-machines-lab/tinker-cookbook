@@ -677,9 +677,12 @@ class Qwen3VLRenderer(Qwen3Renderer):
                     )
                     # else: strip thinking by not appending
 
-        # Wrap images with vision tokens
+        return self._wrap_image_parts(base_parts)
+
+    def _wrap_image_parts(self, parts: list[ImagePart | TextPart]) -> list[ImagePart | TextPart]:
+        """Wrap each image with ``<|vision_start|>`` and ``<|vision_end|>``."""
         chunks: list[ImagePart | TextPart] = []
-        for content_chunk in base_parts:
+        for content_chunk in parts:
             if content_chunk["type"] == "image":
                 chunks.append(TextPart(type="text", text="<|vision_start|>"))
 

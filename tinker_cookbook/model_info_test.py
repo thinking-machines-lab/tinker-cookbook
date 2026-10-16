@@ -83,6 +83,20 @@ class TestNemotron3:
             "nemotron3_ultra_preserve_thinking",
         ]
 
+    def test_super_3_5_attributes(self):
+        attrs = get_model_attributes(
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16:peft:262144"
+        )
+        assert attrs.is_vl is True
+        assert get_recommended_renderer_names(
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+        ) == [
+            "nemotron3_ultra",
+            "nemotron3_ultra_disable_thinking",
+            "nemotron3_ultra_medium_thinking",
+            "nemotron3_ultra_preserve_thinking",
+        ]
+
     def test_ultra_uses_nemotron3_ultra_renderer(self):
         assert (
             get_recommended_renderer_name("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16")

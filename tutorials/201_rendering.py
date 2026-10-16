@@ -276,7 +276,7 @@ def _(mo):
     | `deepseekv4_1_disable_thinking` | DeepSeek V4.1 | Thinking disabled |
     | `deepseekv4_1_preserve_thinking` | DeepSeek V4.1 | Thinking enabled, earlier reasoning kept in history (multi-turn RL) |
     | `nemotron3` | NVIDIA Nemotron 3 Nano/Super | Thinking enabled |
-    | `nemotron3_ultra` | NVIDIA Nemotron 3 Ultra / 3.5 Lightning | Thinking enabled |
+    | `nemotron3_ultra` | NVIDIA Nemotron 3 Ultra / 3.5 Lightning / 3.5 Super | Thinking enabled |
     | `kimi_k26` | Kimi K2.6 | Thinking enabled (default) |
     | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 
