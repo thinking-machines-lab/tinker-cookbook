@@ -757,7 +757,7 @@ async def do_sync_training_with_stream_minibatch(
                 # Samplers will produce trajectory groups asynchronously,
                 # and the trainer will consume them as soon as they are ready
                 trajectory_groups_queue: asyncio.Queue[
-                    WrappedTrajectoryGroup | _Shutdown | None
+                    WrappedTrajectoryGroup | _Shutdown | _RolloutsComplete | None
                 ] = asyncio.Queue()
                 env_group_builders_P = dataset.get_batch(i_batch)
 
@@ -798,13 +798,35 @@ async def do_sync_training_with_stream_minibatch(
 
                 # Sample all trajectories asynchronously. If we have multiple minibatches,
                 # then sampling can overlap with training.
-                for i, builder in enumerate(env_group_builders_P):
+                rollout_worker_tasks = [
                     asyncio.create_task(
                         trajectory_group_worker_task(
                             builder, enable_logging=i < config.num_groups_to_log
                         ),
                         name=f"trajectory_group_worker_task_{i}",
                     )
+                    for i, builder in enumerate(env_group_builders_P)
+                ]
+
+                async def _signal_rollouts_complete() -> None:
+                    """Retrieve worker deaths loudly, then unblock the trainer.
+
+                    Without this watcher, a worker that raises (a rollout
+                    error re-raised by FailFast, or any exception before the
+                    queue put) dies holding an unretrieved exception, the
+                    queue never receives that group, and the streaming
+                    trainer's ``queue.get()`` waits forever with no error
+                    output.
+                    """
+                    results = await asyncio.gather(*rollout_worker_tasks, return_exceptions=True)
+                    for result in results:
+                        if isinstance(result, BaseException) and not isinstance(
+                            result, asyncio.CancelledError
+                        ):
+                            logger.error("trajectory_group_worker_task failed: %r", result)
+                    trajectory_groups_queue.put_nowait(_RolloutsComplete())
+
+                asyncio.create_task(_signal_rollouts_complete(), name="rollout_completion_watcher")
 
                 # Run multiple optimizer substeps per training iteration
                 streaming_result = await do_train_step_streaming_and_get_sampling_client(
@@ -895,6 +917,17 @@ class _Shutdown:
 
     Used in the cascading shutdown protocol for async RL training:
     dataloader -> workers -> training loop -> evaluation loop.
+    """
+
+
+class _RolloutsComplete:
+    """Sentinel: every launched rollout worker for this batch has finished.
+
+    Emitted by the rollout-completion watcher in the sync streaming path
+    after all worker tasks are gathered. If the streaming trainer still
+    hasn't met its group quota when this arrives, some workers died or their
+    groups were filtered (constant-reward drops), and waiting longer would
+    wait forever — so it fails loudly instead.
     """
 
     pass
@@ -1038,16 +1071,34 @@ async def do_async_training(
             sampling_client_step_copy = sampling_client_step
             worker_metrics: dict[str, Any] = {}
             t_start = time.time()
-            async with trace.scope_span("trajectory_group_worker"):
-                trajectory_group = await do_group_rollout_and_filter_constant_reward(
-                    sampling_client,
+            try:
+                async with trace.scope_span("trajectory_group_worker"):
+                    trajectory_group = await do_group_rollout_and_filter_constant_reward(
+                        sampling_client,
+                        env_group_builder,
+                        max_tokens=config.max_tokens,
+                        temperature=config.temperature,
+                        do_remove_constant_reward_groups=config.remove_constant_reward_groups,
+                        strategy=strategy,
+                        termination=config.effective_termination(),
+                    )
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                # Never swallow cancellation — let the worker task die so the
+                # final gather surfaces it.
+                raise
+            except Exception:
+                # A dead worker never decrements worker_alive_counter and
+                # never consumes its _Shutdown sentinel, so the cascading
+                # shutdown stalls and the training loop waits forever. Report
+                # the failure as a dropped group and keep the worker alive.
+                logger.exception(
+                    "[trajectory_group_worker_loop] rollout failed, dropping group: %s",
                     env_group_builder,
-                    max_tokens=config.max_tokens,
-                    temperature=config.temperature,
-                    do_remove_constant_reward_groups=config.remove_constant_reward_groups,
-                    strategy=strategy,
-                    termination=config.effective_termination(),
                 )
+                if error_counter is not None:
+                    error_counter.ingest(None)
+                trajectory_groups_queue.put_nowait(None)
+                continue
             worker_metrics["time/trajectory_group_worker_loop/total"] = time.time() - t_start
             # Ingest error info (safe: same event loop thread)
             if error_counter is not None:
@@ -1525,6 +1576,16 @@ async def do_train_step_streaming_and_get_sampling_client(
             if isinstance(wrapped_trajectory_group, _Shutdown):
                 logger.info("[do_train_step_streaming] Received shutdown signal")
                 return None
+            if isinstance(wrapped_trajectory_group, _RolloutsComplete):
+                raise RuntimeError(
+                    f"[do_train_step_streaming] Every rollout worker for this batch has "
+                    f"finished, but the minibatch quota is still unmet "
+                    f"(substep {i_substep + 1}/{config.num_substeps}, minibatch "
+                    f"{i_minibatch + 1}/{config.stream_minibatch_config.num_minibatches}). "
+                    f"Groups were lost to worker failures or constant-reward filtering — "
+                    f"see 'trajectory_group_worker_task failed' errors above. Failing "
+                    f"instead of waiting forever."
+                )
             if not trajectory_group_filter(wrapped_trajectory_group):
                 continue
             wrapped_trajectory_groups.append(wrapped_trajectory_group)
