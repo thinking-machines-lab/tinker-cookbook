@@ -18,13 +18,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import hashlib
 import io
 import json
 import logging
 import math
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tinker_cookbook.stores.storage import Storage
@@ -172,19 +173,77 @@ def _get_storage(save_dir: str) -> Storage:
     return storage_from_uri(save_dir)
 
 
-def _load_completed(storage: Storage, benchmark_name: str) -> dict[str, _ResumedExample]:
+def _run_fingerprint(
+    benchmark: Any, config: BenchmarkConfig, sampling_client: tinker.SamplingClient
+) -> dict[str, Any]:
+    """Identity of this eval run, used to gate resume.
+
+    A stored trajectory row is only reusable by a run whose fingerprint
+    matches, so a ``save_dir`` shared across models or configurations never
+    blends one run's rewards into another's score. ``timeout_seconds`` is
+    included because it changes outcomes: a row recorded as a timeout under a
+    300s limit must not stand in for the same example under 3600s. A custom
+    ``grade_fn`` is captured by qualname plus a hash of its code object, which
+    also distinguishes two different functions that share a name. The known
+    residual: two bound methods of different instances of one class share
+    both qualname and code, so instance state (e.g. a grader configured
+    strict vs lenient) is not captured.
+    """
+    model = getattr(sampling_client, "model_path", None) or getattr(
+        sampling_client, "base_model", ""
+    )
+    if not model:
+        logger.warning(
+            "Sampling client exposes neither model_path nor base_model: the run "
+            "fingerprint's model field is empty, so rows from any other such "
+            "client in the same save_dir are interchangeable. Give the client a "
+            "model_path if resume correctness across clients matters."
+        )
+    grade_fn_id: str | None = None
+    if config.grade_fn is not None:
+        code = getattr(config.grade_fn, "__code__", None)
+        if code is not None:
+            # co_code alone ignores constants (``return 0.0`` and ``return 1.0``
+            # byte-compile identically), so fold in co_consts as well.
+            digest = hashlib.sha1(code.co_code + repr(code.co_consts).encode("utf-8")).hexdigest()[
+                :8
+            ]
+        else:
+            digest = "nocode"
+        grade_fn_id = f"{getattr(config.grade_fn, '__qualname__', '?')}#{digest}"
+    return {
+        "benchmark": benchmark.name,
+        "model": str(model),
+        "max_tokens": config.max_tokens,
+        "temperature": config.temperature,
+        "system_prompt": config.system_prompt or "",
+        "timeout_seconds": config.timeout_seconds,
+        "grade_fn": grade_fn_id,
+    }
+
+
+def _load_completed(
+    storage: Storage, benchmark_name: str, fingerprint: dict[str, Any]
+) -> tuple[dict[str, _ResumedExample], dict[str, int]]:
     """Load completed trajectories keyed by ``example_id``.
 
     Uses ``example_id`` (content-hash) instead of positional ``idx``,
     making resumability robust to dataset shuffling and ``max_examples``
     changes between runs.
+
+    Only rows whose ``fingerprint`` matches are reused. Rows written by a
+    different model or configuration stay in the file (it is append-only)
+    but are skipped, counted as ``stale``. Rows from before fingerprints
+    existed are counted as ``legacy`` and skipped too: an unverifiable row
+    must not silently become part of the current run's score.
     """
     traj_path = f"{benchmark_name}/trajectories.jsonl"
     try:
         data = storage.read(traj_path)
     except FileNotFoundError:
-        return {}
+        return {}, {"reused": 0, "stale": 0, "legacy": 0}
     results: dict[str, _ResumedExample] = {}
+    stats = {"reused": 0, "stale": 0, "legacy": 0}
 
     for line_num, raw_line in enumerate(
         io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="replace"), 1
@@ -195,6 +254,14 @@ def _load_completed(storage: Storage, benchmark_name: str) -> dict[str, _Resumed
         try:
             d = json.loads(line)
             eid = d.get("example_id") or str(d["idx"])
+            row_fp = d.get("fingerprint")
+            if row_fp is None:
+                stats["legacy"] += 1
+                continue
+            if row_fp != fingerprint:
+                stats["stale"] += 1
+                continue
+            stats["reused"] += 1
             results[eid] = _ResumedExample(
                 reward=d.get("reward", 0.0),
                 metrics=d.get("metrics", {}),
@@ -205,7 +272,7 @@ def _load_completed(storage: Storage, benchmark_name: str) -> dict[str, _Resumed
                 f"Skipping malformed trajectory line {line_num} in "
                 f"{benchmark_name}/trajectories.jsonl: {e}"
             )
-    return results
+    return results, stats
 
 
 _save_locks: dict[str, asyncio.Lock] = {}
@@ -236,6 +303,8 @@ def _save_result(storage: Storage, result: BenchmarkResult) -> None:
         time_seconds=result.time_seconds,
         # JSON keys must be strings; int keys converted back in load_result
         pass_at_k={str(k): v for k, v in result.pass_at_k.items()},
+        fingerprint=result.fingerprint,
+        num_reused=result.num_reused,
     )
     storage.write(f"{result.name}/result.json", json.dumps(d, indent=2).encode("utf-8"))
 
@@ -510,12 +579,16 @@ async def run_benchmark(
     # Resume: load completed examples from disk (only for single-sample mode;
     # pass@k mode always runs fresh to get exactly num_samples per example)
     completed: dict[str, _ResumedExample] = {}
+    run_fp = _run_fingerprint(benchmark, config, sampling_client)
     if storage is not None and num_samples == 1:
-        completed = _load_completed(storage, benchmark.name)
+        completed, resume_stats = _load_completed(storage, benchmark.name, run_fp)
         if completed:
             logger.info(
                 f"  Resuming: {len(completed)} already completed, "
-                f"{len(envs) - len(completed)} remaining"
+                f"{len(envs) - len(completed)} remaining "
+                f"(fingerprint-matched rows only: {resume_stats['stale']} stale rows "
+                f"from other models/configs and {resume_stats['legacy']} legacy rows "
+                f"without fingerprints were not reused)"
             )
 
     # Build policy
@@ -612,6 +685,7 @@ async def run_benchmark(
                     )
                     if config.grade_fn is not None:
                         stored.reward = total_reward
+                    stored.fingerprint = run_fp
                     await _save_trajectory(storage, benchmark.name, stored)
 
             except (TimeoutError, EvalTimeoutError):
@@ -635,6 +709,7 @@ async def run_benchmark(
                             error=f"timeout ({config.timeout_seconds}s)",
                             time_seconds=elapsed,
                             example_id=_get_example_id(env, idx),
+                            fingerprint=run_fp,
                         ),
                     )
 
@@ -656,6 +731,7 @@ async def run_benchmark(
                             error=str(e),
                             time_seconds=elapsed,
                             example_id=_get_example_id(env, idx),
+                            fingerprint=run_fp,
                         ),
                     )
 
@@ -697,6 +773,8 @@ async def run_benchmark(
         result.num_errors = num_errors
         result.num_truncated = num_truncated
         result.time_seconds = time.monotonic() - t0
+        result.fingerprint = run_fp
+        result.num_reused = sum(1 for eid in env_example_ids if eid in completed)
 
         if valid_metrics:
             for k, v in _compute_token_turn_summary(valid_metrics).items():
@@ -709,11 +787,12 @@ async def run_benchmark(
                 f" | completed={result.score_completed:.3f}"
                 f" ({result.num_correct}/{result.num_completed})"
             )
+        reused_str = f", {result.num_reused} reused from cache" if result.num_reused else ""
         logger.info(
             f"  {benchmark.name}: score={result.score:.3f} "
             f"({result.num_correct}/{result.num_examples}, "
             f"{num_errors} errors{trunc_str}) "
-            f"in {result.time_seconds:.0f}s{completed_str}"
+            f"in {result.time_seconds:.0f}s{reused_str}{completed_str}"
         )
 
         if storage is not None:
