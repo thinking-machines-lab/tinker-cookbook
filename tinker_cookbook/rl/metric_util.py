@@ -170,6 +170,10 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
     Args:
         dataset (RLDataset): The test/validation RL dataset.
         max_tokens (int): Maximum number of tokens per completion.
+        temperature (float): Sampling temperature for eval rollouts. Eval
+            rollouts do not feed back into the training loss or optional KL
+            penalty, so this can differ from the train-time rollout
+            temperature; set it to match your intended serving decoder.
         name (str): Prefix added to all returned metric keys (default
             ``"test"``).
         num_groups_to_log (int): Number of leading groups for which full
@@ -182,12 +186,14 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self,
         dataset: RLDataset,
         max_tokens: int,
+        temperature: float = 1.0,
         name: str = "test",
         num_groups_to_log: int = 4,
         strategy: RolloutStrategy | None = None,
     ):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
+        self.temperature = temperature
         self.name = name
         self.num_groups_to_log = num_groups_to_log
         self.strategy = strategy
@@ -273,7 +279,9 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                 sampling_client, rollout_summary_export=rollout_summary_export, store=store
             )
 
-        policy = TinkerTokenCompleter(sampling_client, max_tokens=self.max_tokens)
+        policy = TinkerTokenCompleter(
+            sampling_client, max_tokens=self.max_tokens, temperature=self.temperature
+        )
         return await self.eval_token_completer(
             policy,
             rollout_summary_export=rollout_summary_export,
@@ -294,7 +302,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                     sampling_client,
                     builder,
                     max_tokens=self.max_tokens,
-                    temperature=1.0,
+                    temperature=self.temperature,
                     do_remove_constant_reward_groups=False,
                     enable_logging=i < self.num_groups_to_log,
                     strategy=self.strategy,
