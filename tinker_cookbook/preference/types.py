@@ -69,6 +69,30 @@ def _neutralize_message_content(message: renderers.Message) -> renderers.Message
                 parts.append({**part, "text": _neutralize_comparison_markers(str(part["text"]))})
             else:
                 parts.append(part)
+        # A marker split across adjacent text parts contains no live marker in
+        # any single part, so per-part neutralization passes it through — but
+        # renderers join a message's text parts with no separator
+        # (renderers/base.py: get_text_content, to_openai_message), so the
+        # judge would receive the live marker across the boundary. Re-check
+        # on the joined text; if a marker straddles parts, collapse the text
+        # parts into one carrying the joined, neutralized text. Benign
+        # multipart content is unaffected (the join changes nothing).
+        joined = "".join(
+            str(part["text"])
+            for part in parts
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+        joined_neutralized = _neutralize_comparison_markers(joined)
+        if joined_neutralized != joined:
+            non_text = [
+                part
+                for part in parts
+                if not (isinstance(part, dict) and part.get("type") == "text")
+            ]
+            return {
+                **message,
+                "content": [{"type": "text", "text": joined_neutralized}, *non_text],
+            }
         return {**message, "content": parts}
     return message
 

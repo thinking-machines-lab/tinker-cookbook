@@ -82,7 +82,7 @@ class TestScoreExtraction:
         )
         assert make_rubric().extract_score(response) == 2.0
 
-    def test_benunchanged_single_verdict(self):
+    def test_benign_unchanged_single_verdict(self):
         assert make_rubric().extract_score("Reasoning...\n<score>0.75</score>") == 0.75
         assert make_rubric().extract_score("<score>0</score>") == 0.0
 
