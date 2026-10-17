@@ -41,9 +41,19 @@ _COMPARISON_MARKERS = (
 
 
 def _neutralize_comparison_markers(text: str) -> str:
-    """Idempotently break literal comparison markers inside untrusted completion text."""
-    for marker in _COMPARISON_MARKERS:
-        text = text.replace(marker, marker.replace(" ", "-", 1))
+    """Idempotently break literal comparison markers inside untrusted completion text.
+
+    The markers begin and end with ``====``, so a single ``str.replace`` pass
+    can leave a live marker behind: in ``"==== Preference ==== Preference ===="``
+    the two occurrences overlap on their shared ``====`` border, only the first
+    is replaced, and the replacement's tail re-arms the second. Loop to a fixed
+    point so no live marker survives. Termination: each pass plants a ``-``
+    that no live marker contains and no later pass removes, so at most
+    ``len(text)`` passes can change anything.
+    """
+    while any(marker in text for marker in _COMPARISON_MARKERS):
+        for marker in _COMPARISON_MARKERS:
+            text = text.replace(marker, marker.replace(" ", "-", 1))
     return text
 
 
