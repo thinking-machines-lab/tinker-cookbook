@@ -317,6 +317,24 @@ class TestMCQExtraction:
         assert extract_mcq_answer("\\boxed{C}", "ABCDEFGHIJ") == "C"
         assert extract_mcq_answer("I think D is correct.", "ABCDEFGHIJ") == "D"
 
+    @pytest.mark.parametrize(
+        "response, valid_letters, expected",
+        [
+            ("The answer is definitely B.", "ABCD", "B"),
+            ("The answer is choice B.", "ABCD", "B"),
+            ("Answer: clearly (A).", "ABCD", "A"),
+            ("The answer is evidently J.", "ABCDEFGHIJ", "J"),
+            ("The answer is (B).", "ABCD", "B"),
+            ("Answer: C", "ABCD", "C"),
+        ],
+    )
+    def test_mcq_extract_ignores_words_after_answer_prefix(
+        self, response: str, valid_letters: str, expected: str
+    ):
+        from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer
+
+        assert extract_mcq_answer(response, valid_letters) == expected
+
     def test_bfcl_function_matching(self):
         from tinker_cookbook.eval.benchmarks._bfcl import _match_function_call
 
