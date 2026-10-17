@@ -133,7 +133,8 @@ async def incorporate_kl_penalty(
     the base model, then adjusts each datum's advantages by adding a KL penalty
     term: ``kl_penalty_coef * (avg_kl - per_token_kl)``. When
     ``kl_discount_factor > 0``, the KL penalty is transformed into discounted
-    future sums before being added to advantages.
+    future sums before being added to advantages. Masked tokens (prompt and
+    observation tokens) keep a zero penalty either way.
 
     The KL direction is ``logp_sampled - logp_base``, so ``avg_kl`` represents
     ``-KL[current || base]`` in expectation.
@@ -181,7 +182,11 @@ async def incorporate_kl_penalty(
     for i, datum in enumerate(data_D):
         kl_advantages = kl_penalty_coef * float_masks[i] * (avg_logp_diff - logprob_diffs[i])
         if kl_discount_factor > 0:
-            kl_advantages = discounted_future_sum_vectorized(kl_advantages, kl_discount_factor)
+            # The discounted sum carries later penalties back into masked positions,
+            # so mask again: a nonzero advantage there would train on those tokens.
+            kl_advantages = float_masks[i] * discounted_future_sum_vectorized(
+                kl_advantages, kl_discount_factor
+            )
         datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(
             datum.loss_fn_inputs["advantages"].to_torch() + kl_advantages
         )
