@@ -118,6 +118,10 @@ class MMLUReduxMessageEnv(MessageEnv):
         self.prompt = prompt
         self.expected = expected
         self.subject = subject
+        # Read by the eval runner for the per-subject breakdown. Lives on the
+        # env, not in step() metrics, so truncated and timed-out examples are
+        # still attributed to their subject.
+        self.tags = [subject]
         self.example_id = example_id
         self.system_prompt = system_prompt
 
@@ -191,28 +195,20 @@ class MMLUReduxBenchmarkBuilder(BenchmarkBuilder):
         return envs
 
     def aggregate(self, rewards: list[float], metrics_list: list[Metrics]) -> BenchmarkResult:
-        """Aggregate with per-subject breakdown."""
+        """Headline accuracy.
+
+        Per-subject accuracy (``mmlu_redux/{subject}/accuracy``) is added by the
+        runner from ``MMLUReduxMessageEnv.tags``, with the same denominator as
+        the headline score.
+        """
         num_correct = sum(1 for r in rewards if r > 0)
         accuracy = num_correct / len(rewards) if rewards else 0.0
-
-        subject_results: dict[str, list[bool]] = {}
-        for r, m in zip(rewards, metrics_list):
-            subj = m.get("subject", "unknown")
-            if isinstance(subj, str):
-                subject_results.setdefault(subj, []).append(r > 0)
-
-        metrics: dict[str, float] = {"mmlu_redux/accuracy": accuracy}
-        for subj, subj_res in sorted(subject_results.items()):
-            metrics[f"mmlu_redux/{subj}/accuracy"] = (
-                sum(subj_res) / len(subj_res) if subj_res else 0.0
-            )
-
         return BenchmarkResult(
             name=self.name,
             score=accuracy,
             num_examples=len(rewards),
             num_correct=num_correct,
-            metrics=metrics,
+            metrics={"mmlu_redux/accuracy": accuracy},
         )
 
 
