@@ -92,7 +92,9 @@ async def evaluate_task(
     sandbox = None
     try:
         sandbox = await sandbox_factory(env_dir, config.sandbox_timeout)
-        bash_tool = HarborBashTool(sandbox, command_timeout=config.command_timeout)
+        bash_tool = HarborBashTool(
+            sandbox, command_timeout=config.command_timeout, workdir=task.workdir
+        )
         reward_fn = HarborReward(
             tests_dir=task.task_dir / "tests",
             sandbox=sandbox,
