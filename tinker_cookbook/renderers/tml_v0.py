@@ -511,8 +511,13 @@ class TmlV0Renderer(Renderer):
             )
         return examples[0]
 
-    def get_stop_sequences(self) -> list[int]:
-        return self._tml_renderer.stop()
+    def get_stop_sequences(self) -> list[str] | list[int]:
+        stop = self._tml_renderer.stop()
+        if stop is None:
+            return []
+        if isinstance(stop, str):
+            return [stop]
+        return stop
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
