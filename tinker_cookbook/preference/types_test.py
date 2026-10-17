@@ -18,6 +18,8 @@ revert of the fix rather than vacuously passing.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from tinker_cookbook.preference.types import (
@@ -148,7 +150,7 @@ class TestComparisonMarkerHardening:
             {"type": "text", "text": "first paragraph, no markers here. "},
             {"type": "text", "text": "second paragraph, also clean."},
         ]
-        message = {"role": "assistant", "content": parts}
+        message = cast(Message, {"role": "assistant", "content": parts})
         out = _neutralize_message_content(message)
         assert out["content"] == parts
 

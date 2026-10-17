@@ -7,7 +7,7 @@ including comparisons between model outputs and preference models.
 
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 import chz
 import tinker
@@ -89,10 +89,10 @@ def _neutralize_message_content(message: renderers.Message) -> renderers.Message
                 for part in parts
                 if not (isinstance(part, dict) and part.get("type") == "text")
             ]
-            return {
-                **message,
-                "content": [{"type": "text", "text": joined_neutralized}, *non_text],
-            }
+            return cast(
+                renderers.Message,
+                {**message, "content": [{"type": "text", "text": joined_neutralized}, *non_text]},
+            )
         return {**message, "content": parts}
     return message
 

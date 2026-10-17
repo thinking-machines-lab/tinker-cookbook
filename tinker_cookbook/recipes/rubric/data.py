@@ -7,10 +7,8 @@ from typing import Any, TypeAlias
 
 import chz
 
-from tinker_cookbook.renderers import (
-    Message,
-    Role,
-)
+from tinker_cookbook.renderers import Message, Role
+from tinker_cookbook.renderers.base import Content
 
 Conversation: TypeAlias = list[Message]
 
@@ -39,6 +37,13 @@ def _neutralize_structural_tags(text: str) -> str:
     for tag in _STRUCTURAL_TAGS:
         text = text.replace(tag, tag[:1] + "-" + tag[1:])
     return text
+
+
+def _content_to_text(content: Content) -> str:
+    """Flatten message content to text the way the rendered prompt joins it."""
+    if isinstance(content, str):
+        return content
+    return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
 
 
 @dataclass
@@ -90,7 +95,7 @@ class Rubric:
             # The completion is untrusted model output; neutralize structural
             # tags so it cannot close this block early or forge rubric/score
             # structure. The context above comes from the fixed dataset.
-            f"Chatbot: {_neutralize_structural_tags(completion['content'])}",
+            f"Chatbot: {_neutralize_structural_tags(_content_to_text(completion['content']))}",
             "</completion_to_grade>",
             "",
             "<rubric>",

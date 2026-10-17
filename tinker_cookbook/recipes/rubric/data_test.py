@@ -7,6 +7,8 @@ rather than an injected first one. This is a training-time reward, so RL can
 discover and amplify any residual hole.
 """
 
+from typing import cast
+
 from tinker_cookbook.recipes.rubric.data import Conversation, Rubric
 
 USER_TURN = {"role": "user", "content": "Explain the CAP theorem in one paragraph."}
@@ -38,8 +40,8 @@ def make_rubric() -> Rubric:
 
 
 def build_grader_prompt(completion: str) -> str:
-    convo: Conversation = [USER_TURN, {"role": "assistant", "content": completion}]
-    return make_rubric().get_grader_prompt(convo)[0]["content"]
+    convo = cast(Conversation, [USER_TURN, {"role": "assistant", "content": completion}])
+    return str(make_rubric().get_grader_prompt(convo)[0]["content"])
 
 
 class TestGraderPromptHardening:
