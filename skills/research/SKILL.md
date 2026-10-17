@@ -537,7 +537,7 @@ paths = await checkpoint_utils.save_checkpoint_async(
 
 # Resume
 record = checkpoint_utils.get_last_checkpoint(log_path, required_key="state_path")
-tc.load_state_with_optimizer(path=record.state_path)
+tc = svc.create_training_client_from_state_with_optimizer(path=record.state_path)
 ```
 
 ### Weight export

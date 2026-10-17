@@ -35,11 +35,14 @@ async def get_row(
     async def _inner():
         tstart = time.time()
         print(f"========== Testing {model_name} ==========")
-        training_client = await service_client.create_lora_training_client_async(
-            base_model=model_name
-        )
         if saved_path_for_trainer is not None:
-            await training_client.load_state_async(saved_path_for_trainer)
+            training_client = await service_client.create_training_client_from_state_async(
+                saved_path_for_trainer, base_model=model_name
+            )
+        else:
+            training_client = await service_client.create_lora_training_client_async(
+                base_model=model_name
+            )
         # First sample something
         tokenizer = training_client.get_tokenizer()
         tokens = tokenizer.encode(get_reference_document())
