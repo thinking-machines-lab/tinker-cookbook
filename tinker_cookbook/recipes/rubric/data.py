@@ -14,6 +14,32 @@ from tinker_cookbook.renderers import (
 
 Conversation: TypeAlias = list[Message]
 
+# The completion being graded is policy-model output and therefore untrusted.
+# Without neutralization, a completion containing a literal "</completion_to_grade>"
+# closes the grading block early and appends a forged rubric plus a pre-forged
+# <score> verdict -- the verdict-injection class inspect_ai's scorers harden
+# against. We break literal occurrences of the structural tags inside the
+# completion the same way inspect_ai does for [BEGIN DATA] -> [BEGIN-DATA]:
+# insert a dash so the forged tag no longer matches the prompt's literals.
+# Idempotent: the transformed string no longer contains the literal tag.
+_STRUCTURAL_TAGS = (
+    "<completion_to_grade>",
+    "</completion_to_grade>",
+    "<context>",
+    "</context>",
+    "<rubric>",
+    "</rubric>",
+    "<score>",
+    "</score>",
+)
+
+
+def _neutralize_structural_tags(text: str) -> str:
+    """Idempotently break literal grader-prompt structural tags in untrusted text."""
+    for tag in _STRUCTURAL_TAGS:
+        text = text.replace(tag, tag[:1] + "-" + tag[1:])
+    return text
+
 
 @dataclass
 class Rubric:
@@ -61,7 +87,10 @@ class Rubric:
             "</context>",
             "",
             "<completion_to_grade>",
-            f"Chatbot: {completion['content']}",
+            # The completion is untrusted model output; neutralize structural
+            # tags so it cannot close this block early or forge rubric/score
+            # structure. The context above comes from the fixed dataset.
+            f"Chatbot: {_neutralize_structural_tags(completion['content'])}",
             "</completion_to_grade>",
             "",
             "<rubric>",
@@ -78,10 +107,14 @@ class Rubric:
         ]
 
     def extract_score(self, response: str) -> float:
-        match = re.search(self.extraction_regex, response, re.DOTALL)
-        if match is not None:
+        # Bind to the LAST match of the requested output format: the grader is
+        # instructed to output its score at the end, so earlier matches are
+        # typically quoted completion text or echoed rubric calibration lines
+        # (e.g. Prometheus rubrics embed "<score>5.0</score>: ..."), not the verdict.
+        matches = list(re.finditer(self.extraction_regex, response, re.DOTALL))
+        if matches:
             try:
-                return float(match.group(1))
+                return float(matches[-1].group(1))
             except ValueError:
                 print(f"Warning: Failed to extract score from grader response: {response}")
                 return 0.0

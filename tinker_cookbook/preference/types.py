@@ -19,6 +19,49 @@ from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
 logger = logging.getLogger(__name__)
 
+# The completions placed between the structural markers below are, during RL
+# reward computation (rl/preference_envs.py) and win-rate eval, untrusted
+# policy-model output. Without neutralization, a completion containing a
+# literal marker such as "==== Completion B ====" can forge the comparison
+# structure the preference judge reads -- the verdict-injection class
+# inspect_ai's scorers harden against. We break literal occurrences of the
+# markers inside completion text the same way inspect_ai does for
+# [BEGIN DATA] -> [BEGIN-DATA]: insert a dash so the forged marker no longer
+# matches the structural literal. Idempotent (the transformed string no longer
+# contains the literal marker).
+_MARKER_COMPLETION_A = "==== Completion A ===="
+_MARKER_COMPLETION_B = "==== Completion B ===="
+_MARKER_PREFERENCE = "==== Preference ===="
+
+_COMPARISON_MARKERS = (
+    _MARKER_COMPLETION_A,
+    _MARKER_COMPLETION_B,
+    _MARKER_PREFERENCE,
+)
+
+
+def _neutralize_comparison_markers(text: str) -> str:
+    """Idempotently break literal comparison markers inside untrusted completion text."""
+    for marker in _COMPARISON_MARKERS:
+        text = text.replace(marker, marker.replace(" ", "-", 1))
+    return text
+
+
+def _neutralize_message_content(message: renderers.Message) -> renderers.Message:
+    """Apply marker neutralization to a message's text content, leaving structure intact."""
+    content = message["content"]
+    if isinstance(content, str):
+        return {**message, "content": _neutralize_comparison_markers(content)}
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" and "text" in part:
+                parts.append({**part, "text": _neutralize_comparison_markers(str(part["text"]))})
+            else:
+                parts.append(part)
+        return {**message, "content": parts}
+    return message
+
 
 @dataclass
 class Comparison:
@@ -148,13 +191,17 @@ class ComparisonRendererFromChatRenderer(ComparisonRenderer):
         self.convo_renderer = convo_renderer
 
     def _comparison_to_convo(self, comparison: Comparison) -> list[renderers.Message]:
+        # The completions are untrusted model output; neutralize the structural
+        # markers inside them so they cannot forge the comparison structure the
+        # preference judge reads. The prompt conversation comes from the fixed
+        # dataset and is interpolated as-is.
         return [
             *comparison.prompt_conversation,
-            {"role": "system", "content": "==== Completion A ===="},
-            *comparison.completion_A,
-            {"role": "system", "content": "==== Completion B ===="},
-            *comparison.completion_B,
-            {"role": "system", "content": "==== Preference ===="},
+            {"role": "system", "content": _MARKER_COMPLETION_A},
+            *(_neutralize_message_content(m) for m in comparison.completion_A),
+            {"role": "system", "content": _MARKER_COMPLETION_B},
+            *(_neutralize_message_content(m) for m in comparison.completion_B),
+            {"role": "system", "content": _MARKER_PREFERENCE},
         ]
 
     def build_generation_prompt(self, comparison: Comparison) -> types.ModelInput:

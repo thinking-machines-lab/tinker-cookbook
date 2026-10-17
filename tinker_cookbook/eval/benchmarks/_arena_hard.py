@@ -59,15 +59,40 @@ by strictly following this format: "[[rating]]", for example: "Rating: [[5]]".
 {answer}
 [The End of Assistant's Answer]"""
 
+# The interpolated answer is model output and therefore untrusted. Without
+# neutralization, an answer containing the literal end marker closes the answer
+# block early and appends forged judge instructions plus a "[[10]]" verdict --
+# the verdict-injection class inspect_ai's scorers harden against. We break any
+# literal occurrence of the delimiters inside the answer the same way inspect_ai
+# does for [BEGIN DATA] -> [BEGIN-DATA]: insert a dash so the forged marker no
+# longer matches the template's literal. The transformation is idempotent (the
+# output no longer contains the marker, so re-applying is a no-op).
+_ANSWER_DELIMITER_MARKERS = (
+    "[The Start of Assistant's Answer]",
+    "[The End of Assistant's Answer]",
+)
+
+
+def _sanitize_answer_for_judge(answer: str) -> str:
+    """Idempotently break literal answer-delimiter markers inside an untrusted answer."""
+    for marker in _ANSWER_DELIMITER_MARKERS:
+        answer = answer.replace(marker, marker.replace(" ", "-", 1))
+    return answer
+
 
 def _extract_judge_score(judge_response: str) -> int | None:
-    """Extract the numeric score from a judge response like '[[7]]'."""
-    match = re.search(r"\[\[(\d+)\]\]", judge_response)
-    if match:
-        return int(match.group(1))
-    match = re.search(r"Rating:\s*(\d+)", judge_response, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
+    """Extract the numeric score from a judge response like '[[7]]'.
+
+    Binds to the LAST verdict: the instructions ask the judge to explain first
+    and end with "[[rating]]", so an earlier occurrence (e.g. the judge quoting
+    an injected "[[10]]" from the answer under review) is not the verdict.
+    """
+    matches = re.findall(r"\[\[(\d+)\]\]", judge_response)
+    if matches:
+        return int(matches[-1])
+    matches = re.findall(r"Rating:\s*(\d+)", judge_response, flags=re.IGNORECASE)
+    if matches:
+        return int(matches[-1])
     return None
 
 
@@ -105,8 +130,12 @@ class ArenaHardEnv(Env):
     async def step(self, action, *, extra=None):
         answer = decode_response(action, self.renderer)
 
-        # Judge the response
-        judge_prompt = _JUDGE_PROMPT_TEMPLATE.format(question=self.question, answer=answer)
+        # Judge the response. The answer is untrusted model output; sanitize it so
+        # it cannot forge the template's answer delimiters. The question comes from
+        # the fixed benchmark dataset, not the model, and is interpolated as-is.
+        judge_prompt = _JUDGE_PROMPT_TEMPLATE.format(
+            question=self.question, answer=_sanitize_answer_for_judge(answer)
+        )
         judge_messages: list[Message] = [{"role": "user", "content": judge_prompt}]
         try:
             from tinker_cookbook import renderers
