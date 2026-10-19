@@ -149,6 +149,29 @@ class TestDeepSeekV4_1:
         ]
 
 
+class TestDeepSeekV4_1Flash1017:
+    def test_peft_suffix_uses_deepseekv4_1_renderer(self):
+        assert (
+            get_recommended_renderer_name("deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144")
+            == "deepseekv4_1"
+        )
+
+    def test_attributes(self):
+        attrs = get_model_attributes("deepseek-ai/DeepSeek-V4.1-Flash-1017")
+        assert attrs.organization == "deepseek-ai"
+        assert attrs.version_str == "4.1"
+        assert attrs.size_str == "552B-A16B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("deepseek-ai/DeepSeek-V4.1-Flash-1017") == [
+            "deepseekv4_1",
+            "deepseekv4_1_low_reasoning",
+            "deepseekv4_1_max_reasoning",
+            "deepseekv4_1_disable_thinking",
+            "deepseekv4_1_preserve_thinking",
+        ]
+
+
 class TestGlm5_3:
     def test_glm5_3_uses_glm5_3_renderer(self):
         assert get_recommended_renderer_name("zai-org/GLM-5.3") == "glm5_3_max_reasoning"

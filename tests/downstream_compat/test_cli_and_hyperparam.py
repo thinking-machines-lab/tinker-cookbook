@@ -256,6 +256,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 1_013_760,
         (False, False, True): 134_400,
     },
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017": {
+        (True, True, True): 108_821_760,
+        (True, True, False): 108_687_360,
+        (True, False, True): 107_808_000,
+        (True, False, False): 107_673_600,
+        (False, True, True): 1_148_160,
+        (False, True, False): 1_013_760,
+        (False, False, True): 134_400,
+    },
     "meta-llama/Llama-3.1-70B": {
         (True, True, True): 13_079_808,
         (True, True, False): 12_943_360,

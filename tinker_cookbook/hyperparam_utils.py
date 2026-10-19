@@ -104,6 +104,7 @@ def _get_hidden_size(model_name: str) -> int:
         "deepseek-ai/DeepSeek-V3.1": 7168,
         "deepseek-ai/DeepSeek-V3.1-Base": 7168,
         "deepseek-ai/DeepSeek-V4.1-Flash": 5120,
+        "deepseek-ai/DeepSeek-V4.1-Flash-1017": 5120,
         # Kimi
         "moonshotai/Kimi-K2-Thinking": 7168,
         "moonshotai/Kimi-K2.5": 7168,
@@ -206,6 +207,11 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "deepseek-ai/DeepSeek-V3.1": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
     "deepseek-ai/DeepSeek-V3.1-Base": {"mlp": 94_307_328, "attn": 2_440_000, "unembed": 136_448},
     "deepseek-ai/DeepSeek-V4.1-Flash": {"mlp": 107_673_600, "attn": 1_013_760, "unembed": 134_400},
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017": {
+        "mlp": 107_673_600,
+        "attn": 1_013_760,
+        "unembed": 134_400,
+    },
     "meta-llama/Llama-3.1-70B": {"mlp": 8_847_360, "attn": 4_096_000, "unembed": 136_448},
     "meta-llama/Llama-3.1-8B": {"mlp": 1_769_472, "attn": 851_968, "unembed": 132_352},
     "meta-llama/Llama-3.1-8B-Instruct": {"mlp": 1_769_472, "attn": 851_968, "unembed": 132_352},
@@ -318,6 +324,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
     elif model_name.startswith("thinkingmachines/Inkling") or model_name in (
         "deepseek-ai/DeepSeek-V3.1",
         "deepseek-ai/DeepSeek-V4.1-Flash",
+        "deepseek-ai/DeepSeek-V4.1-Flash-1017",
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
         "moonshotai/Kimi-K2.6",

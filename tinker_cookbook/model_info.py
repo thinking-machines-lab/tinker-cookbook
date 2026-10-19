@@ -163,6 +163,7 @@ def get_deepseek_info() -> dict[str, ModelAttributes]:
         "DeepSeek-V3.1-Base": ModelAttributes(org, "3", "671B-A37B", False, _ROLE_COLON),
         # Image support is coming soon.
         "DeepSeek-V4.1-Flash": ModelAttributes(org, "4.1", "552B-A16B", True, _DEEPSEEKV4_1),
+        "DeepSeek-V4.1-Flash-1017": ModelAttributes(org, "4.1", "552B-A16B", True, _DEEPSEEKV4_1),
     }
 
 
