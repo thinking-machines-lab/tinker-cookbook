@@ -245,6 +245,79 @@ def test_kimi_k2_family_unterminated_tool_block(renderer_name: str, dangling_tex
     assert "tool_calls" not in message
 
 
+_KIMI_SEARCH_CALL = (
+    "<|tool_call_begin|>functions.search:0<|tool_call_argument_begin|>"
+    '{"query": "a"}<|tool_call_end|>'
+)
+
+
+@pytest.mark.parametrize(
+    ("tool_text", "expected_calls"),
+    [
+        # A complete call whose id lacks the ':index' suffix.
+        (
+            "<|tool_calls_section_begin|><|tool_call_begin|>functions.fetch"
+            "<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>",
+            [],
+        ),
+        # The same malformed call next to a valid one.
+        (
+            f"<|tool_calls_section_begin|>{_KIMI_SEARCH_CALL}<|tool_call_begin|>functions.fetch"
+            "<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>",
+            ["search"],
+        ),
+        # A second section after a parsed one.
+        (
+            f"<|tool_calls_section_begin|>{_KIMI_SEARCH_CALL}<|tool_calls_section_end|>"
+            "<|tool_calls_section_begin|><|tool_call_begin|>functions.fetch:1"
+            "<|tool_call_argument_begin|>{}<|tool_call_end|><|tool_calls_section_end|>",
+            ["search"],
+        ),
+        # More text after the section.
+        (
+            f"<|tool_calls_section_begin|>{_KIMI_SEARCH_CALL}<|tool_calls_section_end|>"
+            "Actually, the answer is 42.",
+            ["search"],
+        ),
+    ],
+    ids=["id-without-index", "mixed-with-valid-call", "second-section", "text-after-section"],
+)
+@pytest.mark.parametrize("renderer_name", ["kimi_k2", "kimi_k25"])
+def test_kimi_k2_family_reports_tool_call_text_it_drops(
+    renderer_name: str, tool_text: str, expected_calls: list[str]
+):
+    """Tool-call text the parser can't turn into a ToolCall must surface as a CONTENT
+    failure, not vanish from the recorded message."""
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = get_renderer(renderer_name, tokenizer)
+
+    response_text = f"<think></think>I'll search.\n{tool_text}<|im_end|>"
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, termination = renderer.parse_response(response_tokens)
+
+    assert [tc.function.name for tc in message.get("tool_calls", [])] == expected_calls
+    assert len(message.get("unparsed_tool_calls", [])) == 1
+    result = classify_parse_failure(message, termination)
+    assert result is not None and result[0] == ParseFailureKind.CONTENT
+
+
+@pytest.mark.parametrize("renderer_name", ["kimi_k2", "kimi_k25"])
+def test_kimi_k2_family_complete_tool_call_not_flagged(renderer_name: str):
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = get_renderer(renderer_name, tokenizer)
+
+    response_text = (
+        "<think></think>I'll search.\n"
+        f"<|tool_calls_section_begin|>{_KIMI_SEARCH_CALL}<|tool_calls_section_end|><|im_end|>"
+    )
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, termination = renderer.parse_response(response_tokens)
+
+    assert [tc.function.name for tc in message["tool_calls"]] == ["search"]
+    assert "unparsed_tool_calls" not in message
+    assert classify_parse_failure(message, termination) is None
+
+
 @pytest.mark.parametrize(
     "response_text",
     [
