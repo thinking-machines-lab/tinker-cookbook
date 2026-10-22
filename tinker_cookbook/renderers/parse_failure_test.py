@@ -313,7 +313,7 @@ def test_kimi_k2_family_complete_tool_call_not_flagged(renderer_name: str):
     response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
     message, termination = renderer.parse_response(response_tokens)
 
-    assert [tc.function.name for tc in message["tool_calls"]] == ["search"]
+    assert [tc.function.name for tc in message.get("tool_calls", [])] == ["search"]
     assert "unparsed_tool_calls" not in message
     assert classify_parse_failure(message, termination) is None
 
