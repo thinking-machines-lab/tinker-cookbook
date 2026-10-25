@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import patch
 
+import pytest
 import tinker
 
 from tinker_cookbook.completers import TokensWithLogprobs
@@ -16,6 +18,7 @@ from tinker_cookbook.rl.types import (
     Env,
     EnvGroupBuilder,
     RLDataset,
+    RLDatasetBuilder,
     StepResult,
     Trajectory,
     TrajectoryGroup,
@@ -210,11 +213,39 @@ class TestLastResult:
 
 
 class TestTemperature:
-    def test_eval_uses_configured_temperature(self):
+    @pytest.mark.parametrize("temperature", [None, 0.0, 0.5])
+    def test_training_config_eval_temperature(self, temperature):
+        from tinker_cookbook.rl.train import Config
+
+        kwargs = {} if temperature is None else {"eval_temperature": temperature}
+        config = Config(
+            learning_rate=1e-5,
+            dataset_builder=cast(RLDatasetBuilder, SimpleNamespace()),
+            model_name="test",
+            max_tokens=8,
+            log_path="/tmp/test-eval-temperature",
+            temperature=0.7,
+            **kwargs,
+        )
+        assert config.eval_temperature == (1.0 if temperature is None else temperature)
+        assert config.temperature == 0.7
+
+    @pytest.mark.parametrize("temperature", [None, 0.0, 0.5])
+    @pytest.mark.parametrize("executor", [None, object()])
+    def test_eval_uses_configured_temperature(self, temperature, executor):
         dataset = _FakeDataset([_OneStepBuilder()])
-        evaluator = RLTestSetEvaluator(dataset, max_tokens=8, temperature=0.5)
+        kwargs = {} if temperature is None else {"temperature": temperature}
+        evaluator = RLTestSetEvaluator(dataset, 8, "val", 0, None, **kwargs)
+        assert evaluator.name == "val"
+        assert evaluator.num_groups_to_log == 0
+        assert evaluator.strategy is None
         sampling_client = _RecordingSamplingClient()
 
-        asyncio.run(evaluator(cast(tinker.SamplingClient, sampling_client)))
+        with patch("tinker_cookbook.rl.metric_util.get_rollout_executor", return_value=executor):
+            asyncio.run(evaluator(cast(tinker.SamplingClient, sampling_client)))
 
-        assert sampling_client.temperatures == [0.5]
+        assert sampling_client.temperatures == [1.0 if temperature is None else temperature]
+        assert evaluator.last_result is not None
+        assert evaluator.last_result.num_examples == 1
+        assert evaluator.last_result.num_errors == 0
+        assert evaluator.last_result.score == 1.0

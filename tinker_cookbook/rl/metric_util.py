@@ -186,10 +186,10 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self,
         dataset: RLDataset,
         max_tokens: int,
-        temperature: float = 1.0,
         name: str = "test",
         num_groups_to_log: int = 4,
         strategy: RolloutStrategy | None = None,
+        temperature: float = 1.0,
     ):
         self.env_group_builders_P = dataset_to_env_group_builders(dataset)
         self.max_tokens = max_tokens
