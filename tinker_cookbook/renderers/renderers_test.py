@@ -57,11 +57,14 @@ from tinker_cookbook.renderers.base import (
     has_thinking,
 )
 from tinker_cookbook.renderers.deepseek_v3 import DeepSeekV3ThinkingRenderer
+from tinker_cookbook.renderers.deepseek_v4_1 import DeepSeekV4_1Renderer
+from tinker_cookbook.renderers.glm5_3 import Glm5_3Renderer
 from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
 from tinker_cookbook.renderers.kimi_k25 import KimiK25Renderer
 from tinker_cookbook.renderers.nemotron3 import Nemotron3Renderer
 from tinker_cookbook.renderers.qwen3 import Qwen3Renderer
-from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
+from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
+from tinker_cookbook.renderers.qwen3_8 import Qwen3_8Renderer
 from tinker_cookbook.renderers.testing_utils import (
     extract_token_ids,
     skip_if_deepseek_tokenizer_bug,
@@ -465,12 +468,17 @@ TOOL_CAPABLE_MODELS = {
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "Qwen/Qwen3.6-35B-A3B",
+    "Qwen/Qwen3.8-27B",
     "meta-llama/Llama-3.1-8B-Instruct",
     "deepseek-ai/DeepSeek-V3.1",
+    "deepseek-ai/DeepSeek-V4.1-Flash",
     "moonshotai/Kimi-K2-Thinking",
     "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
     "openai/gpt-oss-20b",
+    "zai-org/GLM-5.3",
+    "zai-org/GLM-5.3-Flash",
 }
 
 
@@ -490,16 +498,35 @@ _HF_TEST_MODELS = [
     ("Qwen/Qwen3-30B-A3B-Instruct-2507", None, {}),
     ("deepseek-ai/DeepSeek-V3.1", None, {}),  # non-thinking (default)
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
+    ("deepseek-ai/DeepSeek-V4.1-Flash", None, {}),  # thinking, reasoning effort high (HF default)
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_low_reasoning", {"reasoning_effort": "low"}),
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_max_reasoning", {"reasoning_effort": "max"}),
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_disable_thinking", {"thinking_mode": "chat"}),
     ("openai/gpt-oss-20b", None, {}),
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.8-27B", None, {}),  # default renderer qwen3_8 = reasoning effort xhigh
+    ("Qwen/Qwen3.8-27B", "qwen3_8_medium_reasoning", {"reasoning_effort": "medium"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_low_reasoning", {"reasoning_effort": "low"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking", {"enable_thinking": False}),
     ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
         "nemotron3_ultra_disable_thinking",
         {"enable_thinking": False},
+    ),
+    ("nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16", None, {}),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+        "nemotron3_ultra_disable_thinking",
+        {"enable_thinking": False},
+    ),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+        "nemotron3_ultra_medium_thinking",
+        {"medium_effort": True},
     ),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
@@ -507,6 +534,10 @@ _HF_TEST_MODELS = [
         "nemotron3_disable_thinking",
         {"enable_thinking": False},
     ),
+    ("zai-org/GLM-5.3", None, {}),
+    ("zai-org/GLM-5.3", "glm5_3_low_reasoning", {"reasoning_effort": "low"}),
+    ("zai-org/GLM-5.3-Flash", None, {}),
+    ("zai-org/GLM-5.3-Flash", "glm5_3_low_reasoning", {"reasoning_effort": "low"}),
 ]
 
 # Models whose tool call format matches HF's apply_chat_template exactly.
@@ -518,10 +549,15 @@ _HF_TOOL_COMPATIBLE_MODELS = {
     "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "Qwen/Qwen3-VL-30B-A3B-Instruct",
     "Qwen/Qwen3.6-35B-A3B",
+    "Qwen/Qwen3.8-27B",
     "deepseek-ai/DeepSeek-V3.1",
+    "deepseek-ai/DeepSeek-V4.1-Flash",
     "moonshotai/Kimi-K2-Thinking",
     "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+    "zai-org/GLM-5.3",
+    "zai-org/GLM-5.3-Flash",
 }
 
 # Conversations for generation tests (end with user message or tool response)
@@ -619,21 +655,43 @@ def test_generation_against_hf_chat_templates(
 # Excluded:
 # - gpt-oss: analysis channel diverges from HF template
 # - Qwen/Qwen3-8B: HF template adds empty <think> blocks to non-thinking messages
+# - zai-org/GLM-5.3: supervised examples intentionally end with the turn terminator
+#   (<|user|>/<|observation|>), which the HF template does not emit; supervised HF
+#   comparisons live in glm5_3_test.py with explicit terminator handling
 # Format: (model_name, renderer_override, hf_kwargs) - same as _HF_TEST_MODELS
 _SUPERVISED_TEST_MODELS = [
     ("meta-llama/Llama-3.1-8B-Instruct", None, {}),
     ("Qwen/Qwen3-30B-A3B-Instruct-2507", None, {}),
     ("deepseek-ai/DeepSeek-V3.1", None, {}),  # non-thinking (default)
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking", {"thinking": True}),  # thinking mode
+    ("deepseek-ai/DeepSeek-V4.1-Flash", None, {}),  # thinking, reasoning effort high (HF default)
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_low_reasoning", {"reasoning_effort": "low"}),
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_max_reasoning", {"reasoning_effort": "max"}),
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_disable_thinking", {"thinking_mode": "chat"}),
     ("moonshotai/Kimi-K2-Thinking", None, {}),
     ("Qwen/Qwen3-VL-30B-A3B-Instruct", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", None, {}),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking", {"enable_thinking": False}),
+    ("Qwen/Qwen3.8-27B", None, {}),  # default renderer qwen3_8 = reasoning effort xhigh
+    ("Qwen/Qwen3.8-27B", "qwen3_8_medium_reasoning", {"reasoning_effort": "medium"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_low_reasoning", {"reasoning_effort": "low"}),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking", {"enable_thinking": False}),
     ("nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16", None, {}),
     (
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
         "nemotron3_ultra_disable_thinking",
         {"enable_thinking": False},
+    ),
+    ("nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16", None, {}),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+        "nemotron3_ultra_disable_thinking",
+        {"enable_thinking": False},
+    ),
+    (
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+        "nemotron3_ultra_medium_thinking",
+        {"medium_effort": True},
     ),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", None, {}),
     (
@@ -778,10 +836,13 @@ def test_tokenization_boundary_with_whitespace(model_name: str):
     [
         "Qwen/Qwen3-8B",
         "Qwen/Qwen3.6-35B-A3B",
+        "Qwen/Qwen3.8-27B",
         # Llama3 does not support tool calling - see llama3.py docstring
         "deepseek-ai/DeepSeek-V3.1",
+        "deepseek-ai/DeepSeek-V4.1-Flash",
         "moonshotai/Kimi-K2-Thinking",
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         "openai/gpt-oss-20b",
     ],
@@ -840,9 +901,12 @@ def test_tool_call_supervised_rendering(model_name: str):
         ("Qwen/Qwen3-8B", Qwen3Renderer),
         ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+        ("deepseek-ai/DeepSeek-V4.1-Flash", DeepSeekV4_1Renderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", Nemotron3Renderer),
+        # GLM-5.3 is absent: its default preserves thinking (HF clear_thinking=False
+        # default); stripping is covered in glm5_3_test.py with an explicit True.
     ],
 )
 def test_strip_thinking_from_history_default(model_name: str, renderer_class):
@@ -871,10 +935,15 @@ def test_strip_thinking_from_history_default(model_name: str, renderer_class):
     [
         ("Qwen/Qwen3-8B", Qwen3Renderer),
         ("Qwen/Qwen3.6-35B-A3B", Qwen3_5Renderer),
+        # Qwen3.8 defaults to strip_thinking_from_history=False already; this
+        # confirms the explicit kwarg keeps working.
+        ("Qwen/Qwen3.8-27B", Qwen3_8Renderer),
         ("deepseek-ai/DeepSeek-V3.1", DeepSeekV3ThinkingRenderer),
+        ("deepseek-ai/DeepSeek-V4.1-Flash", DeepSeekV4_1Renderer),
         ("moonshotai/Kimi-K2-Thinking", KimiK2Renderer),
         ("moonshotai/Kimi-K2.5", KimiK25Renderer),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", Nemotron3Renderer),
+        ("zai-org/GLM-5.3", Glm5_3Renderer),
     ],
 )
 def test_strip_thinking_from_history_false(model_name: str, renderer_class):
@@ -958,13 +1027,19 @@ _CONSISTENCY_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_instruct"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1"),
+    ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_disable_thinking"),
     ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
     ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
     ("moonshotai/Kimi-K2.5", "kimi_k25"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
+    ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
+    ("zai-org/GLM-5.3", "glm5_3_low_reasoning"),
 ]
 
 # Conversations for the consistency test
@@ -991,8 +1066,10 @@ _RENDERERS_WITHOUT_TOOL_SUPPORT = {"role_colon"}
 _RENDERERS_WITH_THINKING_STRIPPING = {
     "qwen3_disable_thinking",
     "qwen3_5_disable_thinking",
+    "qwen3_8_disable_thinking",
     "nemotron3_disable_thinking",
     "deepseekv3",
+    "deepseekv4_1_disable_thinking",
     "kimi_k2",
 }
 
@@ -1002,6 +1079,7 @@ _RENDERERS_WITH_THINKING_STRIPPING = {
 _REASONING_OFF_RENDERERS = [
     ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
     ("moonshotai/Kimi-K2.5", "kimi_k25_disable_thinking"),
     ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
 ]
@@ -1340,14 +1418,20 @@ def test_supervised_generation_parse_consistency(
         ("Qwen/Qwen3-8B", "qwen3_disable_thinking"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
         ("meta-llama/Llama-3.1-8B-Instruct", "llama3"),
         # deepseekv3 defaults to non-thinking, deepseekv3_thinking is thinking mode
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3_thinking"),
+        ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1"),
+        ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1_disable_thinking"),
         ("openai/gpt-oss-20b", "gpt_oss_medium_reasoning"),
         ("moonshotai/Kimi-K2-Thinking", "kimi_k2"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3"),
         ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "nemotron3_disable_thinking"),
+        ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
+        ("zai-org/GLM-5.3", "glm5_3_low_reasoning"),
     ],
 )
 def test_eot_parsing(model_name: str, renderer_name: str):
@@ -1364,13 +1448,21 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         "qwen3_disable_thinking": "<|im_end|>",
         "qwen3_5": "<|im_end|>",
         "qwen3_5_disable_thinking": "<|im_end|>",
+        "qwen3_8_xhigh_reasoning": "<|im_end|>",
+        "qwen3_8_disable_thinking": "<|im_end|>",
         "deepseekv3": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes
         "deepseekv3_disable_thinking": "<｜end▁of▁sentence｜>",  # Full-width pipes (alias)
+        "deepseekv4_1": "<｜end▁of▁sentence｜>",
+        "deepseekv4_1_disable_thinking": "<｜end▁of▁sentence｜>",
         "gpt_oss_medium_reasoning": "<|return|>",
         "kimi_k2": "<|im_end|>",
         "nemotron3": "<|im_end|>",
         "nemotron3_disable_thinking": "<|im_end|>",
+        # GLM-5.3 has no dedicated end-of-turn token; the model emits the next
+        # role token (<|user|> after a normal reply).
+        "glm5_3_max_reasoning": "<|user|>",
+        "glm5_3_low_reasoning": "<|user|>",
     }
     eot_token = eot_tokens.get(renderer_name)
     if eot_token is None:
@@ -1416,7 +1508,10 @@ def test_eot_parsing(model_name: str, renderer_name: str):
         ("Qwen/Qwen3-8B", "qwen3"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
         ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
+        ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
         ("deepseek-ai/DeepSeek-V3.1", "deepseekv3"),
+        ("deepseek-ai/DeepSeek-V4.1-Flash", "deepseekv4_1"),
+        ("zai-org/GLM-5.3", "glm5_3_max_reasoning"),
     ],
 )
 def test_supervised_example_no_user_messages(model_name: str, renderer_name: str):
@@ -1544,30 +1639,10 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         {"strip_thinking_from_history": False},
         get_multiturn_thinking_conversation,
     ),
-    # Qwen3.5 with strip_thinking_from_history=False (preserves thinking)
-    (
-        "Qwen/Qwen3.6-35B-A3B",
-        Qwen3_5Renderer,
-        {"strip_thinking_from_history": False},
-        get_multiturn_thinking_conversation,
-    ),
-    # Qwen3.5 disable thinking, on a conversation with no reasoning: this check trains each
-    # assistant turn in turn, and a reasoning-off renderer refuses one that reasoned. The old
-    # thinking conversation hid the failure below, because every turn reasoned and so no turn
-    # ever got the empty block.
-    pytest.param(
-        "Qwen/Qwen3.6-35B-A3B",
-        Qwen3_5DisableThinkingRenderer,
-        {"strip_thinking_from_history": False},
-        get_basic_4turn_conversation,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="`_assistant_header_suffix` decides the empty block by position "
-            "(`idx > last_user_index`), so one assistant turn gets it as the turn being "
-            "produced and not as history. The sequence through that turn is then not a prefix "
-            "of the next prompt, so has_extension_property=True does not hold.",
-        ),
-    ),
+    # Qwen3.5 and Qwen3.8 are intentionally absent: they can preserve thinking in
+    # history but do not claim has_extension_property — a no-reasoning turn's closed
+    # empty block token-merges differently from the open-think prompt. Their behavioral
+    # extension guarantees are covered in qwen3_test.py and qwen3_8_test.py.
     # DeepSeek non-thinking with basic multi-turn
     ("deepseek-ai/DeepSeek-V3.1", "deepseekv3", {}, get_basic_4turn_conversation),
     # DeepSeek non-thinking with tool calls
@@ -1584,6 +1659,46 @@ _EXTENSION_PROPERTY_TEST_PARAMS = [
         "deepseek-ai/DeepSeek-V3.1",
         DeepSeekV3ThinkingRenderer,
         {"strip_thinking_from_history": False},
+        get_multiturn_thinking_and_tool_conversation,
+    ),
+    # DeepSeek V4.1 chat mode
+    (
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "deepseekv4_1_disable_thinking",
+        {},
+        get_basic_4turn_conversation,
+    ),
+    (
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "deepseekv4_1_disable_thinking",
+        {},
+        get_multiturn_tool_conversation,
+    ),
+    # DeepSeek V4.1 preserve thinking
+    (
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "deepseekv4_1_preserve_thinking",
+        {},
+        get_multiturn_thinking_conversation,
+    ),
+    (
+        "deepseek-ai/DeepSeek-V4.1-Flash",
+        "deepseekv4_1_preserve_thinking",
+        {},
+        get_multiturn_thinking_and_tool_conversation,
+    ),
+    # GLM-5.3 default (strip_thinking_from_history=False) preserves thinking
+    (
+        "zai-org/GLM-5.3",
+        Glm5_3Renderer,
+        {},
+        get_multiturn_thinking_conversation,
+    ),
+    # GLM-5.3 default + tool calls
+    (
+        "zai-org/GLM-5.3",
+        Glm5_3Renderer,
+        {},
         get_multiturn_thinking_and_tool_conversation,
     ),
 ]

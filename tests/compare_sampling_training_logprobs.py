@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from functools import cache
+from pathlib import Path
 
 import chz
 import httpx
@@ -10,6 +11,7 @@ import tinker
 import torch
 from tinker import AdamParams, ModelInput
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.supervised.common import datum_from_model_input_weights
 
 
@@ -33,11 +35,14 @@ async def get_row(
     async def _inner():
         tstart = time.time()
         print(f"========== Testing {model_name} ==========")
-        training_client = await service_client.create_lora_training_client_async(
-            base_model=model_name
-        )
         if saved_path_for_trainer is not None:
-            await training_client.load_state_async(saved_path_for_trainer)
+            training_client = await service_client.create_training_client_from_state_async(
+                saved_path_for_trainer, base_model=model_name
+            )
+        else:
+            training_client = await service_client.create_lora_training_client_async(
+                base_model=model_name
+            )
         # First sample something
         tokenizer = training_client.get_tokenizer()
         tokens = tokenizer.encode(get_reference_document())
@@ -151,7 +156,9 @@ async def main(config: Config):
             df[col] = pd.NA
     df = df[required_columns]
 
-    df.to_csv("/tmp/sampling_training_logprobs.csv", index=False)
+    output_path = Path(cli_utils.runs_path("sampling_training_logprobs.csv"))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
     print(df.to_markdown())
 
 

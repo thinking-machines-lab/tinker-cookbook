@@ -264,7 +264,7 @@ class CLIConfig:
     max_tokens: int = 1024
     kl_penalty_coef: float = 0.0
     lora_rank: int = 32
-    log_path: str = "/tmp/tinker-examples/multiturn"
+    log_path: str = cli_utils.runs_path("multiturn")
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
     max_steps: int | None = None
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tinker_cookbook.cli_utils import check_log_dir
+from tinker_cookbook.cli_utils import RUNS_DIR_ENV_VAR, check_log_dir, runs_path
 
 
 def test_check_log_dir_nonexistent_is_noop():
@@ -37,3 +37,15 @@ def test_check_log_dir_raise_raises():
     with tempfile.TemporaryDirectory() as tmpdir:
         with pytest.raises(ValueError, match="already exists"):
             check_log_dir(tmpdir, "raise")
+
+
+def test_runs_path_defaults_to_home(monkeypatch: pytest.MonkeyPatch):
+    """runs_path falls back to ~/tinker-runs, expanded."""
+    monkeypatch.delenv(RUNS_DIR_ENV_VAR, raising=False)
+    assert runs_path("math_rl", "run1") == str(Path.home() / "tinker-runs" / "math_rl" / "run1")
+
+
+def test_runs_path_uses_env_var(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """runs_path honors TINKER_COOKBOOK_RUNS_DIR."""
+    monkeypatch.setenv(RUNS_DIR_ENV_VAR, str(tmp_path))
+    assert runs_path("sl_basic") == str(tmp_path / "sl_basic")

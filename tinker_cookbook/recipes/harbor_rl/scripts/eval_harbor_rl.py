@@ -3,6 +3,7 @@ from pathlib import Path
 
 import chz
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.harbor_rl.eval import EvalConfig, TaskResult, run_eval
 from tinker_cookbook.recipes.harbor_rl.harbor_env import (
     default_sandbox_factory,
@@ -20,7 +21,7 @@ class CLIConfig:
     model_name: str = "moonshotai/Kimi-K2.6"
     checkpoint_url: str | None = None
     benchmarks: str = "terminal_bench"
-    output_path: str = "/tmp/tinker-full-reruns/harbor_eval"
+    output_path: str = cli_utils.runs_path("harbor_eval")
 
     max_turns: int = 200
     max_tokens: int = 8192

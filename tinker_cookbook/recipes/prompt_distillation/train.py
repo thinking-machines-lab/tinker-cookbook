@@ -9,6 +9,7 @@ from pathlib import Path
 import chz
 
 from tinker_cookbook import checkpoint_utils, cli_utils
+from tinker_cookbook.recipes.prompt_distillation.create_data import DEFAULT_OUTPUT_FILE
 from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.data import FromConversationFileBuilder
@@ -19,7 +20,7 @@ from tinker_cookbook.utils.lr_scheduling import LRSchedule
 @chz.chz
 class CLIConfig:
     # Required parameters
-    file_path: str = "/tmp/tinker-datasets/prompt_distillation_lang.jsonl"
+    file_path: str = DEFAULT_OUTPUT_FILE
     log_path: str | None = None
     model_name: str = "Qwen/Qwen3.6-35B-A3B"
     load_checkpoint_path: str | None = None
@@ -63,7 +64,7 @@ def cli_main(cli_config: CLIConfig):
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/prompt_distillation/{run_name}"
+        log_path = cli_utils.runs_path("prompt_distillation", run_name)
 
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name

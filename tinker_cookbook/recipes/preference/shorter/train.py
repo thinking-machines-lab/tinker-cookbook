@@ -42,7 +42,7 @@ def cli_main(cli_config: CLIConfig):
     model_tag = model_name.replace("/", "-")
     run_name = f"shorter-{model_tag}-{cli_config.batch_size}batch-{cli_config.group_size}group-{cli_config.learning_rate}lr-{date_and_time}"
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/shorter/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("shorter", run_name)
     wandb_name = cli_config.wandb_name or run_name
 
     comparison_builder = ShorterComparisonBuilder()

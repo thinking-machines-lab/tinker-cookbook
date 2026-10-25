@@ -44,6 +44,8 @@ Agents often struggle with the nested type hierarchy.
 
 **Training outputs:** RL and SL training write human-readable HTML reports and machine-readable JSON files (metrics, rollout transcripts, per-trajectory summaries) to `log_path`. Point agents at a `log_path` directory to analyze training runs — `metrics.jsonl` for scalar metrics, `*_rollout_summaries.jsonl` for per-trajectory data, and `*_logtree.json` for full rollout transcripts including model responses.
 
+**Default output paths:** Recipes default `log_path` (and generated data, sweeps, eval outputs) to `cli_utils.runs_path(...)`, which resolves under `$TINKER_COOKBOOK_RUNS_DIR` or `~/tinker-runs`. Never default outputs to `/tmp`: many machines clear it on reboot. Re-downloadable caches go under `~/.cache/tinker-cookbook/`.
+
 ---
 
 ## Conventions

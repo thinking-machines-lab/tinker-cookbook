@@ -512,7 +512,12 @@ class TmlV0Renderer(Renderer):
         return examples[0]
 
     def get_stop_sequences(self) -> list[int]:
-        return self._tml_renderer.stop()
+        # tml_renderers >= 0.2 types stop() as list[int] | list[str] | str | None for
+        # every renderer; v0 always stops on a flat token sequence.
+        stop = self._tml_renderer.stop()
+        if not isinstance(stop, list) or not all(isinstance(token, int) for token in stop):
+            raise TypeError(f"Expected tml_renderers.v0 stop() to return list[int], got {stop!r}")
+        return cast(list[int], stop)
 
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""

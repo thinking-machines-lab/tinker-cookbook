@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import shlex
 import uuid
+from collections.abc import Callable, Coroutine
+from typing import Any, TypeVar, cast
 
 try:
     import modal
@@ -70,6 +73,33 @@ def _is_sandbox_terminated(e: BaseException) -> bool:
     return any(keyword in msg for keyword in ("terminated", "died", "not found"))
 
 
+_F = TypeVar("_F", bound=Callable[..., Coroutine[Any, Any, Any]])
+
+
+def _cancellation_as_terminated(fn: _F) -> _F:
+    """Turn a Modal-side cancellation into ``SandboxTerminatedError``.
+
+    When Modal preempts or reclaims a sandbox, in-flight calls can raise
+    ``asyncio.CancelledError``. That is a ``BaseException``, so it escapes the
+    ``except Exception`` handlers of rollout error tolerance and cancels the whole
+    training step. Cancellation of the calling task itself still propagates.
+    """
+
+    @functools.wraps(fn)
+    async def wrapped(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await fn(*args, **kwargs)
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            raise SandboxTerminatedError(
+                f"Modal sandbox call {fn.__name__} was cancelled"
+            ) from None
+
+    return cast(_F, wrapped)
+
+
 class ModalSandbox:
     """
     Persistent Modal sandbox for code execution. Conforms to SandboxInterface.
@@ -99,6 +129,7 @@ class ModalSandbox:
         self._max_stream_output_bytes = max_stream_output_bytes
 
     @classmethod
+    @_cancellation_as_terminated
     async def create(
         cls,
         app_name: str = "tinker-cookbook-runner",
@@ -122,6 +153,7 @@ class ModalSandbox:
     def sandbox_id(self) -> str:
         return self._sandbox.object_id
 
+    @_cancellation_as_terminated
     async def send_heartbeat(self, timeout: int = 30) -> None:
         try:
             await asyncio.wait_for(self._sandbox.exec.aio("true"), timeout=timeout)
@@ -130,6 +162,7 @@ class ModalSandbox:
                 raise SandboxTerminatedError(str(e)) from e
             raise
 
+    @_cancellation_as_terminated
     async def run_command(
         self,
         command: str,
@@ -154,6 +187,7 @@ class ModalSandbox:
                 raise SandboxTerminatedError(str(e)) from e
             return SandboxResult(stdout="", stderr=str(e), exit_code=-1)
 
+    @_cancellation_as_terminated
     async def read_file(
         self, path: str, max_bytes: int | None = None, timeout: int = 60
     ) -> SandboxResult:
@@ -164,6 +198,7 @@ class ModalSandbox:
             cmd = f"cat {shlex.quote(path)}"
         return await self.run_command(cmd, timeout=timeout)
 
+    @_cancellation_as_terminated
     async def write_file(
         self,
         path: str,
@@ -208,6 +243,7 @@ class ModalSandbox:
                 raise SandboxTerminatedError(str(e)) from e
             return SandboxResult(stdout="", stderr=str(e), exit_code=-1)
 
+    @_cancellation_as_terminated
     async def cleanup(self) -> None:
         """Terminate the Modal sandbox and wait for it to fully shut down."""
         await self._sandbox.terminate.aio()

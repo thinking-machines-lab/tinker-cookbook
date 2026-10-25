@@ -73,6 +73,7 @@ from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import logtree, ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import iteration_dir, safezip, split_list
+from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -458,6 +459,8 @@ class Config:
     # Optional W&B project and run name.
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set.
+    session_name: str | None = None
 
     # -------------------------------------------------------------------------
     # KL penalty configuration (advanced)
@@ -1889,6 +1892,7 @@ async def main(
     Example::
 
         import asyncio
+        from tinker_cookbook import cli_utils
         from tinker_cookbook.rl.train import Config, main
 
         config = Config(
@@ -1897,7 +1901,7 @@ async def main(
             model_name="Qwen/Qwen3.5-9B",
             renderer_name="qwen3_5_disable_thinking",
             max_tokens=2048,
-            log_path="./logs/my_rl_run",
+            log_path=cli_utils.runs_path("my-rl-run"),
         )
         asyncio.run(main(config=config))
     """
@@ -1932,9 +1936,16 @@ async def main(
     else:
         start_batch = 0
 
+    session_display_name = resolve_session_display_name(
+        session_name=config.session_name,
+        wandb_name=config.wandb_name,
+    )
+    if session_display_name is not None:
+        logger.info(f"Tinker session display name: {session_display_name}")
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata(config.recipe_name),
+        display_name=session_display_name,
     )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():

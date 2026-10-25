@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
 
 import chz
 
@@ -111,16 +110,12 @@ async def cli_main(cli_config: CLIConfig) -> None:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/rl_search/{run_name}"
+        log_path = cli_utils.runs_path("rl_search", run_name)
 
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
         wandb_name = run_name
-
-    # Validate /tmp exists
-    if not Path("/tmp").exists():
-        raise ValueError("/tmp does not exist")
 
     # Check log directory
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)

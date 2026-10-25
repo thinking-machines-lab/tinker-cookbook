@@ -120,7 +120,7 @@ async def cli_main(cli_config: CLIConfig):
             f"{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-"
             f"{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = f"/tmp/tinker-examples/distillation/{run_name}"
+        log_path = cli_utils.runs_path("distillation", run_name)
 
     # Create wandb name if not specified
     if cli_config.wandb_name is not None:

@@ -67,7 +67,7 @@ training_client = service_client.create_lora_training_client(
 training_client.forward_backward(...)
 training_client.optim_step(...)
 training_client.save_state(...)
-training_client.load_state(...)
+resumed_client = service_client.create_training_client_from_state(...)
 
 sampling_client = training_client.save_weights_and_get_sampling_client()
 sampling_client.sample(...)
@@ -110,12 +110,13 @@ The [recipes README](tinker_cookbook/recipes/README.md) covers all available rec
 Tinker Cookbook includes a [benchmark framework](tinker_cookbook/eval/) for evaluating trained models:
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 
 results = await run_benchmarks(
     ["gsm8k", "mmlu_pro", "ifeval"],
     sampling_client, renderer,
-    BenchmarkConfig(save_dir="evals/step500"),
+    BenchmarkConfig(save_dir=cli_utils.runs_path("evals", "step500")),
 )
 ```
 

@@ -44,7 +44,7 @@ from tinker_cookbook.rl import train
 
 @chz.chz
 class Config:
-    log_path: str = "/tmp/tinker-examples/audio-asr-rl"
+    log_path: str = cli_utils.runs_path("audio-asr-rl")
     model_name: str = "thinkingmachines/Inkling"
     base_url: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
@@ -55,7 +55,7 @@ class Config:
     n_train: int = 64
     n_eval: int = 32
     shuffle_buffer_size: int = 1_000
-    audio_cache_dir: str = "/tmp/tinker-examples/audio-asr-clips"
+    audio_cache_dir: str = "~/.cache/tinker-cookbook/audio-asr-clips"
     seed: int = 0  # data selection
 
     # RL: one pass of n_train clips, groups_per_batch clips per iteration,

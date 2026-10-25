@@ -323,13 +323,13 @@ def _(mo):
 async def _(sampler_path):
     import asyncio
 
-    from tinker_cookbook import weights
+    from tinker_cookbook import cli_utils, weights
 
     # Download the sampler checkpoint to a local directory
     adapter_dir = await asyncio.to_thread(
         weights.download,
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-tutorials/weights-adapter",
+        output_dir=cli_utils.runs_path("tutorials", "weights-adapter"),
     )
     print(f"Downloaded adapter to: {adapter_dir}")
     return

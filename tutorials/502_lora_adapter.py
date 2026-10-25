@@ -104,14 +104,14 @@ def _(mo):
 
 @app.cell
 def _(sampler_path):
-    from tinker_cookbook import weights
+    from tinker_cookbook import cli_utils, weights
 
     adapter_dir = weights.download(
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-tutorials/lora-adapter/adapter",
+        output_dir=cli_utils.runs_path("tutorials", "lora-adapter", "adapter"),
     )
     print(f"Adapter downloaded to: {adapter_dir}")
-    return adapter_dir, weights
+    return adapter_dir, cli_utils, weights
 
 
 @app.cell(hide_code=True)
@@ -125,8 +125,8 @@ def _(mo):
 
 
 @app.cell
-def _(BASE_MODEL, adapter_dir, weights):
-    PEFT_OUTPUT = "/tmp/tinker-tutorials/lora-adapter/peft_adapter"
+def _(BASE_MODEL, adapter_dir, cli_utils, weights):
+    PEFT_OUTPUT = cli_utils.runs_path("tutorials", "lora-adapter", "peft_adapter")
 
     weights.build_lora_adapter(
         base_model=BASE_MODEL,

@@ -30,6 +30,30 @@ class TestQwen3_6:
         assert attrs.is_audio_in is False
 
 
+class TestQwen3_8:
+    """Qwen3.8 keeps the Qwen3.5/3.6 tokenizer and preprocessor but has its own
+    chat template (reasoning-effort instructions, preserve-thinking default), so
+    it gets the dedicated qwen3_8 renderer family."""
+
+    def test_qwen3_8_uses_qwen3_8_renderer(self):
+        assert get_recommended_renderer_name("Qwen/Qwen3.8-27B") == "qwen3_8_xhigh_reasoning"
+
+    def test_qwen3_8_recommended_renderers(self):
+        names = get_recommended_renderer_names("Qwen/Qwen3.8-27B")
+        assert "qwen3_8_disable_thinking" in names
+        assert "qwen3_8_medium_reasoning" in names
+        assert "qwen3_8_low_reasoning" in names
+
+    def test_qwen3_8_attributes(self):
+        attrs = get_model_attributes("Qwen/Qwen3.8-27B")
+        assert attrs.organization == "Qwen"
+        assert attrs.version_str == "3.8"
+        assert attrs.size_str == "27B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is False
+
+
 class TestNemotron3:
     def test_lightning_uses_ultra_format_renderer(self):
         assert (
@@ -56,6 +80,20 @@ class TestNemotron3:
         assert get_recommended_renderer_names(model_name) == [
             "nemotron3_ultra",
             "nemotron3_ultra_disable_thinking",
+            "nemotron3_ultra_preserve_thinking",
+        ]
+
+    def test_super_3_5_attributes(self):
+        attrs = get_model_attributes(
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16:peft:262144"
+        )
+        assert attrs.is_vl is True
+        assert get_recommended_renderer_names(
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+        ) == [
+            "nemotron3_ultra",
+            "nemotron3_ultra_disable_thinking",
+            "nemotron3_ultra_medium_thinking",
             "nemotron3_ultra_preserve_thinking",
         ]
 
@@ -88,23 +126,142 @@ class TestNemotron3:
         ]
 
 
-class TestTmlModels:
-    @pytest.mark.parametrize(
-        "model_name",
-        [
-            "thinkingmachines/Inkling",
-            "thinkingmachines/Inkling:peft:131072",
-        ],
-    )
-    def test_tml_renderers_models_use_tml_v0_renderer(self, model_name: str):
-        assert get_recommended_renderer_name(model_name) == "tml_v0"
+class TestDeepSeekV4_1:
+    def test_peft_suffix_uses_deepseekv4_1_renderer(self):
+        assert (
+            get_recommended_renderer_name("deepseek-ai/DeepSeek-V4.1-Flash:peft:262144")
+            == "deepseekv4_1"
+        )
 
-    def test_inkling_attributes_route_to_tml_renderers(self):
+    def test_attributes(self):
+        attrs = get_model_attributes("deepseek-ai/DeepSeek-V4.1-Flash")
+        assert attrs.organization == "deepseek-ai"
+        assert attrs.version_str == "4.1"
+        assert attrs.size_str == "552B-A16B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("deepseek-ai/DeepSeek-V4.1-Flash") == [
+            "deepseekv4_1",
+            "deepseekv4_1_low_reasoning",
+            "deepseekv4_1_max_reasoning",
+            "deepseekv4_1_disable_thinking",
+            "deepseekv4_1_preserve_thinking",
+        ]
+
+
+class TestDeepSeekV4_1Flash1017:
+    def test_peft_suffix_uses_deepseekv4_1_renderer(self):
+        assert (
+            get_recommended_renderer_name("deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144")
+            == "deepseekv4_1"
+        )
+
+    def test_attributes(self):
+        attrs = get_model_attributes("deepseek-ai/DeepSeek-V4.1-Flash-1017")
+        assert attrs.organization == "deepseek-ai"
+        assert attrs.version_str == "4.1"
+        assert attrs.size_str == "552B-A16B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("deepseek-ai/DeepSeek-V4.1-Flash-1017") == [
+            "deepseekv4_1",
+            "deepseekv4_1_low_reasoning",
+            "deepseekv4_1_max_reasoning",
+            "deepseekv4_1_disable_thinking",
+            "deepseekv4_1_preserve_thinking",
+        ]
+
+
+class TestGlm5_3:
+    def test_glm5_3_uses_glm5_3_renderer(self):
+        assert get_recommended_renderer_name("zai-org/GLM-5.3") == "glm5_3_max_reasoning"
+
+    def test_glm5_3_peft_suffix_uses_glm5_3_renderer(self):
+        assert (
+            get_recommended_renderer_name("zai-org/GLM-5.3:peft:262144") == "glm5_3_max_reasoning"
+        )
+
+    def test_glm5_3_attributes(self):
+        attrs = get_model_attributes("zai-org/GLM-5.3")
+        assert attrs.organization == "zai-org"
+        assert attrs.version_str == "5.3"
+        assert attrs.size_str == "744B-A40B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("zai-org/GLM-5.3") == [
+            "glm5_3_max_reasoning",
+            "glm5_3_low_reasoning",
+            "glm5_3_high_reasoning",
+        ]
+
+    def test_glm5_3_flash_peft_suffix_uses_glm5_3_renderer(self):
+        assert (
+            get_recommended_renderer_name("zai-org/GLM-5.3-Flash:peft:262144")
+            == "glm5_3_max_reasoning"
+        )
+
+    def test_glm5_3_flash_attributes(self):
+        attrs = get_model_attributes("zai-org/GLM-5.3-Flash")
+        assert attrs.organization == "zai-org"
+        assert attrs.version_str == "5.3"
+        assert attrs.size_str == "320B-A18B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("zai-org/GLM-5.3-Flash") == [
+            "glm5_3_max_reasoning",
+            "glm5_3_low_reasoning",
+            "glm5_3_high_reasoning",
+        ]
+
+
+class TestInkling:
+    """Inkling models are rendered by the standalone tml-renderers package rather
+    than a cookbook renderer, and are the only lineup members taking audio input."""
+
+    def test_inkling_uses_tml_v0_renderer(self):
+        assert get_recommended_renderer_name("thinkingmachines/Inkling") == "tml_v0"
+
+    def test_inkling_peft_suffix_uses_tml_v0_renderer(self):
+        assert get_recommended_renderer_name("thinkingmachines/Inkling:peft:262144") == "tml_v0"
+
+    def test_inkling_attributes(self):
         attrs = get_model_attributes("thinkingmachines/Inkling")
+        assert attrs.organization == "thinkingmachines"
+        assert attrs.version_str == "1"
+        assert attrs.size_str == "975B-A41B"
         assert attrs.is_chat is True
         assert attrs.is_vl is True
         assert attrs.is_audio_in is True
-        assert attrs.recommended_renderers == ("tml_v0",)
+        assert get_recommended_renderer_names("thinkingmachines/Inkling") == ["tml_v0"]
+
+    def test_inkling_small_uses_tml_v0_renderer(self):
+        assert get_recommended_renderer_name("thinkingmachines/Inkling-Small") == "tml_v0"
+
+    def test_inkling_small_peft_suffix_uses_tml_v0_renderer(self):
+        assert (
+            get_recommended_renderer_name("thinkingmachines/Inkling-Small:peft:262144") == "tml_v0"
+        )
+
+    def test_inkling_small_attributes(self):
+        attrs = get_model_attributes("thinkingmachines/Inkling-Small")
+        assert attrs.organization == "thinkingmachines"
+        assert attrs.version_str == "1"
+        assert attrs.size_str == "276B-A12B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is True
+        assert get_recommended_renderer_names("thinkingmachines/Inkling-Small") == ["tml_v0"]
+
+    def test_untabled_inkling_id_falls_back_to_prefix_defaults(self):
+        """An Inkling id with no table entry still resolves, so a later addition
+        to the lineup works before it is tabled instead of raising.
+        """
+        attrs = get_model_attributes("thinkingmachines/Inkling-2")
+        assert attrs.organization == "thinkingmachines"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert attrs.is_audio_in is True
+        assert get_recommended_renderer_names("thinkingmachines/Inkling-2") == ["tml_v0"]
 
 
 class TestWarnIfRendererNotRecommended:

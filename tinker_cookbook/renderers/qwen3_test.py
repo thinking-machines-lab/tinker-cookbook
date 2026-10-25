@@ -902,3 +902,92 @@ def test_qwen3_disable_thinking_refuses_a_turn_with_no_query():
         observation
         == renderer.build_generation_prompt(cast(list[Message], with_query[:-1])).to_ints()
     )
+
+
+@pytest.mark.parametrize("thinking", [False, True])
+def test_qwen3_5_sampled_tool_turn_is_extended_by_the_next_observation(thinking: bool):
+    """Re-rendering a parsed tool-call turn reproduces the sampled tokens exactly."""
+    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = get_renderer(
+        "qwen3_5_preserve_thinking" if thinking else "qwen3_5_disable_thinking", tokenizer
+    )
+    convo: list[Message] = [{"role": "user", "content": "Read page 1."}]
+    prompt = renderer.build_generation_prompt(convo).to_ints()
+    sampled = (
+        ("Need page 1.\n</think>\n\n" if thinking else "")
+        + "Reading page 1.\n\n<tool_call>\n<function=read_page>\n<parameter=page>\n1\n"
+        "</parameter>\n</function>\n</tool_call><|im_end|>"
+    )
+    sampled_tokens = tokenizer.encode(sampled, add_special_tokens=False)
+    parsed, termination = renderer.parse_response(sampled_tokens)
+    assert termination.is_clean
+    assert [tc.function.name for tc in parsed.get("tool_calls", [])] == ["read_page"]
+
+    tool_message: Message = {
+        "role": "tool",
+        "content": "page text",
+        "tool_call_id": "",
+        "name": "read_page",
+    }
+    next_prompt = renderer.build_generation_prompt([*convo, parsed, tool_message]).to_ints()
+    assert next_prompt[: len(prompt) + len(sampled_tokens)] == prompt + sampled_tokens
+
+
+def test_qwen3_5_preserve_thinking_tool_turn_without_reasoning_is_not_extended():
+    """Why has_extension_property is False: the sampled lone ``\\n`` after the open
+    ``<think>\\n`` becomes part of a merged ``\\n\\n`` token when history closes the block."""
+    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = get_renderer("qwen3_5_preserve_thinking", tokenizer)
+    convo: list[Message] = [{"role": "user", "content": "Read page 1."}]
+    prompt = renderer.build_generation_prompt(convo).to_ints()
+    sampled = (
+        "\n</think>\n\n<tool_call>\n<function=read_page>\n<parameter=page>\n1\n"
+        "</parameter>\n</function>\n</tool_call><|im_end|>"
+    )
+    sampled_tokens = tokenizer.encode(sampled, add_special_tokens=False)
+    parsed, termination = renderer.parse_response(sampled_tokens)
+    assert termination.is_clean
+
+    tool_message: Message = {
+        "role": "tool",
+        "content": "page text",
+        "tool_call_id": "",
+        "name": "read_page",
+    }
+    next_prompt = renderer.build_generation_prompt([*convo, parsed, tool_message]).to_ints()
+    assert next_prompt[: len(prompt) + len(sampled_tokens)] != prompt + sampled_tokens
+
+
+@pytest.mark.parametrize("role", ["user", "assistant"])
+def test_qwen3_5_trims_list_content_across_whitespace_only_parts(role: str):
+    """List content trims like the template's ``content|trim`` on the joined text."""
+    renderer = get_renderer("qwen3_5_disable_thinking", get_tokenizer("Qwen/Qwen3.6-35B-A3B"))
+    as_list: Message = {
+        "role": role,
+        "content": [
+            {"type": "text", "text": "  "},
+            {"type": "text", "text": "\nhello"},
+            {"type": "text", "text": " world \n"},
+            {"type": "text", "text": "\n "},
+        ],
+    }
+    as_str: Message = {"role": role, "content": "hello world"}
+    convo: list[Message] = [{"role": "user", "content": "hi"}] if role == "assistant" else []
+    assert (
+        renderer.build_generation_prompt([*convo, as_list]).to_ints()
+        == renderer.build_generation_prompt([*convo, as_str]).to_ints()
+    )
+
+
+def test_qwen3_5_preserve_thinking_keeps_history_reasoning():
+    from tinker_cookbook import model_info
+
+    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = get_renderer("qwen3_5_preserve_thinking", tokenizer)
+    assert isinstance(renderer, Qwen3_5Renderer)
+    assert not renderer.strip_thinking_from_history
+    assert not renderer.has_extension_property
+    for model in ["Qwen/Qwen3.5-35B-A3B", "Qwen/Qwen3.6-35B-A3B"]:
+        names = model_info.get_recommended_renderer_names(model)
+        assert "qwen3_5_preserve_thinking" in names
+        assert names[0] == "qwen3_5"

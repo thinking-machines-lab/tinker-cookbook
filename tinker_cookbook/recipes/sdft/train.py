@@ -111,7 +111,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
             f"{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-"
             f"{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = f"/tmp/tinker-examples/sdft/{run_name}"
+        log_path = cli_utils.runs_path("sdft", run_name)
 
     wandb_name = cli_config.wandb_name or Path(log_path).name
 

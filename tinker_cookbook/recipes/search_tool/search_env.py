@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import random
 from collections.abc import Sequence
 from pathlib import Path
@@ -90,17 +89,14 @@ def process_single_row(row_series: pd.Series) -> SearchR1Datum:
 def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1Datum]:
     hf_repo_id: str = "PeterJinGo/nq_hotpotqa_train"
     parquet_filename: str = f"{split}.parquet"
-    # TODO(tianyi): make download dir configurable for release
-    user = os.getenv("USER", "unknown")
-    assert user is not None
-    tmp_download_dir = Path("/tmp") / user / "data" / hf_repo_id / split
-    tmp_download_dir.mkdir(parents=True, exist_ok=True)
+    download_dir = Path("~/.cache/tinker-cookbook").expanduser() / hf_repo_id / split
+    download_dir.mkdir(parents=True, exist_ok=True)
 
     local_parquet_filepath = hf_hub_download(
         repo_id=hf_repo_id,
         filename=parquet_filename,
         repo_type="dataset",
-        local_dir=tmp_download_dir,
+        local_dir=download_dir,
     )
 
     df_raw = pd.read_parquet(local_parquet_filepath)

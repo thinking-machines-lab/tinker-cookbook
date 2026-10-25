@@ -21,12 +21,26 @@ _QWEN3 = ("qwen3", "qwen3_disable_thinking")
 _QWEN3_INSTRUCT = ("qwen3_instruct",)
 _QWEN3_VL = ("qwen3_vl",)
 _QWEN3_VL_INSTRUCT = ("qwen3_vl_instruct",)
-_QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking")
+_QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking", "qwen3_5_preserve_thinking")
+_QWEN3_8 = (
+    "qwen3_8_xhigh_reasoning",
+    "qwen3_8_disable_thinking",
+    "qwen3_8_medium_reasoning",
+    "qwen3_8_low_reasoning",
+)
 _DEEPSEEKV3 = ("deepseekv3", "deepseekv3_thinking")
+_DEEPSEEKV4_1 = (
+    "deepseekv4_1",
+    "deepseekv4_1_low_reasoning",
+    "deepseekv4_1_max_reasoning",
+    "deepseekv4_1_disable_thinking",
+    "deepseekv4_1_preserve_thinking",
+)
 _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 _KIMI_K26 = ("kimi_k26", "kimi_k26_disable_thinking", "kimi_k26_preserve_thinking")
+_GLM5_3 = ("glm5_3_max_reasoning", "glm5_3_low_reasoning", "glm5_3_high_reasoning")
 _NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking", "nemotron3_preserve_thinking")
 _NEMOTRON3_SUPER = _NEMOTRON3 + ("nemotron3_low_thinking",)
 _NEMOTRON3_ULTRA = (
@@ -128,6 +142,10 @@ def get_qwen_info() -> dict[str, ModelAttributes]:
         # so renderer/merge/export code paths are shared.
         "Qwen3.6-27B": ModelAttributes(org, "3.6", "27B", True, _QWEN3_5, is_vl=True),
         "Qwen3.6-35B-A3B": ModelAttributes(org, "3.6", "35B-A3B", True, _QWEN3_5, is_vl=True),
+        # Qwen3.8 keeps Qwen3.5/3.6's tokenizer, special tokens, and preprocessor, but
+        # its chat template adds reasoning-effort instructions and preserves thinking
+        # in history by default, so it gets its own qwen3_8 renderer family.
+        "Qwen3.8-27B": ModelAttributes(org, "3.8", "27B", True, _QWEN3_8, is_vl=True),
     }
 
 
@@ -143,6 +161,9 @@ def get_deepseek_info() -> dict[str, ModelAttributes]:
     return {
         "DeepSeek-V3.1": ModelAttributes(org, "3", "671B-A37B", True, _DEEPSEEKV3),
         "DeepSeek-V3.1-Base": ModelAttributes(org, "3", "671B-A37B", False, _ROLE_COLON),
+        # Image support is coming soon.
+        "DeepSeek-V4.1-Flash": ModelAttributes(org, "4.1", "552B-A16B", True, _DEEPSEEKV4_1),
+        "DeepSeek-V4.1-Flash-1017": ModelAttributes(org, "4.1", "552B-A16B", True, _DEEPSEEKV4_1),
     }
 
 
@@ -178,6 +199,22 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
 
 
 @cache
+def get_zai_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported Z.ai GLM models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"GLM-5.3"``) to its attributes.
+    """
+    org = "zai-org"
+    return {
+        "GLM-5.3": ModelAttributes(org, "5.3", "744B-A40B", True, _GLM5_3),
+        # Image support is coming soon.
+        "GLM-5.3-Flash": ModelAttributes(org, "5.3", "320B-A18B", True, _GLM5_3),
+    }
+
+
+@cache
 def get_nvidia_info() -> dict[str, ModelAttributes]:
     """Return model attributes for all supported NVIDIA Nemotron models.
 
@@ -198,6 +235,28 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
         ),
         "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": ModelAttributes(
             org, "3.5", "30B-A3B", True, _NEMOTRON3_LIGHTNING
+        ),
+        "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": ModelAttributes(
+            org, "3.5", "120B-A12B", True, _NEMOTRON3_ULTRA, is_vl=True
+        ),
+    }
+
+
+@cache
+def get_thinkingmachines_info() -> dict[str, ModelAttributes]:
+    """Return model attributes for all supported Thinking Machines Inkling models.
+
+    Returns:
+        dict[str, ModelAttributes]: Mapping from model version name
+            (e.g. ``"Inkling-Small"``) to its attributes.
+    """
+    org = "thinkingmachines"
+    return {
+        "Inkling": ModelAttributes(
+            org, "1", "975B-A41B", True, _TML_V0, is_vl=True, is_audio_in=True
+        ),
+        "Inkling-Small": ModelAttributes(
+            org, "1", "276B-A12B", True, _TML_V0, is_vl=True, is_audio_in=True
         ),
     }
 
@@ -237,11 +296,17 @@ def get_model_attributes(model_name: str) -> ModelAttributes:
         return get_gpt_oss_info()[model_version_full]
     elif org == "moonshotai":
         return get_moonshot_info()[model_version_full]
+    elif org == "zai-org":
+        return get_zai_info()[model_version_full]
     elif org == "nvidia":
         return get_nvidia_info()[model_version_full]
     elif model_name.startswith("thinkingmachines/Inkling"):
         # Inkling models are rendered by the standalone tml-renderers package.
-        # Version/size parsing is TBD; use the full model version for now.
+        if model_version_full in get_thinkingmachines_info():
+            return get_thinkingmachines_info()[model_version_full]
+        # Any ``Inkling*`` id without a table entry is assumed to share the renderer
+        # and modality support, so fall back to defaults rather than raising. Size
+        # and version are unknown in that case; use the model version for both.
         return ModelAttributes(
             organization=org,
             version_str=model_version_full,

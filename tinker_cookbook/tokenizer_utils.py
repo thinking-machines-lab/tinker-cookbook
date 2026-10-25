@@ -257,4 +257,9 @@ def _get_hf_tokenizer(model_name: str) -> Tokenizer:
         )
         return cls.from_pretrained(model_name, revision=revision)
 
+    if model_name == "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16":
+        # Only config.json is custom code (`nemotron_h_omni`); the tokenizer is not. Without an
+        # explicit False, transformers stops at an interactive "run custom code?" prompt.
+        kwargs.setdefault("trust_remote_code", False)
+
     return AutoTokenizer.from_pretrained(model_name, **kwargs)

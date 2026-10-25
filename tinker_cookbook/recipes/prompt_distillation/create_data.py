@@ -8,7 +8,7 @@ import chz
 import tinker
 from tqdm.asyncio import tqdm_asyncio
 
-from tinker_cookbook import renderers
+from tinker_cookbook import cli_utils, renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
@@ -76,9 +76,14 @@ Text to classify:
 """
 
 
+DEFAULT_OUTPUT_FILE = cli_utils.runs_path(
+    "prompt_distillation", "data", "prompt_distillation_lang.jsonl"
+)
+
+
 @chz.chz
 class Config:
-    output_file: str
+    output_file: str = DEFAULT_OUTPUT_FILE
 
 
 def setup_clients():

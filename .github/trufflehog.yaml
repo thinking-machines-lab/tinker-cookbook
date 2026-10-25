@@ -1,0 +1,18 @@
+detectors:
+  # Prefix-only match: the built-in GitHub detector is noisy without verification.
+  - name: github-token
+    keywords:
+      - ghp_
+      - gho_
+      - ghu_
+      - ghs_
+      - ghr_
+      - github_pat_
+    regex:
+      github_token: '\b((?:ghp|gho|ghu|ghs|ghr|github_pat)_[a-zA-Z0-9_]{36,255})\b'
+
+  - name: tinker-api-key
+    keywords:
+      - tml-
+    regex:
+      tinker_api_key: '\b(tml-[A-Za-z0-9]{60,100})\b'

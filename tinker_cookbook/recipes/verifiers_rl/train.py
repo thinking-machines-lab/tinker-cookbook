@@ -68,7 +68,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         f"_lr{cli_config.learning_rate}_rank{cli_config.lora_rank}_{date_and_time}"
     )
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/verifiers_rl/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("verifiers_rl", run_name)
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
     env_args = json.loads(cli_config.vf_env_args) if cli_config.vf_env_args else {}

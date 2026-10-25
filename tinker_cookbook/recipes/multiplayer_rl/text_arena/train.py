@@ -42,7 +42,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/text-arena/{run_name}"
+        log_path = cli_utils.runs_path("text-arena", run_name)
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:

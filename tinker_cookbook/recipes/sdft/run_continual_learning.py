@@ -30,7 +30,7 @@ from typing import Literal
 
 import chz
 
-from tinker_cookbook import checkpoint_utils, renderers
+from tinker_cookbook import checkpoint_utils, cli_utils, renderers
 from tinker_cookbook.distillation import sdft
 from tinker_cookbook.recipes.sdft.datasets import (
     SDFTDataset,
@@ -74,7 +74,7 @@ class ExperimentConfig:
     thinking_format: bool = False
 
     # Logging
-    log_root: str = "/tmp/tinker-sdft-continual-v3"
+    log_root: str = cli_utils.runs_path("sdft-continual")
     wandb_project: str | None = None
     base_url: str | None = None
 

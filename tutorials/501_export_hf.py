@@ -109,14 +109,14 @@ def _(mo):
 
 @app.cell
 def _(sampler_path):
-    from tinker_cookbook import weights
+    from tinker_cookbook import cli_utils, weights
 
     adapter_dir = weights.download(
         tinker_path=sampler_path,
-        output_dir="/tmp/tinker-tutorials/export-hf/adapter",
+        output_dir=cli_utils.runs_path("tutorials", "export-hf", "adapter"),
     )
     print(f"Adapter downloaded to: {adapter_dir}")
-    return adapter_dir, weights
+    return adapter_dir, cli_utils, weights
 
 
 @app.cell(hide_code=True)
@@ -130,8 +130,8 @@ def _(mo):
 
 
 @app.cell
-def _(BASE_MODEL, adapter_dir, weights):
-    OUTPUT_PATH = "/tmp/tinker-tutorials/export-hf/merged_model"
+def _(BASE_MODEL, adapter_dir, cli_utils, weights):
+    OUTPUT_PATH = cli_utils.runs_path("tutorials", "export-hf", "merged_model")
 
     weights.build_hf_model(
         base_model=BASE_MODEL,

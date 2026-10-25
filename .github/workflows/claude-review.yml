@@ -46,7 +46,7 @@ jobs:
           fetch-depth: 1
 
       - name: Claude on @mention
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@97c53473391bff1901034d4b454b5bac7ab7a029 # v1.0.239
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}

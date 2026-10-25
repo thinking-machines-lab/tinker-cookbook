@@ -28,13 +28,14 @@ from tinker_cookbook.eval.evaluators import (
 )
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.common import compute_bpb, compute_mean_nll
-from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
+from tinker_cookbook.supervised.nll_evaluator import SamplerNLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import iteration_dir
+from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,10 @@ class Config:
         adam_eps (float): Adam epsilon. Default ``1e-8``.
         wandb_project (str | None): Weights & Biases project name.
         wandb_name (str | None): Weights & Biases run name.
+        session_name (str | None): Human-readable ``display_name`` for the
+            Tinker session, shown in the Tinker console. When ``None``, falls
+            back to ``wandb_name`` if set, otherwise no display name is sent
+            (see :func:`~tinker_cookbook.utils.session_naming.resolve_session_display_name`).
         enable_trace (bool): Enable async tracing to ``trace_events.jsonl``.
         span_chart_every (int): Write a Gantt-chart HTML every *N* steps
             (0 disables).
@@ -97,10 +102,11 @@ class Config:
 
     Example::
 
+        from tinker_cookbook import cli_utils
         from tinker_cookbook.supervised import train
 
         config = train.Config(
-            log_path="~/logs/sft-run",
+            log_path=cli_utils.runs_path("sft-run"),
             model_name="Qwen/Qwen3-8B",
             dataset_builder=my_dataset_builder,
             learning_rate=1e-4,
@@ -158,6 +164,8 @@ class Config:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set.
+    session_name: str | None = None
 
     enable_trace: bool = False
     span_chart_every: int = 0
@@ -318,9 +326,16 @@ async def main(config: Config):
         )
         trace.trace_init(output_file=trace_events_path)
 
+    session_display_name = resolve_session_display_name(
+        session_name=config.session_name,
+        wandb_name=config.wandb_name,
+    )
+    if session_display_name is not None:
+        logger.info(f"Tinker session display name: {session_display_name}")
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata(config.recipe_name),
+        display_name=session_display_name,
     )
 
     user_metadata: dict[str, str] = {}
@@ -384,7 +399,7 @@ async def main(config: Config):
     if maybe_test_dataset is not None:
         # Pass the tokenizer so the evaluator also reports test/bpb (bits per
         # byte), a tokenizer-independent NLL that is comparable across models.
-        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset, tokenizer=tokenizer))
+        evaluators.append(SamplerNLLEvaluator.from_dataset(maybe_test_dataset, tokenizer=tokenizer))
 
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
     logger.info(
