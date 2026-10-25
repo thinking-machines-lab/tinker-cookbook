@@ -21,7 +21,9 @@ from pathlib import Path
 
 import tinker
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.true_thinking_score.tts import generate_cot_and_compute_tts
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -55,7 +57,7 @@ MODEL_NAME = "Qwen/Qwen3.5-4B"
 
 
 async def main():
-    log_dir = Path("/tmp/tinker-tts-experiment")
+    log_dir = Path(cli_utils.runs_path("tts-experiment"))
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=== TTS Small-Scale Experiment ===")
@@ -63,7 +65,9 @@ async def main():
     logger.info(f"Problems: {len(PROBLEMS)}")
     logger.info(f"Log dir: {log_dir}")
 
-    service_client = tinker.ServiceClient()
+    service_client = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("experiment_true_thinking_score"),
+    )
 
     results: list[dict] = []
     all_tts_scores: list[float] = []

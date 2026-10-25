@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -70,7 +70,7 @@ async def _(api_key, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client_async(
@@ -79,7 +79,7 @@ async def _(api_key, mo, tinker):
     tokenizer = training_client.get_tokenizer()
 
     print(f"Training client ready for {MODEL_NAME}")
-    return MODEL_NAME, service_client, tokenizer, training_client
+    return tokenizer, training_client
 
 
 @app.cell(hide_code=True)
@@ -130,7 +130,7 @@ def _(TensorData, tinker, tokenizer, torch):
     model_input_rl = tinker.ModelInput.from_ints(all_ids[:-1])
     rl_target_tokens = all_ids[1:]
     # Fake sampling logprobs (as if from a sampler)
-    rl_logprobs = [0.0] * (len(prompt_ids) - 1) + [-1.5] * len(target_ids)
+    rl_logprobs = [0.0] * (len(prompt_ids) - 1) + [-0.7] * len(target_ids)
     # Positive advantage: this completion was good
     rl_advantages = [0.0] * (len(prompt_ids) - 1) + [1.0] * len(target_ids)
 
@@ -145,7 +145,7 @@ def _(TensorData, tinker, tokenizer, torch):
 
     print(f"SFT datum: {len(all_ids) - 1} tokens, {sum(sft_weights):.0f} completion tokens")
     print(f"RL datum:  {len(all_ids) - 1} tokens, advantage=+1.0 on completion")
-    return model_input_rl, model_input_sft, rl_datum, sft_datum
+    return rl_datum, sft_datum
 
 
 @app.cell(hide_code=True)
@@ -163,7 +163,7 @@ async def _(rl_datum, sft_datum, training_client):
     # Cross-entropy (SFT)
     ce_future = await training_client.forward_backward_async([sft_datum], loss_fn="cross_entropy")
     ce_result = await ce_future.result_async()
-    print(f"cross_entropy      loss:sum = {ce_result.metrics['loss:sum']:.4f}")
+    print(f"cross_entropy       loss:sum = {ce_result.metrics['loss:sum']:.4f}")
 
     # Importance sampling (REINFORCE with IS correction)
     is_future = await training_client.forward_backward_async(
@@ -175,13 +175,13 @@ async def _(rl_datum, sft_datum, training_client):
     # PPO (clipped objective)
     ppo_future = await training_client.forward_backward_async([rl_datum], loss_fn="ppo")
     ppo_result = await ppo_future.result_async()
-    print(f"ppo                loss:sum = {ppo_result.metrics['loss:sum']:.4f}")
+    print(f"ppo                 loss:sum = {ppo_result.metrics['loss:sum']:.4f}")
 
     # CISPO (clipped ratio weighting the log-prob)
     cispo_future = await training_client.forward_backward_async([rl_datum], loss_fn="cispo")
     cispo_result = await cispo_future.result_async()
-    print(f"cispo              loss:sum = {cispo_result.metrics['loss:sum']:.4f}")
-    return ce_result, cispo_result, is_result, ppo_result
+    print(f"cispo               loss:sum = {cispo_result.metrics['loss:sum']:.4f}")
+    return ce_result, is_result
 
 
 @app.cell(hide_code=True)
@@ -197,21 +197,23 @@ def _(mo):
 @app.cell
 def _(ce_result, is_result):
     # Cross-entropy returns logprobs of target tokens
-    ce_logprobs = ce_result.loss_fn_outputs[0]["logprobs"]
+    ce_logprobs = ce_result.loss_fn_outputs[0]["logprobs"].tolist()
     print("cross_entropy logprobs (last 3 tokens):", ce_logprobs[-3:])
 
     # Importance sampling also returns logprobs
-    is_logprobs = is_result.loss_fn_outputs[0]["logprobs"]
+    is_logprobs = is_result.loss_fn_outputs[0]["logprobs"].tolist()
     print("importance_sampling logprobs (last 3):", is_logprobs[-3:])
-    return ce_logprobs, is_logprobs
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## PPO with custom clipping thresholds
+    ## Custom clipping thresholds (PPO and CISPO)
 
-    PPO and CISPO accept `loss_fn_config` to override the default clip thresholds (0.8 and 1.2). Tighter clipping makes updates more conservative.
+    PPO and CISPO accept `loss_fn_config` to set clip thresholds. PPO defaults to `0.8` and `1.2`; tighter clipping makes its updates more conservative. CISPO's default differs (below).
+
+    For **CISPO specifically**, the clipped ratio is a detached coefficient on `log p_theta`, so it never zeros a token's gradient — it only bounds the coefficient's magnitude. CISPO **defaults to a one-sided** clip — lower bound disabled, only the upper side capped (`{"clip_low_threshold": 0.0, "clip_high_threshold": 4.0}`) — so you get it without passing `loss_fn_config`. This is safe in any setting — with no lower bound the worst case is the coefficient falling back toward the plain importance-sampling weight, which is well-behaved. A positive lower threshold instead keeps applying near-full updates to tokens the policy has already moved away from; on-policy that rarely matters, but off-policy it can make the sampler/trainer KL run away. This follows both CISPO papers: [MiniMax-M1](https://arxiv.org/abs/2506.13585) sets the lower IS-weight bound to a large value and only tunes the upper one, and [ScaleRL](https://arxiv.org/abs/2510.13786) uses `clip(ratio, 0, eps_max)` and finds performance is insensitive to `eps_max` across {4, 5, 8}.
     """)
     return
 
@@ -235,7 +237,7 @@ async def _(rl_datum, training_client):
     )
     ppo_wide = await ppo_wide_future.result_async()
     print(f"PPO (wide clip)  loss:sum = {ppo_wide.metrics['loss:sum']:.4f}")
-    return ppo_tight, ppo_wide
+    return
 
 
 @app.cell(hide_code=True)
@@ -274,7 +276,7 @@ async def _(sft_datum, torch, training_client):
     )
     custom_result = await custom_future.result_async()
     print(f"Custom loss metrics: {custom_result.metrics}")
-    return custom_result, logprob_squared_loss
+    return
 
 
 @app.cell(hide_code=True)

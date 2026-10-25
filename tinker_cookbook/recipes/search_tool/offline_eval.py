@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 import chz
 import tinker
 
-from tinker_cookbook import checkpoint_utils, model_info, tokenizer_utils
+from tinker_cookbook import checkpoint_utils, tokenizer_utils
 from tinker_cookbook.completers import TinkerTokenCompleter
 from tinker_cookbook.recipes.search_tool.search_env import (
     SEARCH_TASK_INSTRUCTIONS,
@@ -22,6 +22,7 @@ from tinker_cookbook.recipes.search_tool.tools import (
 from tinker_cookbook.renderers import Renderer, get_renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.tool_use import build_agent_tool_env
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 ROLLOUT_CONCURRENCY = 1024
 rollout_semaphore = asyncio.Semaphore(ROLLOUT_CONCURRENCY)
@@ -37,9 +38,18 @@ class CLIConfig:
     split: Literal["train", "test"] = chz.field(default="test", doc="Dataset split to use")
 
     # Model parameters
-    base_model: str = chz.field(default="Qwen/Qwen3-4B-Instruct-2507", doc="Base model to use")
+    base_model: str = chz.field(default="Qwen/Qwen3.5-4B", doc="Base model to use")
+    renderer_name: str = chz.field(
+        default="qwen3_5_disable_thinking",
+        doc="Renderer to use if the checkpoint does not record one",
+    )
     tinker_checkpoint_url: str = chz.field(doc="Tinker checkpoint URL (required)")
     max_tokens: int = chz.field(default=1024, doc="Maximum number of tokens to generate")
+    max_trajectory_tokens: int = chz.field(
+        default=32 * 1024,
+        doc="Token budget for the full multi-turn trajectory, matching train.py; "
+        "episodes that would exceed it end instead of overflowing the model's context window",
+    )
 
 
 class EvaluationResult(TypedDict):
@@ -81,6 +91,7 @@ async def evaluate_single_item(
     chroma_tool: ChromaTool,
     policy: TinkerTokenCompleter,
     renderer: Renderer,
+    max_trajectory_tokens: int | None = None,
 ) -> EvaluationResult:
     tool_schemas = [chroma_tool.search.to_spec()]
     initial_messages = renderer.create_conversation_prefix_with_tools(
@@ -94,6 +105,7 @@ async def evaluate_single_item(
         initial_messages=initial_messages,
         reward_fn=TextAnswerReward(gold_answers=item["answer"], format_coef=0.1),
         max_turns=5,
+        max_trajectory_tokens=max_trajectory_tokens,
     )
     async with rollout_semaphore:
         trajectory = await do_single_rollout(policy, env)
@@ -108,7 +120,9 @@ async def evaluate_single_item(
 
 async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     # Load model
-    service_client = tinker.ServiceClient()
+    service_client = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("eval_search_tool_offline"),
+    )
     sampling_client = service_client.create_sampling_client(model_path=config.tinker_checkpoint_url)
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 
@@ -117,7 +131,7 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
         service_client, config.tinker_checkpoint_url
     )
     if renderer_name is None:
-        renderer_name = model_info.get_recommended_renderer_name(config.base_model)
+        renderer_name = config.renderer_name
     print(f"Using renderer: {renderer_name}")
     renderer = get_renderer(renderer_name, tokenizer)
 
@@ -135,7 +149,10 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     )
 
     # Run evaluations in parallel using asyncio.gather
-    tasks = [evaluate_single_item(item, chroma_tool, policy, renderer) for item in data]
+    tasks = [
+        evaluate_single_item(item, chroma_tool, policy, renderer, config.max_trajectory_tokens)
+        for item in data
+    ]
 
     print(f"Evaluating {len(tasks)} items")
     results = await asyncio.gather(*tasks)

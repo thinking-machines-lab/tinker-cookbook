@@ -1,0 +1,18 @@
+# Allowed GitHub Actions. Third-party ones need a full commit SHA; actions/* and github/* may use tags.
+
+rules:
+  forbidden-uses:
+    config:
+      allow:
+        - actions/*
+        - github/*
+        - anthropics/claude-code-action
+        - astral-sh/setup-uv
+        - pre-commit/action
+        - pypa/gh-action-pypi-publish
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+        actions/*: ref-pin
+        github/*: ref-pin

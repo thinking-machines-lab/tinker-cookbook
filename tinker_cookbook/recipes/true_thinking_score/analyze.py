@@ -16,7 +16,7 @@ Usage:
 
     # GSM8K, larger model
     python -m tinker_cookbook.recipes.true_thinking_score.analyze \
-        dataset=gsm8k model_name=Qwen/Qwen3.5-27B n_problems=50
+        dataset=gsm8k model_name=Qwen/Qwen3.6-27B n_problems=50
 
     # Full MATH-500
     python -m tinker_cookbook.recipes.true_thinking_score.analyze \
@@ -36,11 +36,13 @@ import chz
 import tinker
 from datasets import Dataset, load_dataset
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
 from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
 from tinker_cookbook.recipes.true_thinking_score.tts import (
     generate_cot_and_compute_tts,
 )
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -152,7 +154,7 @@ async def cli_main(config: CLIConfig) -> None:
             f"{config.n_problems}problems-"
             f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_dir = Path(f"/tmp/tinker-examples/tts/{run_name}")
+        log_dir = Path(cli_utils.runs_path("tts", run_name))
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=== TTS Analysis ===")
@@ -166,7 +168,9 @@ async def cli_main(config: CLIConfig) -> None:
     problems = _load_problems(config.dataset, config.n_problems, config.seed)
     logger.info(f"Loaded {len(problems)} problems")
 
-    service_client = tinker.ServiceClient()
+    service_client = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("analyze_true_thinking_score"),
+    )
 
     # Process problems concurrently with a semaphore to limit parallelism
     sem = asyncio.Semaphore(config.concurrency)

@@ -17,7 +17,8 @@ from tinker_cookbook.recipes.verifiers_rl.verifiers_env import (
     VerifiersRLDatasetBuilder,
     convert_states_to_trajectory_group,
 )
-from tinker_cookbook.rl import train
+from tinker_cookbook.rl import rollouts, train
+from tinker_cookbook.rl.rollout_strategy import RolloutStrategy
 from tinker_cookbook.rl.types import EnvGroupBuilder, TrajectoryGroup
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 
@@ -27,8 +28,9 @@ logger = logging.getLogger(__name__)
 @chz.chz
 class CLIConfig:
     # model configuration
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
+    model_name: str = "Qwen/Qwen3.5-4B"
     lora_rank: int = 32
+    renderer_name: str | None = "qwen3_5_disable_thinking"
 
     # environment configuration
     vf_env_id: str = "reverse-text"
@@ -66,7 +68,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         f"_lr{cli_config.learning_rate}_rank{cli_config.lora_rank}_{date_and_time}"
     )
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/verifiers_rl/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("verifiers_rl", run_name)
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
     env_args = json.loads(cli_config.vf_env_args) if cli_config.vf_env_args else {}
@@ -76,15 +78,22 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
     local_tokenizer: Tokenizer | None = None
 
     async def custom_do_group_rollout(
-        builder: EnvGroupBuilder, policy: TokenCompleter
+        builder: EnvGroupBuilder,
+        policy: TokenCompleter,
+        strategy: RolloutStrategy | None = None,
     ) -> TrajectoryGroup:
+        # `strategy` is accepted for signature compatibility but unused: the
+        # verifiers environment runs and scores the whole group itself.
+        del strategy
         nonlocal shared_client, shared_renderer, local_tokenizer
 
         # initialize tokenizer and renderer lazily
         if local_tokenizer is None:
             local_tokenizer = get_tokenizer(cli_config.model_name)
         if shared_renderer is None:
-            renderer_name = model_info.get_recommended_renderer_name(cli_config.model_name)
+            renderer_name = cli_config.renderer_name or model_info.get_recommended_renderer_name(
+                cli_config.model_name
+            )
             shared_renderer = renderers.get_renderer(renderer_name, local_tokenizer)
 
         sampling_client = cast(TinkerTokenCompleter, policy).sampling_client
@@ -115,8 +124,10 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
 
         return convert_states_to_trajectory_group(states)
 
-    # override do_group_rollout function inside rl.train
-    train.do_group_rollout = custom_do_group_rollout
+    # Override do_group_rollout in the rollouts module, where the rollout
+    # pipeline resolves it. (Rebinding the name re-exported on rl.train has
+    # no effect on calls made inside tinker_cookbook.rl.rollouts.)
+    rollouts.do_group_rollout = custom_do_group_rollout
 
     dataset_builder = VerifiersRLDatasetBuilder(
         vf_env_id=cli_config.vf_env_id,
@@ -130,6 +141,8 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         learning_rate=cli_config.learning_rate,
         dataset_builder=dataset_builder,
         model_name=cli_config.model_name,
+        recipe_name="recipe_verifiers_rl",
+        renderer_name=cli_config.renderer_name,
         max_tokens=cli_config.max_tokens,
         temperature=cli_config.temperature,
         lora_rank=cli_config.lora_rank,

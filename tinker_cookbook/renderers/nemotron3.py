@@ -1,37 +1,38 @@
 """
-Nemotron-3 family renderer.
+Nemotron family renderer.
 
-Nemotron-3 models (NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 and
-NVIDIA-Nemotron-3-Super-120B-A12B-BF16) use a chat format similar to Qwen3.5
-(im_start/im_end tokens, thinking blocks, XML-style tool calls) but differ in
-the following ways:
+The supported Nemotron models (3 Nano, 3 Super, 3 Ultra, 3.5 Lightning, and
+3.5 Super) use a chat format similar to Qwen3.5 (im_start/im_end tokens,
+thinking blocks, XML-style tool calls) but differ in the following ways:
 
-1. Tool declarations: Nemotron-3 uses structured XML inside <tools>...</tools>
+1. Tool declarations: Nemotron uses structured XML inside <tools>...</tools>
    (Qwen3.5 uses JSON per line).
 
 2. System message ordering: system_prompt comes BEFORE tools text (Qwen3.5
    puts tools first).
 
-3. Empty think block scope: Nemotron-3's HF template prepends <think></think>
+3. Empty think block scope: Nemotron's HF templates prepend <think></think>
    to ALL assistant messages that lack thinking, including historical ones
    (Qwen3.5 only does this for messages after the last user query).
 
-4. Think block separator: one newline between </think> and text content
-   (Qwen3.5 uses two newlines).
+4. Think block separator: 3 Nano/3 Super use one newline between </think> and
+   text content (Qwen3.5 uses two newlines). Ultra and the 3.5 models use no
+   separator newline.
 
 5. Disable-thinking generation suffix: <think></think> with no trailing
    newlines (Qwen3.5 uses <think>\\n\\n</think>\\n\\n).
 
-6. Empty system message injection: Nemotron-3's HF template always outputs
-   a system message block even when none is provided (it always sets
-   system_message = "" which is "defined" in Jinja2). Our renderer
+6. Empty system message injection: Nemotron's HF templates always output
+   a system message block even when none is provided (each sets
+   system_message = "", which is "defined" in Jinja2). Our renderer
    prepends an empty system message in build_generation_prompt and
    build_supervised_example to match this behavior.
 
 Thinking modes
 --------------
-Both Nano and Super support reasoning ON/OFF. The Super model additionally
-supports a low-effort reasoning mode that produces shorter thinking traces.
+These Nemotron models support reasoning ON/OFF. 3 Super additionally supports a
+low-effort reasoning mode that produces shorter thinking traces; 3 Ultra and
+3.5 Super additionally support a medium-effort reasoning mode.
 
 +---------------------+-------------------------------+---------------------+
 | Mode                | HF template params            | Renderer name       |
@@ -39,7 +40,11 @@ supports a low-effort reasoning mode that produces shorter thinking traces.
 | Reasoning ON (full) | enable_thinking=True          | nemotron3           |
 +---------------------+-------------------------------+---------------------+
 | Low-effort thinking | enable_thinking=True,         | nemotron3_low       |
-| (Super only)        | low_effort=True               | _thinking           |
+| (3 Super only)      | low_effort=True               | _thinking           |
++---------------------+-------------------------------+---------------------+
+| Medium-effort       | enable_thinking=True,         | nemotron3_ultra     |
+| thinking            | medium_effort=True            | _medium_thinking    |
+| (Ultra, 3.5 Super)  |                               |                     |
 +---------------------+-------------------------------+---------------------+
 | Reasoning OFF       | enable_thinking=False         | nemotron3_disable   |
 |                     |                               | _thinking           |
@@ -49,6 +54,9 @@ The low-effort mode appends ``{reasoning effort: low}`` to the last user
 message, signaling the model to use shorter reasoning traces. The generation
 suffix remains ``<think>\\n`` (thinking is still enabled).
 
+The medium-effort mode appends ``{reasoning effort: efficient}`` to the last
+user message, matching the Ultra-format ``medium_effort=True`` HF template path.
+
 Reference: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
 """
 
@@ -56,7 +64,9 @@ import dataclasses
 import json
 from collections.abc import Mapping
 
+from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
+    ContentPart,
     ImagePart,
     Message,
     RenderContext,
@@ -64,8 +74,10 @@ from tinker_cookbook.renderers.base import (
     Role,
     TextPart,
     ToolSpec,
+    has_thinking,
 )
 from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
+from tinker_cookbook.tokenizer_utils import Tokenizer
 
 
 def _render_extra_keys(obj: Mapping[str, object], handled_keys: set[str]) -> list[str]:
@@ -141,6 +153,11 @@ class Nemotron3Renderer(Qwen3_5Renderer):
       message when none is present, matching HF template behavior.
     """
 
+    @property
+    def has_extension_property(self) -> bool:
+        """With thinking preserved, history renders each turn as a supervised example does."""
+        return not self.strip_thinking_from_history
+
     def _normalize_messages(self, messages: list[Message]) -> list[Message]:
         """Prepend empty system message if not present.
 
@@ -184,24 +201,26 @@ class Nemotron3Renderer(Qwen3_5Renderer):
 
         Nemotron-3's HF template prepends <think></think> to assistant message
         content when there are no <think> tags in the output:
-        - Historical messages (idx < last_user_index): thinking is stripped,
-          so <think></think> is always prepended regardless of original content.
+        - Historical messages (idx < last_user_index): with the default
+          ``truncate_history_thinking=True`` (``strip_thinking_from_history=True``)
+          the thinking is stripped, so <think></think> is prepended regardless of
+          original content. With ``strip_thinking_from_history=False`` (HF
+          ``truncate_history_thinking=False``) the thinking stays in the output,
+          so historical messages are treated like non-historical ones.
         - Non-historical messages: prepend only if the message has no thinking.
 
-        When a historical message has non-empty text content, the HF template
-        produces "<think></think>\\ntext" (with a newline separator). This comes
-        from c.split('</think>')[-1] preserving the \\n in _format_thinking_text's
-        output. We add the \\n to the header suffix in that case.
+        When a historical message with stripped thinking has non-empty text
+        content, the HF template produces "<think></think>\\ntext" (with a
+        newline separator). This comes from c.split('</think>')[-1] preserving
+        the \\n in _format_thinking_text's output. We add the \\n to the header
+        suffix in that case.
         """
         is_historical = ctx.idx < ctx.last_user_index
         content = message.get("content", "")
-        has_think = False
-        if isinstance(content, list):
-            has_think = any(p["type"] == "thinking" for p in content)
-        elif isinstance(content, str):
-            has_think = "<think>" in content
-        # Non-historical with thinking: thinking will be in output, no prefix needed.
-        if has_think and not is_historical:
+        has_think = has_thinking(content)
+        # No empty prefix when the thinking itself will be rendered in the output:
+        # always for the current turn, and for history when it is preserved.
+        if has_think and (not is_historical or not self.strip_thinking_from_history):
             return ""
         # For historical messages with stripped thinking and non-empty text:
         # add \n separator to match HF template's c.split('</think>')[-1] behavior.
@@ -216,6 +235,11 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             if has_nonempty_text and not has_tool_calls:
                 return "<think></think>\n"
         return "<think></think>"
+
+    def _trim_content(self, content: str | list[ContentPart]) -> str | list[ContentPart]:
+        # Nemotron's template does not trim user, system, or tool content, so list
+        # content passes through unchanged.
+        return content.strip() if isinstance(content, str) else content
 
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """Render a message, using idx < last_user_index for thinking stripping.
@@ -235,6 +259,32 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         """Nemotron-3 uses a single separator newline after </think>."""
         return f"<think>\n{thinking}\n</think>\n"
 
+    def _wrap_image_parts(self, parts: list[ImagePart | TextPart]) -> list[ImagePart | TextPart]:
+        """Match the Nemotron-3.5 Super template and processor.
+
+        The HF processor expands each ``<image>`` placeholder to ``<img>``, the image
+        tokens, and ``</img>``. The template starts an image on a new line when it follows
+        text, and labels each image ``<image N>`` when a message has more than one, counted
+        per message.
+        """
+        num_images = sum(part["type"] == "image" for part in parts)
+        chunks: list[ImagePart | TextPart] = []
+        image_index = 0
+        text_before = ""  # the last non-empty text since the previous image
+        for part in parts:
+            if part["type"] != "image":
+                chunks.append(part)
+                text_before = part["text"] or text_before
+                continue
+            image_index += 1
+            newline = "\n" if text_before and not text_before.endswith("\n") else ""
+            label = f"<image {image_index}>" if num_images > 1 else ""
+            chunks.append(TextPart(type="text", text=f"{newline}{label}<img>"))
+            chunks.append(part)
+            chunks.append(TextPart(type="text", text="</img>"))
+            text_before = ""
+        return chunks
+
     def _wrap_qwen_tool_response_chunks(
         self, chunks: list[ImagePart | TextPart]
     ) -> list[ImagePart | TextPart]:
@@ -248,6 +298,11 @@ class Nemotron3Renderer(Qwen3_5Renderer):
             + chunks
             + [TextPart(type="text", text="\n</tool_response>\n")]
         )
+
+    def _tool_response_continuation_header(self) -> str:
+        """Nemotron-3 responses carry their own trailing newline, so a consecutive
+        <tool_response> follows immediately with no separator."""
+        return ""
 
     def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
         """Format tool_calls for Nemotron-3.
@@ -263,13 +318,18 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         """
         assert "tool_calls" in message
         content = message.get("content", "")
-        has_thinking = isinstance(content, list) and any(p["type"] == "thinking" for p in content)
+        # Deliberately not `has_thinking`: this asks whether `_format_thinking_text` ran, and
+        # it only runs on a ThinkingPart. An inline `<think>` in a string never went through
+        # it and so never wrote the trailing \n this is compensating for.
+        has_thinking_part = isinstance(content, list) and any(
+            p["type"] == "thinking" for p in content
+        )
         has_nonempty_text = isinstance(content, list) and any(
             p["type"] == "text" and p.get("text", "") for p in content
         )
         # Thinking ends with \n; only add \n prefix if there's text after thinking
         # (which won't end with \n) or no thinking at all.
-        prefix = "" if (has_thinking and not has_nonempty_text) else "\n"
+        prefix = "" if (has_thinking_part and not has_nonempty_text) else "\n"
         calls = "".join(self._format_tool_call_xml(tc) + "\n" for tc in message["tool_calls"])
         return [TextPart(type="text", text=prefix + calls)]
 
@@ -357,11 +417,33 @@ class Nemotron3Renderer(Qwen3_5Renderer):
         return [Message(role="system", content=content)]
 
 
-class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
-    """Renderer for Nemotron-3 Super with low-effort reasoning.
+class Nemotron3PreserveThinkingRenderer(Nemotron3Renderer):
+    """Nemotron-3 (Nano/Super) that keeps <think> blocks from previous turns.
 
-    Matches the Nemotron-3 Super HF template with ``enable_thinking=True``
-    and ``low_effort=True``. The model still produces a ``<think>`` block but
+    Matches the Nemotron-3 HF chat template rendered with
+    ``truncate_history_thinking=False``: every historical assistant turn keeps
+    its full ``<think>\\n...\\n</think>`` reasoning block instead of the default
+    behavior that collapses prior reasoning to ``<think></think>``.
+
+    Use this variant when reasoning traces on prior turns are load-bearing at
+    inference or training time — most commonly multi-turn RL, where preserving
+    history thinking gives the renderer the extension property (a shorter prefix
+    of a conversation tokenizes to a prefix of the full conversation).
+
+    Under the hood this forwards ``strip_thinking_from_history=False`` to
+    :class:`Nemotron3Renderer`. HF's ``truncate_history_thinking=False`` is
+    byte-equivalent to the cookbook's ``strip_thinking_from_history=False``.
+    """
+
+    def __init__(self, tokenizer: Tokenizer):
+        super().__init__(tokenizer, strip_thinking_from_history=False)
+
+
+class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
+    """Renderer for Nemotron-3 models with low-effort reasoning.
+
+    Matches the Nemotron-3 HF template with ``enable_thinking=True`` and
+    ``low_effort=True``. The model still produces a ``<think>`` block but
     uses significantly fewer reasoning tokens than full thinking mode.
 
     Mechanically, ``{reasoning effort: low}`` is appended to the last user
@@ -369,8 +451,8 @@ class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
     the full-thinking ``Nemotron3Renderer``).
 
     This mode is only available on the Nemotron-3 Super model
-    (NVIDIA-Nemotron-3-Super-120B-A12B-BF16); the Nano model's HF template
-    does not support ``low_effort``.
+    (NVIDIA-Nemotron-3-Super-120B-A12B-BF16); the Nano and Ultra HF templates
+    do not support ``low_effort``.
 
     Reference: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
     """
@@ -380,10 +462,89 @@ class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
         if message["role"] == "user" and ctx.idx == ctx.last_user_index:
             content = message.get("content", "")
             assert isinstance(content, str), (
-                "Nemotron-3 Super is text-only; list content not supported"
+                "Nemotron-3 low-thinking mode is text-only; list content not supported"
             )
             message = message.copy()
             message["content"] = content + "\n\n{reasoning effort: low}"
+        return super().render_message(message, ctx)
+
+
+class Nemotron3UltraRenderer(Nemotron3Renderer):
+    """Renderer for Nemotron-3 Ultra and the Nemotron-3.5 models.
+
+    Ultra mostly shares Nemotron-3's XML tool format and empty system-message
+    behavior, but its HF template differs from Nano/Super in the formatting of
+    historical and explicit thinking blocks:
+
+    - ``<think>`` content is rendered as ``<think>\n...</think>`` with no
+      newline before ``</think>`` and no separator after ``</think>``.
+    - Historical thinking truncation prepends ``<think></think>`` directly to
+      the post-thinking text.
+    """
+
+    def _assistant_header_suffix(self, message: Message, ctx: RenderContext) -> str:
+        """Prepend <think></think> when Ultra's template omits thinking content.
+
+        As with :class:`Nemotron3Renderer`, historical thinking is only
+        replaced by an empty block when it is stripped from the output
+        (``strip_thinking_from_history=True``); when it is preserved, historical
+        messages are treated like non-historical ones.
+        """
+        is_historical = ctx.idx < ctx.last_user_index
+        content = message.get("content", "")
+        has_think = has_thinking(content)
+        if has_think and (not is_historical or not self.strip_thinking_from_history):
+            return ""
+        return "<think></think>"
+
+    def _format_thinking_text(self, thinking: str) -> str:
+        """Ultra does not add separator newlines around ``</think>``."""
+        return f"<think>\n{thinking}</think>"
+
+    def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
+        """Ultra appends one newline after assistant content before tool calls."""
+        assert "tool_calls" in message
+        calls = "".join(self._format_tool_call_xml(tc) + "\n" for tc in message["tool_calls"])
+        return [TextPart(type="text", text="\n" + calls)]
+
+    def _postprocess_parsed_message(self, message: Message) -> None:
+        """Ultra has no separator newline after ``</think>`` to strip."""
+        Qwen3_5Renderer._postprocess_parsed_message(self, message)
+
+
+class Nemotron3UltraPreserveThinkingRenderer(Nemotron3UltraRenderer):
+    """Ultra-format Nemotron renderer that keeps prior <think> blocks.
+
+    Ultra counterpart of :class:`Nemotron3PreserveThinkingRenderer`: matches
+    Ultra's HF chat template with ``truncate_history_thinking=False``, keeping
+    each historical assistant turn's ``<think>\\n...</think>`` block instead of
+    collapsing it to ``<think></think>``. See that class for when to use it.
+    """
+
+    def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None):
+        super().__init__(
+            tokenizer, image_processor=image_processor, strip_thinking_from_history=False
+        )
+
+
+class Nemotron3UltraMediumThinkingRenderer(Nemotron3UltraRenderer):
+    """Renderer for Nemotron-3 Ultra and 3.5 Super with medium-effort reasoning.
+
+    Matches the Ultra-format HF template with ``enable_thinking=True`` and
+    ``medium_effort=True`` by appending ``{reasoning effort: efficient}`` to
+    the last user message.
+    """
+
+    def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
+        """Render message, appending medium-effort suffix to the last user message."""
+        if message["role"] == "user" and ctx.idx == ctx.last_user_index:
+            content = message.get("content", "")
+            suffix = "\n\n{reasoning effort: efficient}"
+            message = message.copy()
+            if isinstance(content, str):
+                message["content"] = content + suffix
+            else:
+                message["content"] = [*content, TextPart(type="text", text=suffix)]
         return super().render_message(message, ctx)
 
 
@@ -394,6 +555,8 @@ class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
     difference from Nemotron3Renderer is the generation suffix:
     <think></think> (no trailing newlines) instead of <think>\\n.
     """
+
+    disables_thinking = True
 
     def _get_generation_suffix(self, role: Role, ctx: RenderContext) -> list[int]:
         """Return generation suffix tokens with ``<think></think>`` to disable thinking.
@@ -408,3 +571,9 @@ class Nemotron3DisableThinkingRenderer(Nemotron3Renderer):
         maybe_newline = "\n" if ctx.idx > 0 else ""
         header_str = f"{maybe_newline}<|im_start|>{role}\n<think></think>"
         return self.tokenizer.encode(header_str, add_special_tokens=False)
+
+
+class Nemotron3UltraDisableThinkingRenderer(
+    Nemotron3UltraRenderer, Nemotron3DisableThinkingRenderer
+):
+    """Renderer for Ultra-format Nemotron models with thinking disabled."""

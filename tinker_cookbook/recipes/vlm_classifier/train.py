@@ -36,8 +36,8 @@ class ExperimentConfig:
 
     dataset: str = "caltech101"
 
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5_disable_thinking"
+    model_name: str = "Qwen/Qwen3.5-397B-A17B"
 
     # Infrastructure parameters
     base_url: str | None = None
@@ -135,6 +135,7 @@ def run_experiment(experiment_config: ExperimentConfig):
     config = train.Config(
         log_path=experiment_path,
         model_name=experiment_config.model_name,
+        recipe_name="recipe_vlm_classifier",
         renderer_name=experiment_config.renderer_name,
         load_checkpoint_path=experiment_config.load_checkpoint_path,
         dataset_builder=dataset_builder,

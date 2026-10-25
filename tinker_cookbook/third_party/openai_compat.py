@@ -1,9 +1,9 @@
 """OpenAI format compatibility utilities for tinker-cookbook.
 
 Stateless conversion between OpenAI API message/tool formats and tinker-cookbook's
-internal Message/ToolSpec/ToolCall types.
+Message/ToolSpec/ToolCall types.
 
-The reverse direction (tinker -> OpenAI) is handled by ``Renderer.to_openai_message()``.
+Message conversion back to OpenAI is handled by ``Renderer.to_openai_message()``.
 """
 
 from __future__ import annotations
@@ -50,3 +50,18 @@ def openai_tools_to_tinker(tools: list[dict[str, Any]]) -> list[ToolSpec]:
             )
         )
     return out
+
+
+def tool_specs_to_openai_tools(tools: list[ToolSpec]) -> list[dict[str, Any]]:
+    """Convert renderer ToolSpec values to OpenAI-format function tools."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["parameters"],
+            },
+        }
+        for tool in tools
+    ]

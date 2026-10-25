@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
 
 import chz
 
@@ -18,9 +17,9 @@ from tinker_cookbook.rl import train
 @chz.chz
 class CLIConfig:
     # Model parameters
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
+    model_name: str = "Qwen/Qwen3.5-4B"
     lora_rank: int = 32
-    renderer_name: str | None = None
+    renderer_name: str | None = "qwen3_5_disable_thinking"
 
     # Training parameters
     learning_rate: float = 4e-5
@@ -111,16 +110,12 @@ async def cli_main(cli_config: CLIConfig) -> None:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/rl_search/{run_name}"
+        log_path = cli_utils.runs_path("rl_search", run_name)
 
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
         wandb_name = run_name
-
-    # Validate /tmp exists
-    if not Path("/tmp").exists():
-        raise ValueError("/tmp does not exist")
 
     # Check log directory
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
@@ -128,6 +123,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
     # Build training config
     config = train.Config(
         model_name=cli_config.model_name,
+        recipe_name="recipe_search_tool",
         renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=builder,

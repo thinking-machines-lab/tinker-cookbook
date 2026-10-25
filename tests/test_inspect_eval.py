@@ -30,8 +30,8 @@ from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 THINKING_MODEL = "Qwen/Qwen3-8B"
 THINKING_RENDERER = "qwen3"
 
-NON_THINKING_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
-NON_THINKING_RENDERER = "llama3"
+NON_THINKING_MODEL = "Qwen/Qwen3.5-9B"
+NON_THINKING_RENDERER = "qwen3_5_disable_thinking"
 
 PROMPT: list[InspectAIChatMessage] = [
     InspectAIChatMessageUser(content="What is 1 + 1? Reply with just the number.")

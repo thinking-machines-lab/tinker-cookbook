@@ -46,6 +46,7 @@ import tinker
 
 from tinker_cookbook import checkpoint_utils, cli_utils, renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ def _make_log_path(config: BenchmarkConfig, phase: str) -> str:
     if config.log_root:
         root = config.log_root
     else:
-        root = "/tmp/tinker-examples/sdft-benchmark"
+        root = cli_utils.runs_path("sdft-benchmark")
     model_slug = config.model_name.replace("/", "-")
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
     return f"{root}/{config.dataset}-{model_slug}-{phase}-{timestamp}"
@@ -121,7 +122,10 @@ async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
     logger.info(f"=== Phase: Base model eval on {config.dataset} ===")
     logger.info(f"Model: {config.model_name}")
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata("benchmark_sdft"),
+    )
     sampling_client = service_client.create_sampling_client(base_model=config.model_name)
 
     evaluator = _build_evaluator(config, renderer)
@@ -168,6 +172,7 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
 
     sl_config = sl_train.Config(
         model_name=config.model_name,
+        recipe_name="benchmark_sdft_sft",
         renderer_name=renderer_name,
         learning_rate=config.sft_learning_rate,
         lora_rank=config.lora_rank,
@@ -226,6 +231,7 @@ async def run_sdft(config: BenchmarkConfig) -> str | None:
 
     sdft_config = sdft.Config(
         model_name=config.model_name,
+        recipe_name="benchmark_sdft",
         renderer_name=renderer_name,
         lora_rank=config.lora_rank,
         base_url=config.base_url,
@@ -267,7 +273,10 @@ async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
     logger.info(f"=== Phase: Eval checkpoint on {config.dataset} ===")
     logger.info(f"Checkpoint: {config.checkpoint_path}")
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata("benchmark_sdft"),
+    )
     sampling_client = service_client.create_sampling_client(
         base_model=config.model_name, model_path=config.checkpoint_path
     )
@@ -390,7 +399,7 @@ async def cli_main(config: BenchmarkConfig) -> None:
         logger.info("=" * 60)
 
     # Save summary
-    log_root = config.log_root or "/tmp/tinker-examples/sdft-benchmark"
+    log_root = config.log_root or cli_utils.runs_path("sdft-benchmark")
     summary_path = Path(log_root) / f"benchmark_summary_{config.dataset}.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with open(summary_path, "w") as f:

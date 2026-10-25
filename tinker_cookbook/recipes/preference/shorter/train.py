@@ -14,8 +14,8 @@ from tinker_cookbook.rl.preference_envs import PairwisePreferenceRLDatasetBuilde
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    renderer_name: str | None = None
+    model_name: str = "Qwen/Qwen3.5-4B"
+    renderer_name: str | None = "qwen3_5_disable_thinking"
 
     # Training parameters
     batch_size: int = 32
@@ -42,7 +42,7 @@ def cli_main(cli_config: CLIConfig):
     model_tag = model_name.replace("/", "-")
     run_name = f"shorter-{model_tag}-{cli_config.batch_size}batch-{cli_config.group_size}group-{cli_config.learning_rate}lr-{date_and_time}"
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/shorter/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("shorter", run_name)
     wandb_name = cli_config.wandb_name or run_name
 
     comparison_builder = ShorterComparisonBuilder()
@@ -57,6 +57,7 @@ def cli_main(cli_config: CLIConfig):
 
     config = train.Config(
         model_name=model_name,
+        recipe_name="recipe_preference_shorter",
         renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=dataset_builder,

@@ -22,7 +22,7 @@ from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "meta-llama/Llama-3.2-1B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     dataset: str = "hhh"  # or path like tinker_cookbook.preference.preference_datasets:HHHBuilder
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
@@ -96,7 +96,7 @@ def cli_main(cli_config: CLIConfig):
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/dpo/{run_name}"
+        log_path = cli_utils.runs_path("dpo", run_name)
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
@@ -107,6 +107,7 @@ def cli_main(cli_config: CLIConfig):
     config = train_dpo.Config(
         log_path=log_path,
         model_name=cli_config.model_name,
+        recipe_name="recipe_preference_dpo",
         renderer_name=renderer_name,
         dataset_builder=get_dataset_builder(
             cli_config.dataset,

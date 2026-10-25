@@ -10,11 +10,12 @@ import chz
 import datasets
 import tinker
 
-from tinker_cookbook import checkpoint_utils, model_info, renderers
-from tinker_cookbook.supervised.common import compute_mean_nll
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info, renderers
+from tinker_cookbook.supervised.common import compute_bpb, compute_mean_nll
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -23,8 +24,8 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     base_url: str | None = None
-    log_path: str = "/tmp/tinker-examples/sl-loop"
-    model_name: str = "meta-llama/Llama-3.1-8B"
+    log_path: str = cli_utils.runs_path("sl-loop")
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     batch_size: int = 128
     learning_rate: float = 1e-4
     max_length: int = 32768
@@ -32,14 +33,17 @@ class Config:
     lora_rank: int = 32
     save_every: int = 20  # 0 = disabled
     ttl_seconds: int | None = 604800  # 7 days
+    max_steps: int | None = None
+    wandb_project: str | None = None
+    wandb_name: str | None = None
 
 
 def main(config: Config):
     # Setup logging
     ml_logger = ml_log.setup_logging(
         log_dir=config.log_path,
-        wandb_project=None,
-        wandb_name=None,
+        wandb_project=config.wandb_project,
+        wandb_name=config.wandb_name,
         config=config,
         do_configure_logging_module=True,
     )
@@ -67,7 +71,10 @@ def main(config: Config):
     logger.info(f"Train batches: {n_train_batches}")
 
     # Setup training client
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata("recipe_sl_loop"),
+    )
 
     # Check for resuming
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
@@ -84,12 +91,18 @@ def main(config: Config):
         start_batch = 0
 
     # Training loop (single epoch)
-    logger.info(f"Training for {n_train_batches} steps")
+    total_steps = (
+        n_train_batches if config.max_steps is None else min(n_train_batches, config.max_steps)
+    )
+    logger.info(f"Training for {total_steps} steps")
 
     # Shuffle dataset
     train_dataset = train_dataset.shuffle(seed=0)
 
     for batch_idx in range(start_batch, n_train_batches):
+        if config.max_steps is not None and batch_idx >= config.max_steps:
+            break
+
         start_time = time.time()
         step = batch_idx
         metrics = {}
@@ -138,7 +151,10 @@ def main(config: Config):
         # Compute train metrics
         train_logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
         train_weights = [d.loss_fn_inputs["weights"] for d in batch]
+        train_target_tokens = [d.loss_fn_inputs["target_tokens"] for d in batch]
         train_nll = compute_mean_nll(train_logprobs, train_weights)
+        # Bits per byte: a tokenizer-independent counterpart to train_mean_nll.
+        train_bpb = compute_bpb(train_logprobs, train_weights, train_target_tokens, tokenizer)
 
         # Log metrics
         metrics.update(
@@ -146,6 +162,7 @@ def main(config: Config):
             num_tokens=sum(d.model_input.length for d in batch),
             learning_rate=current_lr,
             train_mean_nll=train_nll,
+            train_mean_bpb=train_bpb,
             progress=step / n_train_batches,
             time_total=time.time() - start_time,
         )

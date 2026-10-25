@@ -61,10 +61,7 @@ class TestPluginManifest:
         """plugin.json must be valid JSON with required fields."""
         data = json.loads(PLUGIN_JSON.read_text())
         assert "name" in data, "plugin.json missing 'name'"
-        assert "skills" in data, "plugin.json missing 'skills'"
-        assert data["skills"] == "skills/", (
-            f"plugin.json 'skills' should be 'skills/', got '{data['skills']}'"
-        )
+        assert "description" in data, "plugin.json missing 'description'"
 
     def test_plugin_name_is_tinker(self):
         """Plugin name must be 'tinker' for /tinker:* namespace."""

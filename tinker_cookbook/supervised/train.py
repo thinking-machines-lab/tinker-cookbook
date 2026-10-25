@@ -27,13 +27,15 @@ from tinker_cookbook.eval.evaluators import (
     TrainingClientEvaluator,
 )
 from tinker_cookbook.exceptions import ConfigurationError
-from tinker_cookbook.supervised.common import compute_mean_nll
-from tinker_cookbook.supervised.nll_evaluator import NLLEvaluator
+from tinker_cookbook.supervised.common import compute_bpb, compute_mean_nll
+from tinker_cookbook.supervised.nll_evaluator import SamplerNLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import iteration_dir
+from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,9 @@ class Config:
         log_path (str): Directory for checkpoints, metrics, and trace files.
             Tilde (``~``) is expanded automatically.
         model_name (str): HuggingFace model identifier (e.g. ``"Qwen/Qwen3-8B"``).
+        recipe_name (str): Slug identifying the recipe driving this run
+            (e.g. ``"recipe_sl_basic"``).  Attached as ``user_metadata`` on the
+            ``ServiceClient`` so all downstream training/sampling calls inherit it.
         load_checkpoint_path (str | None): Path to a Tinker checkpoint to
             initialise weights from. ``None`` starts from the base model.
         renderer_name (str | None): Renderer to apply when tokenising chat
@@ -76,6 +81,10 @@ class Config:
         adam_eps (float): Adam epsilon. Default ``1e-8``.
         wandb_project (str | None): Weights & Biases project name.
         wandb_name (str | None): Weights & Biases run name.
+        session_name (str | None): Human-readable ``display_name`` for the
+            Tinker session, shown in the Tinker console. When ``None``, falls
+            back to ``wandb_name`` if set, otherwise no display name is sent
+            (see :func:`~tinker_cookbook.utils.session_naming.resolve_session_display_name`).
         enable_trace (bool): Enable async tracing to ``trace_events.jsonl``.
         span_chart_every (int): Write a Gantt-chart HTML every *N* steps
             (0 disables).
@@ -93,10 +102,11 @@ class Config:
 
     Example::
 
+        from tinker_cookbook import cli_utils
         from tinker_cookbook.supervised import train
 
         config = train.Config(
-            log_path="~/logs/sft-run",
+            log_path=cli_utils.runs_path("sft-run"),
             model_name="Qwen/Qwen3-8B",
             dataset_builder=my_dataset_builder,
             learning_rate=1e-4,
@@ -107,6 +117,7 @@ class Config:
     # Required parameters
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     model_name: str
+    recipe_name: str
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
     dataset_builder: SupervisedDatasetBuilder
@@ -125,7 +136,12 @@ class Config:
     # Checkpointing and evaluation (0 = disabled for *_every fields)
     evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
     infrequent_evaluator_builders: list[EvaluatorBuilder] = chz.field(default_factory=list)
+    # Step-based periodic checkpoint cadence
     save_every: int = 20
+    # Token-based periodic checkpoint cadence
+    save_every_tokens: int = 0
+    # Wall-clock periodic checkpoint cadence in seconds
+    save_every_seconds: float = 0.0
     eval_every: int = 10
     infrequent_eval_every: int = 100
     # Periodic checkpoints use this TTL; the final checkpoint is kept indefinitely.
@@ -148,6 +164,8 @@ class Config:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set.
+    session_name: str | None = None
 
     enable_trace: bool = False
     span_chart_every: int = 0
@@ -195,6 +213,8 @@ class SubmittedBatch:
     batch_idx: int
     eval_metrics: dict[str, float] | None = None
     infrequent_eval_metrics: dict[str, float] | None = None
+    # Sum of `datum.model_input.length` across this batch's data
+    num_tokens: int = 0
 
 
 async def run_evals(
@@ -279,9 +299,11 @@ async def main(config: Config):
     if resume_info:
         start_epoch = resume_info.epoch or 0
         start_batch = resume_info.batch
+        resumed_elapsed_tokens: int = int(resume_info.get("elapsed_tokens", 0))
     else:
         start_epoch = 0
         start_batch = 0
+        resumed_elapsed_tokens = 0
     # (start_epoch, start_batch) now represent the next batch to execute if resuming.
 
     ml_logger = ml_log.setup_logging(
@@ -304,7 +326,17 @@ async def main(config: Config):
         )
         trace.trace_init(output_file=trace_events_path)
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    session_display_name = resolve_session_display_name(
+        session_name=config.session_name,
+        wandb_name=config.wandb_name,
+    )
+    if session_display_name is not None:
+        logger.info(f"Tinker session display name: {session_display_name}")
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata(config.recipe_name),
+        display_name=session_display_name,
+    )
 
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
@@ -344,12 +376,16 @@ async def main(config: Config):
         service_client=service_client,
         log_path=config.log_path,
         save_every=config.save_every,
+        save_every_tokens=config.save_every_tokens,
+        save_every_seconds=config.save_every_seconds,
         ttl_seconds=config.ttl_seconds,
         rolling_save_every=config.rolling_save_every,
         rolling_ttl_seconds=config.rolling_ttl_seconds,
         store=store,
         async_periodic_saves=config.async_periodic_saves,
     )
+    checkpoint_mgr.restore_last_saved_tokens(resumed_elapsed_tokens)
+    elapsed_tokens: int = resumed_elapsed_tokens
 
     dataset, maybe_test_dataset = config.dataset_builder()
     n_batches = len(dataset)
@@ -361,7 +397,9 @@ async def main(config: Config):
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
     if maybe_test_dataset is not None:
-        evaluators.append(NLLEvaluator.from_dataset(maybe_test_dataset))
+        # Pass the tokenizer so the evaluator also reports test/bpb (bits per
+        # byte), a tokenizer-independent NLL that is comparable across models.
+        evaluators.append(SamplerNLLEvaluator.from_dataset(maybe_test_dataset, tokenizer=tokenizer))
 
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
     logger.info(
@@ -425,18 +463,26 @@ async def main(config: Config):
             batch_idx=batch_idx,
             eval_metrics=eval_metrics,
             infrequent_eval_metrics=infrequent_eval_metrics,
+            num_tokens=sum(datum.model_input.length for datum in data),
         )
 
     @trace.scope
     async def finish_batch(submitted: SubmittedBatch):
+        nonlocal elapsed_tokens
         trace.update_scope_context({"step": submitted.step})
 
         metrics = submitted.metrics
         metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
 
+        elapsed_tokens += submitted.num_tokens
         await checkpoint_mgr.maybe_save_async(
             step=submitted.step,
-            loop_state={"epoch": submitted.epoch_idx, "batch": submitted.batch_idx},
+            loop_state={
+                "epoch": submitted.epoch_idx,
+                "batch": submitted.batch_idx,
+                "elapsed_tokens": elapsed_tokens,
+            },
+            elapsed_tokens=elapsed_tokens,
         )
 
         async with trace.scope_span("step"):
@@ -452,12 +498,17 @@ async def main(config: Config):
 
         metrics.update(
             num_sequences=len(submitted.data),
-            num_tokens=sum(datum.model_input.length for datum in submitted.data),
+            num_tokens=submitted.num_tokens,
             num_loss_tokens=sum(
                 sum(datum.loss_fn_inputs["weights"].data) for datum in submitted.data
             ),
             train_mean_nll=train_nll,
         )
+        # Bits per byte: a tokenizer-independent counterpart to train_mean_nll,
+        # letting NLL be compared across models with different tokenizers.
+        if submitted.data and "target_tokens" in submitted.data[0].loss_fn_inputs:
+            target_tokens = [datum.loss_fn_inputs["target_tokens"] for datum in submitted.data]
+            metrics["train_mean_bpb"] = compute_bpb(logprobs, weights, target_tokens, tokenizer)
         # Merge evaluation metrics gathered before the training step was submitted
         if submitted.eval_metrics is not None:
             metrics.update(submitted.eval_metrics)
@@ -534,7 +585,11 @@ async def main(config: Config):
     )
     if did_train:
         await checkpoint_mgr.save_final_async(
-            loop_state={"epoch": config.num_epochs, "batch": 0},
+            loop_state={
+                "epoch": config.num_epochs,
+                "batch": 0,
+                "elapsed_tokens": elapsed_tokens,
+            },
         )
     else:
         logger.info("Training was already complete; nothing to do")

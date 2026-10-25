@@ -12,8 +12,8 @@ from tinker_cookbook.renderers.base import ParseTermination
 from tinker_cookbook.renderers.role_colon import RoleColonRenderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-# Llama base models recommend role_colon and have a stable EOS token.
-_BASE_MODEL = "meta-llama/Llama-3.1-8B"
+# Qwen3.5 base models recommend role_colon and have a stable EOS token.
+_BASE_MODEL = "Qwen/Qwen3.5-9B-Base"
 
 
 @pytest.fixture(scope="module")
@@ -91,3 +91,22 @@ def test_parse_response_multiple_user_delimiters_is_malformed(renderer: RoleColo
 
     assert termination == ParseTermination.MALFORMED
     assert message["content"] == "Answer."
+
+
+@pytest.mark.parametrize(
+    "content",
+    [" leading", "trailing ", "  both  ", " "],
+    ids=["leading", "trailing", "both", "only-a-space"],
+)
+def test_parse_response_keeps_the_content_whitespace_it_rendered(
+    renderer: RoleColonRenderer, content: str
+):
+    """Content whose own whitespace is load-bearing: `" leading"` and `"leading"` render
+    differently, so they must parse back differently."""
+    rendered = " " + content + "\n\n"
+    tokens = renderer.tokenizer.encode(rendered + "User:", add_special_tokens=False)
+
+    message, termination = renderer.parse_response(tokens)
+
+    assert termination == ParseTermination.STOP_SEQUENCE
+    assert message["content"] == content

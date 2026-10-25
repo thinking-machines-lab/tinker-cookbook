@@ -20,6 +20,7 @@ Type aliases
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TypeAlias
 
 import chz
@@ -34,6 +35,87 @@ Observation: TypeAlias = tinker.ModelInput
 Logprobs: TypeAlias = list[float]
 Metrics: TypeAlias = dict[str, float | int]
 Logs: TypeAlias = dict[str, str | int | float]
+
+
+class StopReason(StrEnum):
+    """Why a trajectory ended.
+
+    Environments that know why an episode terminated record the reason as a
+    one-hot metric ``metrics["stop/<reason>"] = 1.0`` on the final transition
+    (alongside any pre-existing metric keys), and the rollout loop mirrors it
+    onto :attr:`Trajectory.stop_reason`.
+
+    Not every value is produced by every environment; some values are
+    reserved for rollout features that report them (e.g. sampled-token
+    budgets, tool-call caps, and rollout timeouts).
+    """
+
+    COMPLETED = "completed"
+    """The agent finished on its own (e.g. responded without tool calls)."""
+    TOOL_STOPPED = "tool_stopped"
+    """A tool signalled that the episode should stop."""
+    MAX_TURNS = "max_turns"
+    """The turn cap was reached."""
+    MAX_TOKENS = "max_tokens"
+    """The token budget was exhausted: mid-turn (sampler ``stop_reason='length'``),
+    between turns (``max_trajectory_tokens`` remainder too small), or by an
+    oversized initial prompt."""
+    MAX_SAMPLED_TOKENS = "max_sampled_tokens"
+    """The cumulative sampled-token (action-only) budget was exhausted."""
+    MAX_TOOL_CALLS = "max_tool_calls"
+    """The trajectory-level tool-call budget was exhausted."""
+    CONTEXT_OVERFLOW = "context_overflow"
+    """The rendered conversation exceeded the trajectory token budget."""
+    PARSE_ERROR = "parse_error"
+    """The model output (or its tool calls) failed to parse."""
+    ROLLOUT_TIMEOUT = "rollout_timeout"
+    """The rollout exceeded its wall-clock time budget."""
+
+
+STOP_METRIC_PREFIX = "stop/"
+"""Metric-key prefix for one-hot stop-reason metrics (``stop/<reason>``)."""
+
+PARSE_ERROR_MASKED_METRIC_KEY = "parse_error_masked"
+"""One-hot metric marking a transition as a masked parse-error turn.
+
+Set by environments when a :class:`~tinker_cookbook.rl.rollout_limits.ParseErrorPolicy`
+with ``mask_error_turns=True`` is active.  ``trajectory_to_data`` zeroes the
+action-token loss mask and advantages for transitions carrying this metric,
+so the malformed sample is excluded from training while the rest of the
+trajectory trains normally."""
+
+
+@dataclass(frozen=True)
+class InitialObservationOverflow:
+    """Sentinel returned by :meth:`Env.initial_observation` instead of an
+    ``(observation, stop_condition)`` pair when the initial prompt already
+    exceeds the environment's token budget.
+
+    The rollout loop (``do_single_rollout``) converts this into an immediate
+    graceful stop: a trajectory with a single synthetic transition (empty
+    observation, empty action, ``episode_done=True``) carrying ``reward``,
+    ``metrics``, and ``logs``, with ``Trajectory.stop_reason`` mirrored from
+    the ``stop/<reason>`` metric (:attr:`StopReason.MAX_TOKENS` for prompt
+    overflow).  The synthetic transition contributes no training tokens
+    (``trajectory_to_data`` emits no datum for it) but its reward counts
+    toward the trajectory's total, so group reward centering sees the
+    overflowed member.
+
+    Returning this sentinel (rather than raising) keeps one oversized prompt
+    from failing the whole group under the ``FailFast`` rollout strategy.
+
+    Attributes:
+        reward (float): Reward assigned to the synthetic final transition
+            (e.g. the environment's flat ``context_overflow_reward``).
+        metrics (Metrics): Metrics for the synthetic transition; should
+            include a one-hot ``stop/<reason>`` key so the stop reason is
+            mirrored onto the trajectory.
+        logs (Logs): Diagnostic info (e.g. the overflow description).
+    """
+
+    reward: float
+    metrics: Metrics = field(default_factory=dict)
+    logs: Logs = field(default_factory=dict)
 
 
 @dataclass
@@ -143,12 +225,19 @@ class Env(ABC):
     """
 
     @abstractmethod
-    async def initial_observation(self) -> tuple[Observation, StopCondition]:
+    async def initial_observation(
+        self,
+    ) -> tuple[Observation, StopCondition] | InitialObservationOverflow:
         """Return the starting observation and stop condition for this episode.
 
         Returns:
-            tuple[Observation, StopCondition]: The initial observation (model input)
-                and the stop condition for the first generation step.
+            tuple[Observation, StopCondition] | InitialObservationOverflow:
+                The initial observation (model input) and the stop condition
+                for the first generation step.  Environments that enforce a
+                token budget may instead return
+                :class:`InitialObservationOverflow` when the initial prompt
+                already exceeds it, which ends the rollout immediately and
+                gracefully (no sampling call is made).
         """
         pass
 
@@ -181,10 +270,15 @@ class Trajectory:
             episode.
         final_ob (Observation): The observation returned after the last
             action (i.e., the terminal state).
+        stop_reason (str | None): Why the episode ended, when known.  Usually
+            a :class:`StopReason` value, mirrored from the final transition's
+            ``stop/<reason>`` metric.  ``None`` when the environment did not
+            report a reason.
     """
 
     transitions: list[Transition]
     final_ob: Observation
+    stop_reason: str | None = None
 
 
 @dataclass(frozen=True)

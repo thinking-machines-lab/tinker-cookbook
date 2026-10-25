@@ -4,11 +4,12 @@
 python -m tinker_cookbook.recipes.multiplayer_rl.guess_number.train
 ```
 
-The `test/env/all/reward/total` should increase from ~40% to >=50% in 20 steps.
+The `test/env/all/reward/total` should increase from roughly 0 (slightly negative at first, while the model learns the answer format) to >=80% within 20 steps.
 
 ### Background: Guess the Number
 
 In this task, we train an LLM to guess a hidden integer number between 0 and 1024.
+
 - If the LLM guess correctly, the task is done
 - If the LLM guesses incorrectly, the LLM will be given the chance to guess again and information whether the guessed number is too low or high.
 - The interaction automatically ends after 10 guesses.
@@ -45,6 +46,7 @@ To customize your own training environment, you need to write a file like `recip
 We have already implemented the abstract class `Env` for you, so you can focus on implementing the initial observation, transition function, and reward function.
 
 We will start by explaining the `step` function, which is the "core" of the environment: it determines
+
 - how the LLM-generated action will influence the environment,
 - what is the reward of this action,
 - whether the game will end with this action, and

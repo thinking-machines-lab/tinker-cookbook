@@ -35,7 +35,7 @@ register_litellm_provider()
 response = await litellm.acompletion(
     model="tinker/my-label",
     messages=[{"role": "user", "content": "Hello!"}],
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
     temperature=0.7,
     max_tokens=256,
 )
@@ -49,9 +49,9 @@ LiteLLM uses the `model` parameter to decide which provider handles the request.
 
 The actual model is determined by `base_model`, which is passed directly to Tinker's `ServiceClient.create_sampling_client(base_model=...)`. This must be a model name from Tinker's [model lineup](https://tinker-docs.thinkingmachines.ai/tinker/models/), e.g.:
 
-- `Qwen/Qwen3-4B-Instruct-2507`
-- `meta-llama/Llama-3.1-8B-Instruct`
-- `moonshotai/Kimi-K2.5`
+- `Qwen/Qwen3.5-4B`
+- `Qwen/Qwen3.5-9B`
+- `moonshotai/Kimi-K2.6`
 
 You can list available models with:
 
@@ -87,7 +87,7 @@ provider.set_client(sampler)
 response = await litellm.acompletion(
     model="tinker/my-finetuned",
     messages=[{"role": "user", "content": "Hello!"}],
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
 )
 ```
 
@@ -112,7 +112,7 @@ The key feature of this integration is token-level access for training workflows
 response = await litellm.acompletion(
     model="tinker/my-label",
     messages=messages,
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
 )
 
 # Raw token IDs are in provider_specific_fields
@@ -138,13 +138,13 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 
 ## Tool calling
 
-Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, DeepSeek V3, Kimi K2/K2.5, GPT-OSS):
+Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, DeepSeek V3, Kimi K2/K2.6, GPT-OSS):
 
 ```python
 response = await litellm.acompletion(
     model="tinker/my-agent",
     messages=[{"role": "user", "content": "What's the weather in SF?"}],
-    base_model="Qwen/Qwen3-4B-Instruct-2507",
+    base_model="Qwen/Qwen3.5-4B",
     tools=[{
         "type": "function",
         "function": {

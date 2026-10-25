@@ -17,6 +17,11 @@ from tinker_cookbook.renderers.base import (
 logger = logging.getLogger(__name__)
 
 
+# Named once so `render_message` and `parse_response` stay inverses of each other.
+_CONTENT_PREFIX = " "
+_CONTENT_SUFFIX = "\n\n"
+
+
 class RoleColonRenderer(Renderer):
     """Simple role:content format renderer.
 
@@ -49,7 +54,7 @@ class RoleColonRenderer(Renderer):
             RenderedMessage: Header, output, and stop_overlap token chunks.
         """
         header_str = message["role"].capitalize() + ":"
-        output_str = " " + ensure_text(message["content"]) + "\n\n"
+        output_str = _CONTENT_PREFIX + ensure_text(message["content"]) + _CONTENT_SUFFIX
         # stop_overlap completes the stop sequence "\n\nUser:" for assistant messages.
         # For non-assistant messages, we use a placeholder that's never actually concatenated.
         stop_overlap_str = "User:" if message["role"] == "assistant" else "<UNUSED>"
@@ -100,27 +105,27 @@ class RoleColonRenderer(Renderer):
 
         str_response = str(self.tokenizer.decode(response))
         splitted = str_response.split("\n\nUser:")
+        content = splitted[0].removeprefix(_CONTENT_PREFIX).removesuffix(_CONTENT_SUFFIX)
         if len(splitted) == 1:
             if terminated_with_eos:
-                return Message(role="assistant", content=str_response.strip()), ParseTermination.EOS
+                return Message(role="assistant", content=content), ParseTermination.EOS
             # No "\n\nUser:" delimiter and no EOS — the response was likely
             # truncated mid-sentence (max_tokens hit). Best-effort message,
             # MALFORMED termination.
             logger.debug(f"Response is not a valid assistant response: {str_response}")
             return (
-                Message(role="assistant", content=str_response.strip()),
+                Message(role="assistant", content=content),
                 ParseTermination.MALFORMED,
             )
         elif len(splitted) == 2:
-            before, _after = splitted
             if terminated_with_eos:
                 # Malformed: sampling should have stopped at "\n\nUser:" before emitting EOS.
                 return (
-                    Message(role="assistant", content=before.strip()),
+                    Message(role="assistant", content=content),
                     ParseTermination.MALFORMED,
                 )
             return (
-                Message(role="assistant", content=before.strip()),
+                Message(role="assistant", content=content),
                 ParseTermination.STOP_SEQUENCE,
             )
         else:
@@ -130,9 +135,7 @@ class RoleColonRenderer(Renderer):
                 len(splitted) - 1,
                 str_response,
             )
-            return Message(
-                role="assistant", content=splitted[0].strip()
-            ), ParseTermination.MALFORMED
+            return Message(role="assistant", content=content), ParseTermination.MALFORMED
 
     @property
     def _bos_tokens(self) -> list[int]:

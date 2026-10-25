@@ -9,42 +9,54 @@ on:
         description: "Git tag to publish (e.g. v0.2.0). Must already exist."
         required: true
 
+permissions:
+  contents: read
+
 jobs:
-  publish:
+  # Builds without id-token, so build-time code can't mint a PyPI token.
+  build:
     runs-on: ubuntu-latest
     if: github.repository == 'thinking-machines-lab/tinker-cookbook'
 
     steps:
       - name: determine ref
         id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # Only protected release tags; a branch or SHA here would skip tag protection.
+            [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag must be vX.Y.Z"; exit 1; }
+            echo "ref=refs/tags/$INPUT_TAG" >> "$GITHUB_OUTPUT"
           else
-            echo "ref=${{ github.ref }}" >> "$GITHUB_OUTPUT"
+            echo "ref=$GITHUB_REF" >> "$GITHUB_OUTPUT"
           fi
 
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.ref.outputs.ref }}
           fetch-depth: 0  # hatch-vcs needs full history for version
+          persist-credentials: false
 
       - name: install-uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
-          enable-cache: true
+          enable-cache: false  # "auto" still caches on workflow_dispatch
 
       - name: build
         run: uv build
 
       - name: verify version matches tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           BUILT_VERSION=$(ls dist/*.tar.gz | sed 's/.*tinker_cookbook-//;s/\.tar\.gz//')
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_VERSION="${{ inputs.tag }}"
-            TAG_VERSION="${TAG_VERSION#v}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG_VERSION="${INPUT_TAG#v}"
           fi
           echo "Built version: $BUILT_VERSION"
           echo "Tag version: $TAG_VERSION"
@@ -57,7 +69,28 @@ jobs:
         run: |
           uv run python -c "import tinker_cookbook; print(f'Version: {tinker_cookbook.__version__}')"
 
+      - name: upload dists
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # PyPI trusts only this workflow in this environment; its reviewers approve each upload.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: download dists
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
       - name: publish
-        run: uv publish --token="$PYPI_TOKEN"
-        env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

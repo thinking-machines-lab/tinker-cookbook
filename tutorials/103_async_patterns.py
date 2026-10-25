@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.0"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,17 +14,19 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 03: Efficient Sampling with Tinker
+    # Tutorial 103: Efficient Sampling with Tinker
 
     Tinker runs on remote GPUs. Every API call involves network latency plus GPU compute time. If you send sampling requests one at a time -- send, wait, send, wait -- you spend most of your time idle while Tinker works.
 
-    The solution: send requests **concurrently** as futures. Tinker can batch and pipeline concurrent requests on the GPU, so N requests take far less than N times the cost of one request. This matters most for sampling, where RL training may require hundreds of completions per step.
+    The solution: send requests **concurrently** with `asyncio.gather`. Tinker can batch and pipeline concurrent requests on the GPU, so N requests take far less than N times the cost of one request. This matters most for sampling, where RL training may require hundreds of completions per step.
     """)
     return
 
 
 @app.cell
 def _():
+    import asyncio
+    import os
     import time
     import warnings
 
@@ -34,7 +36,7 @@ def _():
 
     from tinker_cookbook.renderers import get_renderer, get_text_content
 
-    return get_renderer, get_text_content, time, tinker
+    return asyncio, get_renderer, get_text_content, os, time, tinker
 
 
 @app.cell(hide_code=True)
@@ -55,9 +57,7 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, get_renderer, mo, tinker):
-    import os
-
+async def _(api_key, get_renderer, mo, os, tinker):
     mo.stop(
         "TINKER_API_KEY" not in os.environ and not api_key.value,
         "Paste your API key above",
@@ -98,7 +98,7 @@ def _(mo):
     mo.md(r"""
     ## Sequential sampling (the slow way)
 
-    The simplest approach: for each prompt, build the generation input, call `sample()`, immediately call `.result()` to block until it finishes, then move on to the next. Each request waits for the previous one to complete before starting.
+    The simplest approach: for each prompt, build the generation input, `await sample_async()` to block until it finishes, then move on to the next. Each request waits for the previous one to complete before starting.
     """)
     return
 
@@ -137,9 +137,9 @@ async def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Concurrent sampling with futures
+    ## Concurrent sampling with `asyncio.gather`
 
-    `sample()` returns a future immediately -- the request is already in flight before you call `.result()`. The key insight: submit **all** requests first, then collect results. Tinker batches concurrent requests on the GPU for higher throughput.
+    `asyncio.gather` schedules every `sample_async()` coroutine onto the event loop at once, so all the requests go out before any of them finishes -- then it waits for the whole batch. The key insight: submit **all** requests first, then collect results. Tinker batches concurrent requests on the GPU for higher throughput.
     """)
     return
 
@@ -201,6 +201,7 @@ async def _(get_text_content, params, renderer, sampling_client, time):
     _result = await sampling_client.sample_async(
         prompt=_model_input, num_samples=_GROUP_SIZE, sampling_params=params
     )
+
     # Single call with num_samples=4 -- generates 4 independent completions
     multi_time = time.time() - _start
     print(f"Prompt: {test_prompt}\n")
@@ -208,12 +209,14 @@ async def _(get_text_content, params, renderer, sampling_client, time):
         _response_msg, _ = renderer.parse_response(_seq.tokens)
         text = get_text_content(_response_msg)
         print(f"Completion {i + 1}: {text[:150]}\n")
+
     _start = time.time()
     for _ in range(_GROUP_SIZE):
         await sampling_client.sample_async(
             prompt=_model_input, num_samples=1, sampling_params=params
         )
     sequential_multi_time = time.time() - _start
+
     print(f"num_samples={_GROUP_SIZE} in one call: {multi_time:.1f}s")
     print(f"{_GROUP_SIZE} sequential calls:        {sequential_multi_time:.1f}s")
     # Compare: 4 sequential single calls
@@ -226,13 +229,14 @@ def _(mo):
     mo.md(r"""
     ## Putting it together: batch evaluation
 
-    Combine both techniques -- concurrent futures across prompts and `num_samples` per prompt -- for maximum throughput. This is exactly the pattern used in RL training: submit many sampling requests in parallel, each generating a group of completions, then collect and grade them all.
+    Combine both techniques -- concurrent requests across prompts and `num_samples` per prompt -- for maximum throughput. This is exactly the pattern used in RL training: submit many sampling requests in parallel, each generating a group of completions, then collect and grade them all.
     """)
     return
 
 
 @app.cell
 async def _(
+    asyncio,
     get_text_content,
     params,
     prompts,
@@ -240,8 +244,6 @@ async def _(
     sampling_client,
     time,
 ):
-    import asyncio
-
     _GROUP_SIZE = 4
     _start = time.time()
 
@@ -268,7 +270,7 @@ async def _(
     batch_time = time.time() - _start
     print(f"Total: {total_completions} completions in {batch_time:.1f}s")
     print(f"Throughput: {total_completions / batch_time:.1f} completions/second")
-    return (asyncio,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -276,9 +278,9 @@ def _(mo):
     mo.md(r"""
     ## Next steps
 
-    This tutorial showed the two key techniques for efficient sampling: **concurrent futures** (submit all requests before collecting results) and **num_samples** (generate multiple completions per call). Together, they give you high throughput with minimal code changes.
+    This tutorial showed the two key techniques for efficient sampling: **concurrent requests** with `asyncio.gather` (submit all requests before collecting results) and **num_samples** (generate multiple completions per call). Together, they give you high throughput with minimal code changes.
 
-    - **Tutorial 04** (`104_first_rl.py`): Uses this exact pattern -- sample many completions, grade them with a reward function, and train with GRPO.
+    - **Tutorial 104** (`104_first_rl.py`): Uses this exact pattern -- sample many completions, grade them with a reward function, and train with GRPO.
     - **Async docs** (`docs/async.mdx`): Full reference for sync/async APIs, the double-await pattern, and overlapping training requests.
     """)
     return

@@ -42,8 +42,9 @@ from tinker_cookbook.rl.types import (
     EnvGroupBuilder,
     TrajectoryGroup,
 )
-from tinker_cookbook.tokenizer_utils import Tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import iteration_dir, safezip
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ class Config:
     learning_rate: float
     dataset_configs: list[DistillationDatasetConfig]
     model_name: str
+    recipe_name: str
     renderer_name: str | None = None
     max_tokens: int
     temperature: float = 1.0
@@ -400,7 +402,10 @@ async def main(
     else:
         start_batch = 0
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata(config.recipe_name),
+    )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link
@@ -432,8 +437,7 @@ async def main(
             config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
 
-    # Get tokenizer from training client
-    tokenizer = training_client.get_tokenizer()
+    tokenizer = get_tokenizer(config.model_name)
 
     # Create datasets and teacher sampling clients from configs
     datasets = []

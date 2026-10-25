@@ -1,16 +1,19 @@
 """Sweep runner — execute experiments across a parameter grid."""
 
 import logging
+import multiprocessing
 import os
 import typing
 from collections.abc import Callable
 from concurrent.futures import Executor, Future, ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime
 from typing import Any, TypeVar
 
 import chz
 import pandas as pd
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.chat_sl.sweep.grid import default_run_name
 from tinker_cookbook.recipes.chat_sl.sweep.grid import grid as make_grid
 from tinker_cookbook.recipes.chat_sl.sweep.results import collect
@@ -18,8 +21,6 @@ from tinker_cookbook.recipes.chat_sl.sweep.results import collect
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-_DEFAULT_SWEEP_ROOT = "/tmp/tinker-sweeps"
 
 
 def _validate_axes(config_type: type, sweep_axes: dict[str, list[Any]]) -> None:
@@ -55,7 +56,7 @@ def _validate_config_has_log_path(config_type: type) -> None:
 def _make_sweep_dir() -> str:
     """Generate a default sweep directory with timestamp."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return os.path.join(_DEFAULT_SWEEP_ROOT, timestamp)
+    return cli_utils.runs_path("sweeps", timestamp)
 
 
 def _run_single(
@@ -90,28 +91,35 @@ def run(
         from tinker_cookbook.recipes.chat_sl import sweep
         from tinker_cookbook.recipes.chat_sl.train import CLIConfig, cli_main
 
-        results = sweep.run(
-            cli_main,
-            CLIConfig(model_name="Qwen/Qwen3.5-4B", dataset="tulu3"),
-            learning_rate=[1e-4, 3e-4, 1e-3],
-            lora_rank=[32, 128],
-        )
+        # Guard the call with ``if __name__ == "__main__":``. Parallel runs
+        # start workers with the "spawn" method, which re-imports the entry
+        # script in each worker; an unguarded sweep.run() at module top level
+        # would recursively launch itself.
+        if __name__ == "__main__":
+            results = sweep.run(
+                cli_main,
+                CLIConfig(model_name="Qwen/Qwen3.5-4B", dataset="tulu3"),
+                learning_rate=[1e-4, 3e-4, 1e-3],
+                lora_rank=[32, 128],
+            )
 
-        # Parallel execution:
-        results = sweep.run(cli_main, base, max_parallel=4,
-                            learning_rate=[1e-4, 3e-4])
+            # Parallel execution:
+            results = sweep.run(cli_main, base, max_parallel=4,
+                                learning_rate=[1e-4, 3e-4])
 
-        # Custom executor (e.g. Ray):
-        results = sweep.run(cli_main, base, executor=ray_pool,
-                            learning_rate=[1e-4, 3e-4])
+            # Custom executor (e.g. Ray):
+            results = sweep.run(cli_main, base, executor=ray_pool,
+                                learning_rate=[1e-4, 3e-4])
 
     Args:
         main_fn: Recipe entry function that accepts a single config argument.
             Must be importable (not defined inline in ``__main__``) when using
-            ``max_parallel > 1`` or ``executor``.
+            ``max_parallel > 1`` or ``executor``. The ``sweep.run()`` call
+            itself must be inside ``if __name__ == "__main__":`` since spawned
+            workers re-import the entry module.
         base_config: A ``@chz.chz`` config with defaults for non-swept params.
             Must have a ``log_path`` field.
-        sweep_dir: Directory for run outputs. Default: ``/tmp/tinker-sweeps/{timestamp}/``.
+        sweep_dir: Directory for run outputs. Default: ``~/tinker-runs/sweeps/{timestamp}/``.
         max_parallel: Number of parallel workers. 1 = sequential (default),
             >1 = ``ProcessPoolExecutor`` managed internally. Ignored if
             ``executor`` is provided.
@@ -157,7 +165,11 @@ def run(
     if executor is not None:
         _run_parallel(main_fn, base_config, points, sweep_dir, skip_existing, namer, executor)
     elif max_parallel > 1:
-        with ProcessPoolExecutor(max_workers=max_parallel) as pool:
+        # Use "spawn": the Tinker client's background threads do not survive
+        # fork(), so fork-started workers (the Linux default) hang silently.
+        with ProcessPoolExecutor(
+            max_workers=max_parallel, mp_context=multiprocessing.get_context("spawn")
+        ) as pool:
             _run_parallel(main_fn, base_config, points, sweep_dir, skip_existing, namer, pool)
     else:
         _run_sequential(main_fn, base_config, points, sweep_dir, skip_existing, namer)
@@ -190,6 +202,29 @@ def _run_sequential(
             logger.exception(f"Run failed: {run_name}")
 
 
+_BOOTSTRAP_ERROR_SNIPPET = (
+    "An attempt has been made to start a new process before the current process "
+    "has finished its bootstrapping phase"
+)
+
+
+def _is_spawn_bootstrap_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` is multiprocessing's spawn bootstrapping RuntimeError.
+
+    This happens when the entry script calls ``sweep.run()`` at module top
+    level: spawn-started workers re-import the entry module, which re-executes
+    the unguarded ``sweep.run()`` call.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, RuntimeError) and _BOOTSTRAP_ERROR_SNIPPET in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _run_parallel(
     main_fn: Callable[[Any], None],
     base_config: Any,
@@ -219,5 +254,27 @@ def _run_parallel(
     for run_name, future in futures:
         try:
             future.result()
-        except Exception:
+        except Exception as exc:
+            # BrokenProcessPool is fatal for the whole pool (every remaining
+            # submit fails too), so raise instead of recording a per-run
+            # failure. When the entry script calls sweep.run() at module top
+            # level, the spawn-started worker dies with the multiprocessing
+            # bootstrapping RuntimeError while re-importing the entry module,
+            # and the parent sees only a BrokenProcessPool.
+            if isinstance(exc, BrokenProcessPool):
+                raise RuntimeError(
+                    "The sweep's worker processes died during startup and the process "
+                    "pool is broken. The most common cause is calling sweep.run() at "
+                    "module top level: parallel workers are started with the 'spawn' "
+                    "method, which re-imports the entry script, so guard the call with "
+                    "'if __name__ == \"__main__\":'. Other causes include workers "
+                    "killed by the OS (e.g. out of memory)."
+                ) from exc
+            if _is_spawn_bootstrap_error(exc):
+                raise RuntimeError(
+                    "Parallel sweep workers are started with the 'spawn' method, which "
+                    "re-imports the entry script. Guard the sweep.run() call with "
+                    "'if __name__ == \"__main__\":' so workers do not re-execute it "
+                    "on import."
+                ) from exc
             logger.exception(f"Run failed: {run_name}")

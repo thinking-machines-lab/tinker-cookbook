@@ -10,9 +10,10 @@ from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.data import FromConversationFileBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
+DEFAULT_MODEL_NAME = "Qwen/Qwen3.5-9B-Base"
 
-def build_config_blueprint() -> chz.Blueprint[train.Config]:
-    model_name = "meta-llama/Llama-3.1-8B"
+
+def build_config_blueprint(model_name: str = DEFAULT_MODEL_NAME) -> chz.Blueprint[train.Config]:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     common_config = ChatDatasetBuilderCommonConfig(
         model_name_for_tokenizer=model_name,
@@ -30,8 +31,9 @@ def build_config_blueprint() -> chz.Blueprint[train.Config]:
         # tinker_cookbook/example_data/conversations.jsonl
     return chz.Blueprint(train.Config).apply(
         {
-            "log_path": "/tmp/tinker-examples/sl_basic",
+            "log_path": cli_utils.runs_path("sl_basic"),
             "model_name": model_name,
+            "recipe_name": "recipe_sl_basic",
             "renderer_name": renderer_name,
             "dataset_builder": dataset,
             "learning_rate": 2e-4,
@@ -49,6 +51,8 @@ def main(config: train.Config):
 
 
 if __name__ == "__main__":
-    blueprint = build_config_blueprint()
+    # Resolve model_name first so the renderer and dataset tokenizer follow it.
+    model_name = cli_utils.model_name_from_argv(sys.argv[1:], default=DEFAULT_MODEL_NAME)
+    blueprint = build_config_blueprint(model_name)
     blueprint.make_from_argv(sys.argv[1:])
     main(blueprint.make())

@@ -1,13 +1,18 @@
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image
 
-from tinker_cookbook.image_processing_utils import get_image_processor
+from tinker_cookbook.image_processing_utils import get_image_processor, image_to_data_uri
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache() -> None:
-    """Clear the lru_cache between tests so env var changes take effect."""
+def _clear_cache() -> Iterator[None]:
+    """Clear the lru_cache between tests so env var changes take effect, and so a mocked
+    processor does not leak into later test files."""
+    get_image_processor.cache_clear()
+    yield
     get_image_processor.cache_clear()
 
 
@@ -37,6 +42,12 @@ def test_no_trust_remote_code_by_default(
     )
 
 
+@patch("transformers.models.auto.image_processing_auto.AutoImageProcessor")
+def test_inkling_has_no_hf_image_processor(mock_auto: MagicMock) -> None:
+    assert get_image_processor("thinkingmachines/Inkling") is None
+    mock_auto.from_pretrained.assert_not_called()
+
+
 @pytest.mark.parametrize("env_value", ["1", "true", "TRUE", "yes"])
 @patch("transformers.models.auto.image_processing_auto.AutoImageProcessor")
 def test_env_var_enables_trust_remote_code(
@@ -48,4 +59,30 @@ def test_env_var_enables_trust_remote_code(
     mock_auto.from_pretrained.assert_called_once_with(
         "some-org/some-model",
         trust_remote_code=True,
+    )
+
+
+@patch("tinker_cookbook.image_processing_utils.Image.open")
+def test_image_to_data_uri_closes_local_file_handles(mock_open: MagicMock) -> None:
+    opened = MagicMock()
+    opened.__enter__.return_value.copy.return_value = Image.new("RGB", (1, 1), "white")
+    mock_open.return_value = opened
+
+    result = image_to_data_uri("/tmp/example.png")
+
+    assert result.startswith("data:image/jpeg;base64,")
+    opened.__exit__.assert_called_once()
+
+
+@patch("transformers.models.auto.image_processing_auto.AutoImageProcessor")
+def test_nemotron_3_5_super_trusts_remote_code_without_env(
+    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NVIDIA's Nemotron-3.5 Super image processor is remote code."""
+    monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
+    get_image_processor("nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16")
+    mock_auto.from_pretrained.assert_called_once_with(
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+        trust_remote_code=True,
+        revision="533d66230b6e75518bf32d2d7a7b95a24c3dd517",
     )

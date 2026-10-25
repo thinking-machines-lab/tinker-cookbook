@@ -12,8 +12,8 @@ from tinker_cookbook.rl import train
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    renderer_name: str | None = None
+    model_name: str = "Qwen/Qwen3.5-4B"
+    renderer_name: str | None = "qwen3_5_disable_thinking"
     group_size: int = 8
     num_epochs: int = 100
     batch_size: int = 64
@@ -41,7 +41,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/twenty-questions-rl/{run_name}"
+        log_path = cli_utils.runs_path("twenty-questions-rl", run_name)
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
@@ -57,12 +57,14 @@ def build_config(cli_config: CLIConfig) -> train.Config:
 
     return train.Config(
         model_name=model_name,
+        recipe_name="recipe_multiplayer_twenty_questions",
         renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=dataset_builder,
         learning_rate=cli_config.learning_rate,
         max_tokens=cli_config.max_tokens,
         eval_every=cli_config.eval_every,
+        save_every=cli_config.save_every,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         max_steps=cli_config.max_steps,

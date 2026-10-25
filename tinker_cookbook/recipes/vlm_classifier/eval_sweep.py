@@ -34,6 +34,7 @@ from tinker_cookbook.checkpoint_utils import (
     load_checkpoints_file,
 )
 from tinker_cookbook.recipes.vlm_classifier.eval import get_evaluator_builder
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ def parse_hyperparams_from_experiment_name(experiment_name: str) -> dict[str, An
     Experiment names follow the format from sweep.py:
     {dataset}-{model_name}-{lora_rank}rank-{learning_rate}lr-{batch_size}batch-{examples_per_class}shot-seed{subset_seed}-{date}
 
-    Example: caltech101-Qwen-Qwen3-VL-235B-A22B-Instruct-32rank-0.0005lr-32batch-4shot-seed0-2025-11-26
+    Example: caltech101-Qwen-Qwen3.5-397B-A17B-32rank-0.0005lr-32batch-4shot-seed0-2025-11-26
     """
 
     hyperparams: dict[str, Any] = {}
@@ -115,8 +116,8 @@ class EvalConfig:
     experiment_dir: str
     output_file: str
 
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5_disable_thinking"
+    model_name: str = "Qwen/Qwen3.5-397B-A17B"
 
     # Infrastructure parameters
     base_url: str | None = None
@@ -207,7 +208,10 @@ async def evaluate_sweep(
     Evaluate all few-shot image classifier experiments in a sweep directory.
     """
 
-    service_client = tinker.ServiceClient(base_url=eval_config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=eval_config.base_url,
+        user_metadata=recipe_user_metadata("eval_vlm_classifier_sweep"),
+    )
 
     # Limit concurrent evaluation tasks
     semaphore = asyncio.Semaphore(eval_config.max_parallel_evals)

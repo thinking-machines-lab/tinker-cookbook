@@ -30,7 +30,7 @@ from typing import Literal
 
 import chz
 
-from tinker_cookbook import checkpoint_utils, renderers
+from tinker_cookbook import checkpoint_utils, cli_utils, renderers
 from tinker_cookbook.distillation import sdft
 from tinker_cookbook.recipes.sdft.datasets import (
     SDFTDataset,
@@ -74,7 +74,7 @@ class ExperimentConfig:
     thinking_format: bool = False
 
     # Logging
-    log_root: str = "/tmp/tinker-sdft-continual-v3"
+    log_root: str = cli_utils.runs_path("sdft-continual")
     wandb_project: str | None = None
     base_url: str | None = None
 
@@ -136,6 +136,7 @@ async def run_sft_stage(
 
     sl_config = sl_train.Config(
         model_name=config.model_name,
+        recipe_name="recipe_sdft_continual_learning_sl",
         renderer_name=renderer_name,
         learning_rate=learning_rate,
         lora_rank=config.lora_rank,
@@ -201,6 +202,7 @@ async def run_sdft_stage(
 
     sdft_config = sdft.Config(
         model_name=config.model_name,
+        recipe_name="recipe_sdft_continual_learning",
         renderer_name=renderer_name,
         lora_rank=config.lora_rank,
         base_url=config.base_url,

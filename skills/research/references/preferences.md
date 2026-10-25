@@ -35,7 +35,7 @@ from tinker_cookbook.utils.lr_scheduling import LRSchedule
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "meta-llama/Llama-3.2-1B"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     dataset: str = "hhh"  # hhh, helpsteer3, or ultrafeedback
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
@@ -73,7 +73,7 @@ def cli_main(cli_config: CLIConfig):
         common_config=common_config,
         comparison_builder=COMPARISON_BUILDERS[cli_config.dataset](),
     )
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/dpo/{cli_config.dataset}"
+    log_path = cli_config.log_path or cli_utils.runs_path("dpo", cli_config.dataset)
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
     config = train_dpo.Config(
@@ -145,7 +145,7 @@ from pathlib import Path
 
 import chz
 
-from tinker_cookbook import checkpoint_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info
 from tinker_cookbook.preference.preference_datasets import ChatDatasetBuilderFromComparisons
 from tinker_cookbook.preference.types import PreferenceModelBuilderFromChatRenderer
 from tinker_cookbook.recipes.chat_sl.chat_datasets import NoRobotsBuilder
@@ -158,7 +158,7 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 @chz.chz
 class CLIConfig:
-    base_model: str = "meta-llama/Llama-3.2-3B"
+    base_model: str = "Qwen/Qwen3.5-9B-Base"
     lora_rank: int = 64
     batch_size: int = 256
     max_length: int = 16384
@@ -230,7 +230,7 @@ async def train_rl(cli: CLIConfig, log_path: str, sft_log: str, rm_log: str):
 
 
 def cli_main(cli_config: CLIConfig):
-    root = Path(f"/tmp/tinker-examples/rlhf")
+    root = Path(cli_utils.runs_path("rlhf"))
     sft_stage(cli_config, str(root / "sft"))
     train_rm(cli_config, str(root / "rm"))
     asyncio.run(train_rl(cli_config, str(root / "rl"), str(root / "sft"), str(root / "rm")))

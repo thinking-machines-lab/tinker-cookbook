@@ -3,14 +3,14 @@ import os
 
 import pandas
 
-from tinker_cookbook import model_info
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.recipes.math_rl.math_env import Gsm8kDatasetBuilder
 from tinker_cookbook.rl import train as rl_train
 from tinker_cookbook.xmux import JobSpec, SwarmConfig, launch_swarm
 
 
-def json_already_exists(log_relpath: str) -> bool:
-    metrics_path = os.path.expanduser(f"~/experiments/{log_relpath}/metrics.jsonl")
+def json_already_exists(log_path: str) -> bool:
+    metrics_path = os.path.join(log_path, "metrics.jsonl")
     if not os.path.exists(metrics_path):
         return False
     df = pandas.read_json(metrics_path, lines=True)
@@ -18,7 +18,7 @@ def json_already_exists(log_relpath: str) -> bool:
 
 
 def build_rl_basic_config(max_steps_off_policy: int, name: str) -> rl_train.Config:
-    model_name = "meta-llama/Llama-3.1-8B"
+    model_name = "Qwen/Qwen3.5-9B-Base"
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     builder = Gsm8kDatasetBuilder(
         batch_size=128,
@@ -28,8 +28,9 @@ def build_rl_basic_config(max_steps_off_policy: int, name: str) -> rl_train.Conf
     )
     return rl_train.Config(
         model_name=model_name,
+        recipe_name="example_async_rl_sweep",
         renderer_name=renderer_name,
-        log_path=f"/tmp/tinker-examples/async_rl_sweep_{name}",
+        log_path=cli_utils.runs_path(f"async_rl_sweep_{name}"),
         dataset_builder=builder,
         learning_rate=4e-5,
         max_tokens=256,
@@ -62,10 +63,10 @@ def async_rl_sweep():
             max_steps_off_policy=max_steps_off_policy,
             name=tmux_window_name,
         )
-        log_relpath = os.path.expanduser(f"~/experiments/{log_relpath_base}/{tmux_window_name}")
+        log_relpath = f"{log_relpath_base}/{tmux_window_name}"
 
-        if json_already_exists(log_relpath):
-            print(f"Skipping {log_relpath} because it already exists")
+        if json_already_exists(rl_config.log_path):
+            print(f"Skipping {rl_config.log_path} because it already exists")
             continue
         job_specs.append(
             JobSpec(

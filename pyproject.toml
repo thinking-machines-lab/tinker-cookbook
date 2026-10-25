@@ -19,14 +19,16 @@ dependencies = [
     "numpy>=1.24.0",
     "pillow>=10.0.0",
     "pydantic>=2.0.0",
+    "pyrage>=1.4.0",  # age decryption of temporary external weights exports
     "rich>=13.0.0",
     "safetensors>=0.4.0",
     "termcolor>=2.0.0",
     "tiktoken>=0.12.0", # Required for Kimi tokenizer
-    "tinker>=0.20.0",
-    "torch>=2.0",
+    "tinker>=0.34.0",
+    "tml-renderers>=0.0.1",
+    "torch>=2.10", # tml_renderers uses libtorch's stable C ABI, added in 2.10
     "tqdm>=4.60.0",
-    "transformers>=4.57.6,<=5.5.3",
+    "transformers>=4.57.6,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3,<=5.5.4",
 ]
 
 [project.urls]
@@ -42,16 +44,25 @@ dev = [
     "ruff>=0.4.0",
     "pyright>=1.1.300",
 ]
+audio = [
+    "jiwer>=3.0.0",
+    "soundfile>=0.12.0",
+]
 math-rl = [
     "math-verify>=0.5.0",
     "pylatexenc>=2.0",
     "sympy>=1.12.0",
 ]
 modal = [
-    "modal>=1.0.0",
+    "modal>=1.5.1",
 ]
 multiplayer-rl = [
     "textarena>=0.7.4",
+]
+tutorials = [
+    "marimo>=0.23.8",
+    "matplotlib>=3.7.0",
+    "tinker_cookbook[math-rl]",
 ]
 vector-search = [
     "chromadb>=1.0.0",
@@ -122,6 +133,7 @@ eval = [
 ]
 all = [
     "tinker_cookbook[eval]",
+    "tinker_cookbook[audio]",
     "tinker_cookbook[math-rl]",
     "tinker_cookbook[modal]",
     "tinker_cookbook[multiplayer-rl]",

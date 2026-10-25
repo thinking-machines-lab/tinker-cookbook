@@ -14,11 +14,13 @@ import torch.nn.functional as F
 
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
+from tinker_cookbook.supervised.nll_evaluator import SamplerNLLEvaluator
 from tinker_cookbook.supervised.train import run_evals
 from tinker_cookbook.supervised.types import ChatDatasetBuilder, SupervisedDataset
 from tinker_cookbook.tokenizer_utils import Tokenizer, get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.format_colorized import format_colorized
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import iteration_dir
 
@@ -76,8 +78,9 @@ class Config:
     Example::
 
         config = Config(
-            log_path="~/logs/dpo_run",
-            model_name="meta-llama/Llama-3.1-8B-Instruct",
+            log_path=cli_utils.runs_path("dpo-run"),
+            model_name="Qwen/Qwen3.5-9B",
+            renderer_name="qwen3_5_disable_thinking",
             dataset_builder=my_dpo_dataset_builder,
             dpo_beta=0.1,
             learning_rate=1e-5,
@@ -88,6 +91,7 @@ class Config:
     # Required parameters
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     model_name: str
+    recipe_name: str
     dataset_builder: ChatDatasetBuilder
     load_checkpoint_path: str | None = None
     renderer_name: str | None = None
@@ -141,6 +145,7 @@ class Config:
 
 def create_dpo_clients(
     config: Config,
+    service_client: tinker.ServiceClient,
     resume_info: checkpoint_utils.CheckpointRecord | None = None,
     user_metadata: dict[str, str] | None = None,
 ) -> tuple[tinker.TrainingClient, tinker.SamplingClient]:
@@ -153,6 +158,8 @@ def create_dpo_clients(
     Args:
         config (Config): DPO configuration object containing model name,
             LoRA rank, base URL, and checkpoint settings.
+        service_client (tinker.ServiceClient): Shared service client used for
+            both training and reference clients.
         resume_info (checkpoint_utils.CheckpointRecord | None): Resume
             information from a previous checkpoint. When provided, optimizer
             state is restored so training continues seamlessly.
@@ -165,9 +172,6 @@ def create_dpo_clients(
             client is a frozen snapshot of the initial weights used to
             compute reference log-probabilities for the DPO loss.
     """
-    # Create shared service client for both training and reference clients
-    service_client = tinker.ServiceClient(base_url=config.base_url)
-
     if resume_info:
         # Resuming interrupted DPO training - load weights + optimizer state
         assert resume_info.state_path is not None
@@ -318,7 +322,8 @@ def do_update(
         )
 
         # Evaluation
-        if config.eval_every > 0 and step % config.eval_every == 0:
+        is_final_step = step == total_steps - 1
+        if config.eval_every > 0 and (step % config.eval_every == 0 or is_final_step):
             with trace.scope_span_sync("evals"):
                 eval_metrics = asyncio.run(run_evals(evaluators, training_client, step))
             metrics.update(eval_metrics)
@@ -448,6 +453,8 @@ def do_update(
 
     # Log timing metrics from trace_iteration window
     metrics.update(window.get_timing_metrics())
+    if "time/total" in metrics:
+        metrics["batch_time"] = metrics["time/total"]
     window.save_timing(step, store=ml_logger.store)
     if config.span_chart_every > 0 and step % config.span_chart_every == 0:
         iter_dir = iteration_dir(log_path, step)
@@ -493,13 +500,18 @@ def main(config: Config):
         )
         trace.trace_init(output_file=trace_events_path)
 
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata(config.recipe_name),
+    )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link
     checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
     model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
-    training_client, reference_client = create_dpo_clients(config, resume_info, user_metadata)
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    training_client, reference_client = create_dpo_clients(
+        config, service_client, resume_info, user_metadata
+    )
     checkpoint_mgr = checkpoint_utils.CheckpointManager(
         training_client=training_client,
         service_client=service_client,
@@ -520,6 +532,8 @@ def main(config: Config):
         total_steps = min(total_steps, config.max_steps)
 
     evaluators = [evaluator() for evaluator in config.evaluator_builders]
+    if maybe_test_dataset is not None:
+        evaluators.append(SamplerNLLEvaluator.from_dataset(maybe_test_dataset))
     infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
     logger.info(
         f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"

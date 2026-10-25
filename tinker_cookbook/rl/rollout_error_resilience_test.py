@@ -59,7 +59,7 @@ class _FakePolicy(TokenCompleter):
         self.fail_indices = fail_indices or set()
         self.error = error or RuntimeError("fake error")
 
-    async def __call__(self, model_input, stop):
+    async def __call__(self, model_input, stop, *, max_tokens=None):
         idx = self._call_count
         self._call_count += 1
         if idx in self.fail_indices:

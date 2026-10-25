@@ -55,6 +55,7 @@ from tinker_cookbook.eval.evaluators import SamplingClientEvaluatorBuilder
 from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatasetBuilder
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import safezip
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ class Config:
     learning_rate: float
     dataset_configs: list[DatasetWithTeacher]
     model_name: str
+    recipe_name: str
     renderer_name: str | None = None
     lora_rank: int = 32
 
@@ -352,7 +354,10 @@ async def main(config: Config) -> None:
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     start_batch = resume_info.batch if resume_info else 0
 
-    service_client = tinker.ServiceClient(base_url=config.base_url)
+    service_client = tinker.ServiceClient(
+        base_url=config.base_url,
+        user_metadata=recipe_user_metadata(config.recipe_name),
+    )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
         user_metadata["wandb_link"] = wandb_link

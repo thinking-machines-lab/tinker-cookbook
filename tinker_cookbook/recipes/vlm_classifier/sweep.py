@@ -5,12 +5,13 @@
 Launcher for training image classifiers based on VLMs.
 
 ```bash
-python -m tinker_cookbook.recipes.vlm_classifier.sweep experiment_dir=./sweep model_name=Qwen/Qwen3-VL-30B-A3B-Instruct
+python -m tinker_cookbook.recipes.vlm_classifier.sweep experiment_dir=./sweep model_name=Qwen/Qwen3.6-35B-A3B
 ```
 
 """
 
 import asyncio
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from itertools import product
@@ -35,8 +36,8 @@ class ExperimentConfig:
     experiment_dir: str
 
     dataset: str = "caltech101"
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5_disable_thinking"
+    model_name: str = "Qwen/Qwen3.5-397B-A17B"
 
     # Infrastructure parameters
     base_url: str | None = None
@@ -130,6 +131,7 @@ def run_experiment(experiment_config: ExperimentConfig):
     config = train.Config(
         log_path=experiment_path,
         model_name=experiment_config.model_name,
+        recipe_name="recipe_vlm_classifier_sweep",
         renderer_name=experiment_config.renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=evaluator_builders,
@@ -158,8 +160,8 @@ class SweepConfig:
 
     experiment_dir: str
 
-    renderer_name: str = "qwen3_vl"
-    model_name: str = "Qwen/Qwen3-VL-235B-A22B-Instruct"
+    renderer_name: str = "qwen3_5_disable_thinking"
+    model_name: str = "Qwen/Qwen3.5-397B-A17B"
 
     datasets: list[str] = chz.field(default_factory=lambda: ["caltech101"])
     examples_per_class: list[int] = chz.field(default_factory=lambda: [1, 2, 4, 8, 16])
@@ -221,7 +223,11 @@ def run_sweep(sweep_config: SweepConfig):
         f"Running {len(experiment_configs)} experiments with {sweep_config.num_parallel} parallel workers"
     )
 
-    with ProcessPoolExecutor(max_workers=sweep_config.num_parallel) as executor:
+    # Use "spawn": the Tinker client's background threads do not survive
+    # fork(), so fork-started workers (the Linux default) hang silently.
+    with ProcessPoolExecutor(
+        max_workers=sweep_config.num_parallel, mp_context=multiprocessing.get_context("spawn")
+    ) as executor:
         futures = [executor.submit(run_experiment, config) for config in experiment_configs]
         results = [f.result() for f in futures]
         print(f"{len(results)} experiments finished running")

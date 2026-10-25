@@ -25,7 +25,7 @@ Usage::
         client = sc.create_sampling_client(model_path=path)
         results[name] = await run_benchmarks(
             ["gsm8k", "ifeval"], client, renderer,
-            BenchmarkConfig(save_dir=f"evals/{name}"),
+            BenchmarkConfig(save_dir=cli_utils.runs_path("evals", name)),
         )
 
 Design:

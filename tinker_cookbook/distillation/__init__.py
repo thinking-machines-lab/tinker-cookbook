@@ -21,7 +21,7 @@ point. Access them via the submodule to avoid naming conflicts::
     from tinker_cookbook.distillation import train_on_policy
 
     config = train_on_policy.Config(
-        model_name="Qwen/Qwen3.5-35B-A3B",
+        model_name="Qwen/Qwen3.6-35B-A3B",
         ...,
     )
     await train_on_policy.main(config)

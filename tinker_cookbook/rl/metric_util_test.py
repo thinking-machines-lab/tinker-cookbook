@@ -222,6 +222,7 @@ class TestTemperature:
             learning_rate=1e-5,
             dataset_builder=cast(RLDatasetBuilder, SimpleNamespace()),
             model_name="test",
+            recipe_name="test",
             max_tokens=8,
             log_path="/tmp/test-eval-temperature",
             temperature=0.7,

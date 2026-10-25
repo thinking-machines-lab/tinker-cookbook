@@ -4,7 +4,7 @@ from pathlib import Path
 
 import chz
 
-from tinker_cookbook import checkpoint_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info
 from tinker_cookbook.preference.comparison_policy_evaluator import ComparisonEvaluator
 from tinker_cookbook.preference.preference_datasets import ChatDatasetBuilderFromComparisons
 from tinker_cookbook.preference.types import PreferenceModelBuilderFromChatRenderer
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 
 @chz.chz
 class CLIConfig:
-    base_model: str = "meta-llama/Llama-3.2-3B"
-    short_name: str = "llama3b"
+    base_model: str = "Qwen/Qwen3.5-9B-Base"
+    short_name: str = "qwen3_5_9b_base"
     run_sft: bool = True
     run_rm: bool = True
     run_rl: bool = True
@@ -81,6 +81,7 @@ def sft_stage(
     config = supervised_train.Config(
         log_path=log_path,
         model_name=base_model,
+        recipe_name="recipe_preference_rlhf_sft",
         renderer_name=renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=[],  # Could add evaluators here
@@ -136,6 +137,7 @@ def train_rm(
     config = supervised_train.Config(
         log_path=log_path,
         model_name=base_model,
+        recipe_name="recipe_preference_rlhf_rm",
         renderer_name=renderer_name,
         dataset_builder=dataset_builder,
         evaluator_builders=[],  # Could add evaluators here
@@ -222,6 +224,7 @@ async def train_rl(
 
     config = train.Config(
         model_name=base_model,
+        recipe_name="recipe_preference_rlhf_rl",
         renderer_name=renderer_name,
         dataset_builder=rl_dataset_builder,
         load_checkpoint_path=sft_checkpoint,
@@ -241,7 +244,7 @@ async def train_rl(
 
 
 def cli_main(cli_config: CLIConfig):
-    log_path_root = Path(f"/tmp/tinker-examples/rlhf-{cli_config.short_name}")
+    log_path_root = Path(cli_utils.runs_path(f"rlhf-{cli_config.short_name}"))
     sft_log_path = str(log_path_root / "sft")
     rm_log_path = str(log_path_root / "rm")
     rl_log_path = str(log_path_root / "rl")

@@ -24,7 +24,7 @@ Example — quick eval (no persistence)::
 
 Example — persistent eval with EvalStore::
 
-    store = EvalStore("~/experiments/evals")
+    store = EvalStore(cli_utils.runs_path("evals"))
     run_id = store.create_run(
         model_name="nvidia/...",
         checkpoint_name="sft_step500",

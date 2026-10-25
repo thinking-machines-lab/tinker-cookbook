@@ -34,7 +34,7 @@ from tinker_cookbook.distillation.datasets import (
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-8B-Base"
+    model_name: str = "Qwen/Qwen3.5-9B-Base"
     teacher_model: str = "Qwen/Qwen3-8B"
     dataset: str = "deepmath"
     group_size: int = 4
@@ -69,7 +69,7 @@ async def cli_main(cli_config: CLIConfig):
         teacher_config=teacher_config,
         groups_per_batch=cli_config.groups_per_batch,
     )
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/distillation/{cli_config.dataset}"
+    log_path = cli_config.log_path or cli_utils.runs_path("distillation", cli_config.dataset)
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
     config = train_on_policy.Config(
         dataset_configs=[dataset_config],

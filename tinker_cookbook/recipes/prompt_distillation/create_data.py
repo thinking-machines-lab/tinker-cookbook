@@ -8,8 +8,9 @@ import chz
 import tinker
 from tqdm.asyncio import tqdm_asyncio
 
-from tinker_cookbook import renderers
+from tinker_cookbook import cli_utils, renderers
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
 LANGUAGE_CLASSIFICATION_PROMPT = """You are a precise language classifier.
 
@@ -75,9 +76,14 @@ Text to classify:
 """
 
 
+DEFAULT_OUTPUT_FILE = cli_utils.runs_path(
+    "prompt_distillation", "data", "prompt_distillation_lang.jsonl"
+)
+
+
 @chz.chz
 class Config:
-    output_file: str
+    output_file: str = DEFAULT_OUTPUT_FILE
 
 
 def setup_clients():
@@ -87,11 +93,13 @@ def setup_clients():
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     print("Creating service client")
-    service_client = tinker.ServiceClient()
+    service_client = tinker.ServiceClient(
+        user_metadata=recipe_user_metadata("dataset_prompt_distillation"),
+    )
     print("Creating sampling client")
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3-30B-A3B")
-    tokenizer = get_tokenizer("Qwen/Qwen3-30B-A3B")
-    renderer = renderers.get_renderer("qwen3", tokenizer)
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
+    tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
+    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     return sampling_client, tokenizer, renderer
 
@@ -108,7 +116,7 @@ async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any
         sentence: str,
     ) -> tuple[str, str | None]:
         prompt = LANGUAGE_CLASSIFICATION_PROMPT.format(text=sentence)
-        tokenized_prompt = tinker.ModelInput.from_ints(tokenizer.encode(prompt))
+        tokenized_prompt = renderer.build_generation_prompt([{"role": "user", "content": prompt}])
         params = tinker.SamplingParams(
             max_tokens=1000, temperature=0.15, stop=renderer.get_stop_sequences()
         )

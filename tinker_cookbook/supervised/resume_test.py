@@ -57,7 +57,7 @@ def checkpoint_resume():
         os.makedirs(log_path, exist_ok=True)
 
         # Use the real NoRobots dataset with a small batch size
-        model_name = "meta-llama/Llama-3.2-1B"
+        model_name = "Qwen/Qwen3.5-9B-Base"
         common_config = ChatDatasetBuilderCommonConfig(
             model_name_for_tokenizer=model_name,
             renderer_name="role_colon",
@@ -70,6 +70,7 @@ def checkpoint_resume():
         config = train.Config(
             log_path=log_path,
             model_name=model_name,
+            recipe_name="test_supervised_resume",
             dataset_builder=chat_datasets.NoRobotsBuilder(common_config=common_config),
             num_epochs=1,
             save_every=5,

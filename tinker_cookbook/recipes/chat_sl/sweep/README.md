@@ -46,6 +46,21 @@ python -m tinker_cookbook.recipes.chat_sl.sweep \
     metric=test/nll
 ```
 
+**Comparing across tokenizers:** `train_mean_nll` / `test/nll` are *per-token*
+cross-entropy, which is not comparable across models with different tokenizers —
+a coarser tokenizer packs more text into each token (higher nats/token) while a
+finer one spreads it over more (lower nats/token). Training also logs
+`train_mean_bpb` / `test/bpb` (bits per byte), which divide the total log-loss by
+the number of UTF-8 bytes of the target text instead of by the token count, so
+they *are* comparable across tokenizers. Sweeping over models? Select on bits per
+byte:
+
+```bash
+python -m tinker_cookbook.recipes.chat_sl.sweep \
+    recipe=sft \
+    metric=test/bpb
+```
+
 ## Python API
 
 ```python

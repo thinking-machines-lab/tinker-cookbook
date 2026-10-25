@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 10: RL Hyperparameters
+    # Tutorial 402: RL Hyperparameters
 
     Tune KL penalty, group size, and advantage normalization.
 
@@ -25,12 +25,10 @@ def _(mo):
 
 @app.cell
 def _():
-    import torch
-
     from tinker_cookbook.rl.data_processing import compute_advantages
-    from tinker_cookbook.rl.train import Config, KLReferenceConfig
+    from tinker_cookbook.rl.train import KLReferenceConfig
 
-    return Config, KLReferenceConfig, compute_advantages, torch
+    return KLReferenceConfig, compute_advantages
 
 
 @app.cell(hide_code=True)
@@ -68,7 +66,7 @@ def _(mo):
 def _(KLReferenceConfig):
     # Example: KL penalty against the base model
     kl_config = KLReferenceConfig(
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
+        base_model="Qwen/Qwen3.5-4B",
         load_checkpoint_path=None,  # Use base model weights as reference
     )
 
@@ -86,7 +84,7 @@ def _(KLReferenceConfig):
     print("  0.01  -- light regularization")
     print("  0.05  -- moderate (good starting point)")
     print("  0.1+  -- strong (may slow reward improvement)")
-    return (kl_config,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -118,7 +116,7 @@ def _(mo):
 
 
 @app.cell
-def _(compute_advantages, torch):
+def _(compute_advantages):
     from tinker_cookbook.rl.types import Trajectory, TrajectoryGroup
 
     def make_mock_group(rewards):
@@ -131,7 +129,7 @@ def _(compute_advantages, torch):
         )
 
     # Compare group sizes: same total reward distribution, different grouping
-    all_rewards = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0]
+    all_rewards = [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0]
 
     # Group size 2: 4 groups
     groups_2 = [make_mock_group(all_rewards[i : i + 2]) for i in range(0, 8, 2)]
@@ -156,7 +154,7 @@ def _(compute_advantages, torch):
     advs_8 = compute_advantages(groups_8)
     print("Group size 8:")
     print(f"  Group 0: rewards={all_rewards}, advantages={advs_8[0].tolist()}")
-    return (Trajectory, TrajectoryGroup, make_mock_group)
+    return (make_mock_group,)
 
 
 @app.cell(hide_code=True)
@@ -183,7 +181,7 @@ def _(make_mock_group):
     print(f"Before filtering: {len(groups)} groups")
     print(f"After filtering:  {len(filtered)} groups")
     print(f"Kept rewards: {[g.get_total_rewards() for g in filtered]}")
-    return (filtered, groups)
+    return
 
 
 @app.cell(hide_code=True)

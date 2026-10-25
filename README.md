@@ -30,6 +30,30 @@ We provide two libraries for the broader community to customize their language m
    uv pip install 'tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
    ```
 
+## Using Inkling and Inkling-Small
+
+Inkling is Thinking Machines Lab's model tailored for Tinker. It is a
+general-purpose model that can code, reason, call tools, and process image and
+audio inputs. Inkling-Small is a smaller, lower-cost model in the same family
+that shares Inkling's rendering path and reasoning-effort interface. Tinker
+Cookbook supports sampling and post-training both through the standalone
+`tml-renderers` library, included in the default installation together with the
+required `torch>=2.10`.
+
+Pass `model_name="thinkingmachines/Inkling"` or
+`model_name="thinkingmachines/Inkling-Small"` anywhere the cookbook accepts a
+model name. The appropriate renderer and tokenizer are selected automatically for
+any `thinkingmachines/Inkling*` model, including the `:peft:` long-context
+variants.
+
+Both models support [controllable reasoning effort](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/thinking-effort/)
+as well as multimodal [audio](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/audio/)
+and [image](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/images/)
+inputs. See the [Inkling documentation](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/)
+for setup and usage details, and
+[Models & Pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/) for
+per-model context lengths and pricing.
+
 ## Tinker
 
 Here we introduce a few Tinker primitives — the basic components to fine-tune LLMs (see the [quickstart guide](https://tinker-docs.thinkingmachines.ai/tinker/quickstart/) for more details):
@@ -43,7 +67,7 @@ training_client = service_client.create_lora_training_client(
 training_client.forward_backward(...)
 training_client.optim_step(...)
 training_client.save_state(...)
-training_client.load_state(...)
+resumed_client = service_client.create_training_client_from_state(...)
 
 sampling_client = training_client.save_weights_and_get_sampling_client()
 sampling_client.sample(...)
@@ -76,6 +100,8 @@ We also include more complete examples in the [`tinker_cookbook/recipes/`](tinke
 - **[Distillation](tinker_cookbook/recipes/distillation/)**: on-policy and off-policy knowledge distillation with single- and multi-teacher configurations.
 - **[Tool use](tinker_cookbook/recipes/search_tool/)**: RL for retrieval-augmented generation (Search-R1 replication).
 - **[Multi-agent](tinker_cookbook/recipes/multiplayer_rl/)**: multi-agent RL with self-play and cross-play.
+- **[Audio](tinker_cookbook/recipes/audio/)**: SFT and RL for Inkling audio inputs, including speech recognition and speaking-style classification.
+- **[VLM image classification](tinker_cookbook/recipes/vlm_classifier/)**: supervised training and evaluation for vision-language models.
 
 The [recipes README](tinker_cookbook/recipes/README.md) covers all available recipes, including Harbor RL, rubric-based grading, VLM classification, and SDFT. Each recipe includes a `README.md` with implementation details, launch commands, and expected results.
 
@@ -84,12 +110,13 @@ The [recipes README](tinker_cookbook/recipes/README.md) covers all available rec
 Tinker Cookbook includes a [benchmark framework](tinker_cookbook/eval/) for evaluating trained models:
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 
 results = await run_benchmarks(
     ["gsm8k", "mmlu_pro", "ifeval"],
     sampling_client, renderer,
-    BenchmarkConfig(save_dir="evals/step500"),
+    BenchmarkConfig(save_dir=cli_utils.runs_path("evals", "step500")),
 )
 ```
 
@@ -116,12 +143,13 @@ Tinker Cookbook ships with [Claude Code skills](https://docs.anthropic.com/en/do
 /plugin marketplace add thinking-machines-lab/tinker-cookbook
 ```
 
-Then install the **tinker** plugin from the Discover tab (`/plugin` → Discover). Once installed, two skills are available:
+Then install the **tinker** plugin from the Discover tab (`/plugin` → Discover). Once installed, three skills are available:
 
 | Command | What it does |
 |---|---|
 | `/tinker:research` | Plan and run post-training experiments — SFT, RL, DPO, distillation, evaluation, hyperparameters, model selection, and more |
 | `/tinker:debug` | Diagnose slow training, hangs, output mismatches, renderer issues, and errors |
+| `/tinker:inkling` | Work with Inkling and Inkling-Small — thinking effort, rendering, post-training, evaluation, and multimodal input |
 
 Skills also trigger automatically based on context — ask Claude to "set up SFT training" and it will load the right skill without a slash command. Skills update automatically when the repo is updated.
 
@@ -143,15 +171,15 @@ We welcome PR contributions after our private beta is over. If you have any feed
 ## Citation
 If you use Tinker for your research, please cite it as:
 ```
-Thinking Machines Lab, 2025. Tinker. https://thinkingmachines.ai/tinker/.
+Thinking Machines Lab, 2026. Tinker. https://thinkingmachines.ai/tinker/.
 ```
 
 Or use this BibTeX citation:
 ```
-@misc{tml2025tinker,
+@misc{tml2026tinker,
   author = {Thinking Machines Lab},
   title = {Tinker},
-  year = {2025},
+  year = {2026},
   url = {https://thinkingmachines.ai/tinker/},
 }
 ```

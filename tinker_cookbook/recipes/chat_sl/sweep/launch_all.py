@@ -31,6 +31,8 @@ import asyncio
 import sys
 from dataclasses import dataclass
 
+from tinker_cookbook import cli_utils
+
 # ---------------------------------------------------------------------------
 # Model sweep configurations
 # ---------------------------------------------------------------------------
@@ -79,11 +81,8 @@ def _cfg(
     )
 
 
-# Models already swept (included for completeness, skipped by default)
+# Models already swept (included for completeness, skipped by default).
 ALREADY_DONE: dict[str, ModelSweepConfig] = {
-    "deepseek-ai/DeepSeek-V3.1-Base": _cfg(
-        "deepseek-ai/DeepSeek-V3.1-Base", "large", "MoE, already swept"
-    ),
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": _cfg(
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", "medium", "MoE, already swept"
     ),
@@ -92,46 +91,30 @@ ALREADY_DONE: dict[str, ModelSweepConfig] = {
     ),
 }
 
-# All new models to sweep, grouped by tier
+# All new models to sweep, grouped by tier.
 NEW_MODELS: list[ModelSweepConfig] = [
     # --- Large ---
+    _cfg("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16", "large", "MoE Hybrid"),
     _cfg("Qwen/Qwen3.5-397B-A17B", "large", "MoE Hybrid+Vision"),
-    _cfg("Qwen/Qwen3-VL-235B-A22B-Instruct", "large", "MoE Vision"),
-    _cfg("Qwen/Qwen3-235B-A22B-Instruct-2507", "large", "MoE Instruction"),
-    _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid", renderer_name="deepseekv3_thinking"),
-    _cfg("meta-llama/Llama-3.1-70B", "large", "Dense Base"),
-    _cfg("meta-llama/Llama-3.3-70B-Instruct", "large", "Dense Instruction"),
-    _cfg("moonshotai/Kimi-K2-Thinking", "large", "MoE Reasoning"),
-    _cfg("moonshotai/Kimi-K2.5", "large", "MoE Reasoning+Vision"),
+    _cfg("deepseek-ai/DeepSeek-V3.1", "large", "MoE Hybrid"),
+    _cfg("moonshotai/Kimi-K2.6", "large", "MoE Reasoning+Vision"),
     # --- Medium ---
-    _cfg("Qwen/Qwen3.5-35B-A3B", "medium", "MoE Hybrid+Vision"),
-    _cfg("Qwen/Qwen3.5-27B", "medium", "Dense Hybrid+Vision"),
-    _cfg("Qwen/Qwen3-VL-30B-A3B-Instruct", "medium", "MoE Vision"),
-    _cfg("Qwen/Qwen3-30B-A3B-Instruct-2507", "medium", "MoE Instruction"),
-    _cfg("Qwen/Qwen3-30B-A3B", "medium", "MoE Hybrid"),
-    _cfg("Qwen/Qwen3-30B-A3B-Base", "medium", "MoE Base"),
-    _cfg("Qwen/Qwen3-32B", "medium", "Dense Hybrid"),
+    _cfg("Qwen/Qwen3.6-35B-A3B", "medium", "MoE Hybrid+Vision"),
+    _cfg("Qwen/Qwen3.6-27B", "medium", "Dense Hybrid+Vision"),
+    _cfg("Qwen/Qwen3.5-35B-A3B-Base", "medium", "MoE Base"),
     _cfg("openai/gpt-oss-120b", "medium", "MoE Reasoning"),
     # --- Small ---
     _cfg("Qwen/Qwen3-8B", "small", "Dense Hybrid"),
-    _cfg("Qwen/Qwen3-8B-Base", "small", "Dense Base"),
+    _cfg("Qwen/Qwen3.5-9B-Base", "small", "Dense Base"),
     _cfg("openai/gpt-oss-20b", "small", "MoE Reasoning"),
-    _cfg("meta-llama/Llama-3.1-8B", "small", "Dense Base"),
-    _cfg("meta-llama/Llama-3.1-8B-Instruct", "small", "Dense Instruction"),
+    _cfg("Qwen/Qwen3.5-9B", "small", "Dense Hybrid+Vision"),
     _cfg("Qwen/Qwen3.5-4B", "small", "Dense Hybrid+Vision"),
-    # --- Compact ---
-    _cfg("Qwen/Qwen3-4B-Instruct-2507", "compact", "Dense Instruction"),
-    _cfg("meta-llama/Llama-3.2-3B", "compact", "Dense Base"),
-    _cfg("meta-llama/Llama-3.2-1B", "compact", "Dense Base"),
 ]
 
 
 # ---------------------------------------------------------------------------
 # Sweep launcher
 # ---------------------------------------------------------------------------
-
-
-SWEEP_ROOT = "/tmp/tinker-sweeps"
 
 
 def build_sweep_command(
@@ -144,7 +127,7 @@ def build_sweep_command(
     # Use a model-specific sweep directory to avoid collisions when
     # multiple models launch concurrently with the same timestamp.
     model_slug = cfg.model_name.replace("/", "-")
-    sweep_dir = f"{SWEEP_ROOT}/{model_slug}"
+    sweep_dir = cli_utils.runs_path("sweeps", model_slug)
 
     cmd = [
         sys.executable,
@@ -175,7 +158,7 @@ async def run_model_sweep(
     jobs_per_model: int,
     dry_run: bool,
     semaphore: asyncio.Semaphore,
-    log_dir: str = "/tmp/tinker-sweep-logs",
+    log_dir: str = cli_utils.runs_path("sweep-logs"),
     skip_existing: bool = False,
 ) -> tuple[str, bool]:
     """Run sweep for one model, respecting the concurrency semaphore."""

@@ -11,8 +11,8 @@ from tinker_cookbook.rl import train
 
 @chz.chz
 class CLIConfig:
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    renderer_name: str | None = None
+    model_name: str = "Qwen/Qwen3.5-4B"
+    renderer_name: str | None = "qwen3_5_disable_thinking"
     game_name: str = "TicTacToe-v0"
     test_opponent: OpponentType = "base_model"
     batch_size: int = 512
@@ -42,7 +42,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/text-arena/{run_name}"
+        log_path = cli_utils.runs_path("text-arena", run_name)
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
@@ -60,6 +60,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
 
     return train.Config(
         model_name=model_name,
+        recipe_name="recipe_multiplayer_text_arena",
         renderer_name=renderer_name,
         log_path=log_path,
         dataset_builder=dataset_builder,
