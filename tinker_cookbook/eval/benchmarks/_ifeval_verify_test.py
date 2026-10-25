@@ -80,7 +80,9 @@ class TestUnhandledInstructionId:
 def test_english_capital_is_case_only_no_language_check():
     """Scope: local check is case-only (no langdetect), unlike upstream.
 
-    Upstream CapitalLettersEnglishChecker would reject this (not English); the
-    local predicate admits it. Pinned so any scope change is deliberate.
+    Upstream CapitalLettersEnglishChecker combines isupper() with a langdetect
+    English check (returning True on LangDetectException); this test pins only the
+    local acceptance, not the upstream result for this string. Pinned so any
+    scope change is deliberate.
     """
     assert verify_instruction("change_case:english_capital", "中文 HELLO", {})

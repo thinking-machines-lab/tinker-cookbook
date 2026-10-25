@@ -214,10 +214,12 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
         elif iid == "change_case:english_capital":
             # Case predicate only. Upstream CapitalLettersEnglishChecker requires
             # value.isupper() AND langdetect == "en"; this local check implements only
-            # the isupper() half (no language detector). Scope consequence: non-English
-            # text with any uppercase Latin letters and no lowercase cased characters,
-            # e.g. "中文 HELLO", is accepted here but rejected upstream. This is not full
-            # checker parity. (Previous first-letter-per-word check accepted title case.)
+            # the isupper() half (no language detector). Structural difference: upstream
+            # additionally requires detected English (and returns True if langdetect
+            # raises), so non-English text with uppercase Latin letters and no lowercase
+            # cased characters, e.g. "中文 HELLO", passes here regardless of what the
+            # detector would decide. This is not full checker parity. (Previous
+            # first-letter-per-word check accepted title case.)
             return response.isupper()
 
         elif iid == "change_case:english_lowercase":
@@ -318,6 +320,8 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
 
         elif iid == "combination:repeat_prompt":
             # Reference: instructions.py RepeatPromptThenAnswer.check_following.
+            # Prefix match is case-insensitive and ignores outer whitespace only; it
+            # does not normalize internal spacing or newlines.
             prompt_to_repeat = kwargs.get("prompt_to_repeat", "")
             if not prompt_to_repeat:
                 return False
