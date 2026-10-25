@@ -24,7 +24,7 @@ def build_config_blueprint(model_name: str = DEFAULT_MODEL_NAME) -> chz.Blueprin
             "model_name": model_name,
             "recipe_name": "recipe_rl_basic",
             "renderer_name": renderer_name,
-            "log_path": "/tmp/tinker-examples/rl_basic",
+            "log_path": cli_utils.runs_path("rl_basic"),
             "dataset_builder": builder,
             "learning_rate": 4e-5,
             "max_tokens": 256,

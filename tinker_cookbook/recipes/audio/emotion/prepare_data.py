@@ -203,7 +203,7 @@ def prepare(expresso_root: Path, out_dir: Path) -> None:
 @chz.chz
 class Config:
     # Holds the raw expresso/ download and the prepared expresso_16khz/ output.
-    data_path: str = "/tmp/tinker-examples/audio-data"
+    data_path: str = "~/.cache/tinker-cookbook/audio-data"
 
 
 def cli_main(cfg: Config) -> None:

@@ -32,25 +32,40 @@ QWEN3_5_MODELS = [
     ("Qwen/Qwen3.6-35B-A3B", "qwen3_5_disable_thinking"),
 ]
 
-ALL_QWEN_MODELS = QWEN3_MODELS + QWEN3_5_MODELS
+# Qwen3.8 keeps the Qwen3.5 tool declaration and XML tool-call format, but has its
+# own renderer family (reasoning-effort instructions, preserve-thinking default —
+# see qwen3_8.py). The instruction sentence lands in the same system message as the
+# tool declarations, so parity here also covers that interaction.
+QWEN3_8_MODELS = [
+    ("Qwen/Qwen3.8-27B", "qwen3_8_xhigh_reasoning"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_medium_reasoning"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_low_reasoning"),
+    ("Qwen/Qwen3.8-27B", "qwen3_8_disable_thinking"),
+]
+
+ALL_QWEN_MODELS = QWEN3_MODELS + QWEN3_5_MODELS + QWEN3_8_MODELS
 
 
 def _hf_tools_for_model(
     model_name: str, tools_toolspec: list[ToolSpec]
 ) -> Sequence[Mapping[str, object]]:
     """Build the tools payload matching each model family's HF chat-template contract."""
-    # Qwen3.5 and Qwen3.6 share the same `qwen3_5`-family chat template, which is a
-    # pass-through for whatever tool dict it's handed. The cookbook renderer emits the
-    # raw function spec, so the HF reference must receive the same raw shape to match.
-    if "Qwen3.5" in model_name or "Qwen3.6" in model_name:
+    # Qwen3.5, Qwen3.6, and Qwen3.8 share the same tool-declaration template shape,
+    # which is a pass-through for whatever tool dict it's handed. The cookbook renderer
+    # emits the raw function spec, so the HF reference must receive the same raw shape.
+    if "Qwen3.5" in model_name or "Qwen3.6" in model_name or "Qwen3.8" in model_name:
         return list(tools_toolspec)
     return [{"type": "function", "function": tool} for tool in tools_toolspec]
 
 
 def _hf_template_kwargs(renderer_name: str) -> dict:
     """Return renderer-specific kwargs for HF apply_chat_template."""
-    if renderer_name == "qwen3_5_disable_thinking":
+    if renderer_name in ("qwen3_5_disable_thinking", "qwen3_8_disable_thinking"):
         return {"enable_thinking": False}
+    if renderer_name == "qwen3_8_medium_reasoning":
+        return {"reasoning_effort": "medium"}
+    if renderer_name == "qwen3_8_low_reasoning":
+        return {"reasoning_effort": "low"}
     return {}
 
 

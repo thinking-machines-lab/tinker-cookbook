@@ -31,7 +31,7 @@ def build_config_blueprint(model_name: str = DEFAULT_MODEL_NAME) -> chz.Blueprin
         # tinker_cookbook/example_data/conversations.jsonl
     return chz.Blueprint(train.Config).apply(
         {
-            "log_path": "/tmp/tinker-examples/sl_basic",
+            "log_path": cli_utils.runs_path("sl_basic"),
             "model_name": model_name,
             "recipe_name": "recipe_sl_basic",
             "renderer_name": renderer_name,

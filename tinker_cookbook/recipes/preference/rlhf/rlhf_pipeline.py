@@ -4,7 +4,7 @@ from pathlib import Path
 
 import chz
 
-from tinker_cookbook import checkpoint_utils, model_info
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info
 from tinker_cookbook.preference.comparison_policy_evaluator import ComparisonEvaluator
 from tinker_cookbook.preference.preference_datasets import ChatDatasetBuilderFromComparisons
 from tinker_cookbook.preference.types import PreferenceModelBuilderFromChatRenderer
@@ -244,7 +244,7 @@ async def train_rl(
 
 
 def cli_main(cli_config: CLIConfig):
-    log_path_root = Path(f"/tmp/tinker-examples/rlhf-{cli_config.short_name}")
+    log_path_root = Path(cli_utils.runs_path(f"rlhf-{cli_config.short_name}"))
     sft_log_path = str(log_path_root / "sft")
     rm_log_path = str(log_path_root / "rm")
     rl_log_path = str(log_path_root / "rl")

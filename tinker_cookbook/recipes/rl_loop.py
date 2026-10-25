@@ -23,7 +23,7 @@ from tinker import types
 from tinker.types.tensor_data import TensorData
 from tqdm import tqdm
 
-from tinker_cookbook import checkpoint_utils, model_info, renderers
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info, renderers
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
 from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_answer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -37,7 +37,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     base_url: str | None = None
-    log_path: str = "/tmp/tinker-examples/rl-loop"
+    log_path: str = cli_utils.runs_path("rl-loop")
     model_name: str = "Qwen/Qwen3.5-9B-Base"
     batch_size: int = 128
     group_size: int = 16

@@ -283,7 +283,8 @@ def _rich_console_use_logger(console: Console):
 class WandbLogger(Logger):
     """Logger that streams metrics and config to Weights & Biases.
 
-    Requires ``wandb`` to be installed and ``WANDB_API_KEY`` to be set.
+    Requires ``wandb`` to be installed. Authentication is handled by W&B,
+    using credentials from e.g. ``wandb login`` or ``WANDB_API_KEY``.
 
     Args:
         project (str | None): W&B project name.
@@ -293,7 +294,8 @@ class WandbLogger(Logger):
 
     Raises:
         ImportError: If ``wandb`` is not installed.
-        ConfigurationError: If ``WANDB_API_KEY`` is not set.
+        ConfigurationError: If ``wandb.init`` fails (e.g. missing credentials
+            or no network access).
     """
 
     def __init__(
@@ -309,17 +311,24 @@ class WandbLogger(Logger):
                 "pip install wandb (or uv add wandb)"
             )
 
-        if not os.environ.get("WANDB_API_KEY"):
-            raise ConfigurationError("WANDB_API_KEY environment variable not set")
-
         # Initialize wandb run
         assert wandb is not None  # For type checker
-        self.run = wandb.init(
-            project=project,
-            config=dump_config(config) if config else None,
-            dir=str(log_dir) if log_dir else None,
-            name=wandb_name,
-        )
+        try:
+            self.run = wandb.init(
+                project=project,
+                config=dump_config(config) if config else None,
+                dir=str(log_dir) if log_dir else None,
+                name=wandb_name,
+            )
+        except Exception as e:
+            raise ConfigurationError(
+                f"Failed to initialize W&B run for project {project!r}: "
+                f"{type(e).__name__}: {e}\n"
+                "W&B logging was requested via wandb_project. To fix this, either:\n"
+                "  - authenticate with `wandb login` or set WANDB_API_KEY,\n"
+                "  - set WANDB_MODE=offline to log locally without a network connection, or\n"
+                "  - leave wandb_project unset to disable W&B logging."
+            ) from e
 
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
@@ -559,8 +568,6 @@ def setup_logging(
     if wandb_project:
         if not _wandb_available:
             print("WARNING: wandb is not installed. Skipping W&B logging.")
-        elif not os.environ.get("WANDB_API_KEY"):
-            print("WARNING: WANDB_API_KEY environment variable not set. Skipping W&B logging. ")
         else:
             loggers.append(
                 WandbLogger(

@@ -77,6 +77,7 @@ Check what's already available in `tinker_cookbook/eval/benchmarks/` before writ
 | `ceval`, `supergpqa`, `ifbench` | Various | See eval README |
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 
 # Run baseline eval BEFORE any training
@@ -84,7 +85,7 @@ from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 results = await run_benchmarks(
     ["gsm8k", "mmlu_pro", "ifeval"],
     sampling_client, renderer,
-    BenchmarkConfig(save_dir="evals/baseline"),
+    BenchmarkConfig(save_dir=cli_utils.runs_path("evals", "baseline")),
 )
 for name, result in results.items():
     print(f"{name}: {result.score:.1%} ({result.num_correct}/{result.num_examples})")
@@ -114,10 +115,11 @@ evaluator_builders = [
 Don't just look at aggregate scores — read the actual failures:
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.benchmarks import load_trajectories, print_trajectory
 
 # Load incorrect examples to understand failure modes
-wrong = load_trajectories("evals/step500", "gsm8k", incorrect_only=True)
+wrong = load_trajectories(cli_utils.runs_path("evals", "step500"), "gsm8k", incorrect_only=True)
 for traj in wrong[:5]:
     print(f"Expected: {traj.logs['expected']}, Got: {traj.logs['extracted']}")
     print_trajectory(traj)  # Full conversation with model response
@@ -286,6 +288,9 @@ print(tc.get_info())
 | `TINKER_API_KEY` | Required — authenticates with Tinker service |
 | `HF_TOKEN` | Optional — access gated HuggingFace models (Llama, etc.) |
 | `WANDB_API_KEY` | Optional — log to Weights & Biases |
+| `TINKER_COOKBOOK_RUNS_DIR` | Optional — root for default output paths (default `~/tinker-runs`) |
+
+Use `cli_utils.runs_path(...)` for default log paths, generated datasets, and eval outputs. Never put them under `/tmp`: many machines clear it on reboot, taking checkpoint records, metrics, and expensive generated data with it.
 
 ---
 
@@ -316,7 +321,7 @@ common_config = ChatDatasetBuilderCommonConfig(
 )
 dataset = chat_datasets.NoRobotsBuilder(common_config=common_config)
 blueprint = chz.Blueprint(train.Config).apply({
-    "log_path": "/tmp/tinker-examples/sft",
+    "log_path": cli_utils.runs_path("sft"),
     "model_name": model_name, "renderer_name": renderer_name,
     "dataset_builder": dataset,
     "learning_rate": 2e-4, "lr_schedule": "linear", "num_epochs": 1,
@@ -356,7 +361,7 @@ builder = Gsm8kDatasetBuilder(
 )
 blueprint = chz.Blueprint(train.Config).apply({
     "model_name": model_name, "renderer_name": renderer_name,
-    "log_path": "/tmp/tinker-examples/rl",
+    "log_path": cli_utils.runs_path("rl"),
     "dataset_builder": builder,
     "learning_rate": 4e-5, "max_tokens": 256,
 })
@@ -382,7 +387,7 @@ For the full environment protocol, multi-turn examples, and async patterns, read
 Use DPO for aligning models with preference data (chosen/rejected pairs).
 
 ```python
-from tinker_cookbook import model_info
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.preference import train_dpo
 from tinker_cookbook.preference.dpo_datasets import DPODatasetBuilderFromComparisons
 from tinker_cookbook.recipes.preference.datasets import HHHComparisonBuilder
@@ -403,7 +408,7 @@ config = train_dpo.Config(
         comparison_builder=HHHComparisonBuilder(),
     ),
     learning_rate=1e-5, dpo_beta=0.1,
-    log_path="/tmp/tinker-examples/dpo",
+    log_path=cli_utils.runs_path("dpo"),
 )
 train_dpo.main(config)
 ```
@@ -420,7 +425,7 @@ Use distillation to transfer knowledge from a stronger teacher to a smaller stud
 
 ```python
 import asyncio
-from tinker_cookbook import model_info
+from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.distillation import train_on_policy
 from tinker_cookbook.distillation.datasets import (
     DistillationDatasetConfig, PromptOnlyDatasetBuilder, TeacherConfig,
@@ -444,7 +449,7 @@ config = train_on_policy.Config(
     renderer_name=renderer_name,
     learning_rate=1e-4, lora_rank=128,
     kl_penalty_coef=1.0, kl_discount_factor=0.0,
-    log_path="/tmp/tinker-examples/distillation",
+    log_path=cli_utils.runs_path("distillation"),
 )
 asyncio.run(train_on_policy.main(config))
 ```
@@ -532,7 +537,7 @@ paths = await checkpoint_utils.save_checkpoint_async(
 
 # Resume
 record = checkpoint_utils.get_last_checkpoint(log_path, required_key="state_path")
-tc.load_state_with_optimizer(path=record.state_path)
+tc = svc.create_training_client_from_state_with_optimizer(path=record.state_path)
 ```
 
 ### Weight export

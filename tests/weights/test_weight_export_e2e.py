@@ -76,7 +76,7 @@ def _train_one_step(
         batch = sft_dataset.get_batch(0)
         fwd_bwd = await tc.forward_backward_async(batch, loss_fn="cross_entropy")
         await fwd_bwd.result_async()
-        optim = await tc.optim_step_async({"learning_rate": 1e-4})
+        optim = await tc.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
         await optim.result_async()
         sampler_resp = await tc.save_weights_for_sampler_async(checkpoint_name)
         result = await sampler_resp.result_async()

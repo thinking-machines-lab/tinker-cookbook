@@ -55,10 +55,6 @@ tc.save_state(name="step_100", ttl_seconds=None)
 tc.save_weights_for_sampler(name="step_100_sampler", ttl_seconds=None)
 sc = tc.save_weights_and_get_sampling_client()  # Ephemeral, not persistently saved
 
-# Load checkpoint
-tc.load_state(path="tinker://...")
-tc.load_state_with_optimizer(path="tinker://...")
-
 # Metadata
 info = tc.get_info()
 tokenizer = tc.get_tokenizer()

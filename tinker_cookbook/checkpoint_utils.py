@@ -505,7 +505,7 @@ def save_checkpoint(
         save_checkpoint(
             training_client=training_client,
             name="step-100",
-            log_path="./logs",
+            log_path=cli_utils.runs_path("my-run"),
             loop_state={"epoch": 0, "batch": 100},
         )
     """
@@ -551,7 +551,7 @@ class CheckpointManager:
         mgr = CheckpointManager(
             training_client=tc,
             service_client=sc,
-            log_path="/tmp/logs",
+            log_path=cli_utils.runs_path("my-run"),
             save_every=20,
             rolling_save_every=1,
         )

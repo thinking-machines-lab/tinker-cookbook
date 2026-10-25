@@ -126,7 +126,7 @@ async def cli_main(cli_config: CLIConfig, tasks: list[HarborTask]):
             f"{cli_config.learning_rate}lr-{cli_config.groups_per_batch}batch-"
             f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = str(Path(f"~/tinker-examples/distillation/{run_name}").expanduser())
+        log_path = cli_utils.runs_path("distillation", run_name)
 
     wandb_name = cli_config.wandb_name or Path(log_path).name
     logger.info("Loaded %d harbor tasks", len(tasks))

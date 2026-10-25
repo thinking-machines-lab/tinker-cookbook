@@ -116,7 +116,7 @@ class ExpressoSFTDatasetBuilder(SupervisedDatasetBuilder):
 
 @chz.chz
 class Config:
-    log_path: str = "/tmp/tinker-examples/audio-sft"
+    log_path: str = cli_utils.runs_path("audio-sft")
     model_name: str = "thinkingmachines/Inkling"
     base_url: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"

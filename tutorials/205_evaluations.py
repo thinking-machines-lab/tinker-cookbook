@@ -280,6 +280,7 @@ def _(mo):
     ### Supervised training with evaluators
 
     ```python
+    from tinker_cookbook import cli_utils
     from tinker_cookbook.supervised import train
 
     def make_nll_evaluator():
@@ -290,7 +291,7 @@ def _(mo):
         return AccuracyEvaluator(test_qa, renderer, tokenizer)
 
     config = train.Config(
-        log_path="/tmp/tinker-tutorials/sft-with-evals",
+        log_path=cli_utils.runs_path("tutorials", "sft-with-evals"),
         model_name="Qwen/Qwen3.5-4B",
         dataset_builder=my_dataset_builder,
         learning_rate=1e-4,
@@ -316,10 +317,11 @@ def _(mo):
     The RL `train.Config` works the same way, though it only accepts `SamplingClientEvaluatorBuilder`:
 
     ```python
+    from tinker_cookbook import cli_utils
     from tinker_cookbook.rl import train
 
     config = train.Config(
-        log_path="/tmp/tinker-tutorials/rl-with-evals",
+        log_path=cli_utils.runs_path("tutorials", "rl-with-evals"),
         model_name="Qwen/Qwen3.5-9B-Base",
         dataset_builder=my_rl_dataset_builder,
 

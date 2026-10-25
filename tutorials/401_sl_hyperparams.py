@@ -127,7 +127,7 @@ def _(mo):
     Each run writes `metrics.jsonl` and `config.json` to its own subdirectory. After the sweep, `sweep.collect()` reads all results into a DataFrame:
 
     ```
-    /tmp/tinker-sweeps/20260330_143000/
+    ~/tinker-runs/sweeps/20260330_143000/
     ├── learning_rate=0.0001_lora_rank=32/
     │   ├── config.json
     │   └── metrics.jsonl

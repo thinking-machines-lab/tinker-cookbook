@@ -166,7 +166,7 @@ python -m tinker_cookbook.recipes.true_thinking_score.analyze \
     dataset=gsm8k model_name=Qwen/Qwen3.6-27B n_problems=50
 ```
 
-Results are saved to `/tmp/tinker-examples/tts/<run-name>/`:
+Results are saved to `~/tinker-runs/tts/<run-name>/`:
 
 - `tts_per_problem.jsonl` — per-problem details (steps, TTS scores)
 - `tts_summary.json` — aggregate statistics

@@ -46,6 +46,9 @@ def get_image_processor(model_name: str) -> ImageProcessor:
     elif model_name == "moonshotai/Kimi-K2.6":
         kwargs["trust_remote_code"] = True
         kwargs["revision"] = "b5aabbfb20227ed42becbf5541dbffd213942c58"
+    elif model_name == "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16":
+        kwargs["trust_remote_code"] = True
+        kwargs["revision"] = "533d66230b6e75518bf32d2d7a7b95a24c3dd517"
 
     processor = AutoImageProcessor.from_pretrained(model_name, **kwargs)
 

@@ -52,14 +52,14 @@ def _():
 
     import tinker
 
-    from tinker_cookbook import checkpoint_utils, model_info
+    from tinker_cookbook import checkpoint_utils, cli_utils, model_info
     from tinker_cookbook.renderers import TrainOnWhat
 
     BASE_MODEL = "Qwen/Qwen3.5-9B-Base"
     LORA_RANK = 64
     MAX_LENGTH = 16384
     BATCH_SIZE = 256
-    LOG_ROOT = "/tmp/tinker-tutorials/rlhf"
+    LOG_ROOT = cli_utils.runs_path("tutorials", "rlhf")
 
     renderer_name = model_info.get_recommended_renderer_name(BASE_MODEL)
     print(f"Base model:  {BASE_MODEL}")

@@ -41,7 +41,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/twenty-questions-rl/{run_name}"
+        log_path = cli_utils.runs_path("twenty-questions-rl", run_name)
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
@@ -64,6 +64,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
         learning_rate=cli_config.learning_rate,
         max_tokens=cli_config.max_tokens,
         eval_every=cli_config.eval_every,
+        save_every=cli_config.save_every,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         max_steps=cli_config.max_steps,

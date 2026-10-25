@@ -16,6 +16,7 @@ import json
 import pytest
 
 from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
+from tinker_cookbook.renderers.base import TextPart
 from tinker_cookbook.renderers.nemotron3 import (
     Nemotron3DisableThinkingRenderer,
     Nemotron3LowThinkingRenderer,
@@ -172,6 +173,18 @@ def get_multiturn_thinking_conversation() -> list[Message]:
                 {"type": "text", "text": "Second answer."},
             ],
         ),
+    ]
+
+
+def get_multiturn_thinking_history_conversation() -> list[Message]:
+    """History that reasoned, and a final turn that did not.
+
+    What a reasoning-off renderer can be given: it refuses a final turn that reasoned, and
+    this still leaves history for `strip_thinking_from_history=False` to preserve.
+    """
+    return [
+        *get_multiturn_thinking_conversation()[:-1],
+        Message(role="assistant", content="Second answer."),
     ]
 
 
@@ -530,6 +543,17 @@ def test_disable_thinking_generation_matches_hf(
         [r.to_openai_message(m) for m in messages],
         enable_thinking=False,
     )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_user_list_content_is_not_trimmed_like_hf(nemotron_tokenizer, nemotron_renderer):
+    """The template renders user content as-is, so list content keeps its whitespace."""
+    text = "  What is 2+2? \n"
+    messages = [Message(role="user", content=[TextPart(type="text", text=text)])]
+    cookbook = nemotron_renderer.build_generation_prompt(messages).to_ints()
+    hf = _hf_generation_tokens(nemotron_tokenizer, [{"role": "user", "content": text}])
     assert cookbook == hf, (
         f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
     )
@@ -1293,6 +1317,9 @@ def test_preserve_thinking_registered_in_model_info():
     assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     )
+    assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+    )
 
 
 # The preserve-thinking behavior isn't limited to the two named variants above:
@@ -1301,10 +1328,15 @@ def test_preserve_thinking_registered_in_model_info():
 # disable / low-effort / medium-effort modes, which have no named preserve variant.
 
 
-def _assert_mode_preserve_matches_hf(tokenizer, renderer, **hf_kwargs):
+def _assert_mode_preserve_matches_hf(
+    tokenizer, renderer, conversation_fn=get_multiturn_thinking_conversation, **hf_kwargs
+):
     """Renderer (built with strip_thinking_from_history=False) matches HF with
-    truncate_history_thinking=False plus the mode flags in ``hf_kwargs``."""
-    sup_msgs = get_multiturn_thinking_conversation()
+    truncate_history_thinking=False plus the mode flags in ``hf_kwargs``.
+
+    The reasoning-off renderers pass a conversation whose final turn did not reason.
+    """
+    sup_msgs = conversation_fn()
     cookbook_sup = renderer.build_supervised_example(sup_msgs)[0].to_ints()
     hf_sup = _hf_supervised_tokens(
         tokenizer,
@@ -1316,7 +1348,7 @@ def _assert_mode_preserve_matches_hf(tokenizer, renderer, **hf_kwargs):
         f"supervised: {tokenizer.decode(cookbook_sup)}\nHF: {tokenizer.decode(hf_sup)}"
     )
 
-    gen_msgs = get_multiturn_thinking_conversation()[:4]
+    gen_msgs = conversation_fn()[:-1]
     cookbook_gen = renderer.build_generation_prompt(gen_msgs).to_ints()
     hf_gen = _hf_generation_tokens(
         tokenizer,
@@ -1334,7 +1366,12 @@ def test_disable_thinking_preserve_matches_hf(nemotron_tokenizer):
     renderer = Nemotron3DisableThinkingRenderer(
         nemotron_tokenizer, strip_thinking_from_history=False
     )
-    _assert_mode_preserve_matches_hf(nemotron_tokenizer, renderer, enable_thinking=False)
+    _assert_mode_preserve_matches_hf(
+        nemotron_tokenizer,
+        renderer,
+        conversation_fn=get_multiturn_thinking_history_conversation,
+        enable_thinking=False,
+    )
 
 
 def test_low_thinking_preserve_matches_hf(nemotron_super_tokenizer):
@@ -1358,4 +1395,33 @@ def test_ultra_disable_thinking_preserve_matches_hf(nemotron_ultra_tokenizer):
     renderer = Nemotron3UltraDisableThinkingRenderer(
         nemotron_ultra_tokenizer, strip_thinking_from_history=False
     )
-    _assert_mode_preserve_matches_hf(nemotron_ultra_tokenizer, renderer, enable_thinking=False)
+    _assert_mode_preserve_matches_hf(
+        nemotron_ultra_tokenizer,
+        renderer,
+        conversation_fn=get_multiturn_thinking_history_conversation,
+        enable_thinking=False,
+    )
+
+
+def test_parallel_tool_results_render_without_empty_chunks(nemotron_tokenizer):
+    """Consecutive tool messages share one turn header; none may render as an empty chunk."""
+    import json
+
+    from tinker_cookbook.renderers import get_renderer
+    from tinker_cookbook.renderers.base import ToolCall
+
+    def call(i: int) -> ToolCall:
+        return ToolCall(
+            id=f"c{i}",
+            function=ToolCall.FunctionBody(name="Bash", arguments=json.dumps({"command": "ls"})),
+        )
+
+    convo = [
+        {"role": "user", "content": "list files twice"},
+        {"role": "assistant", "content": "", "tool_calls": [call(1), call(2)]},
+        {"role": "tool", "content": "a.py", "tool_call_id": "c1", "name": "Bash"},
+        {"role": "tool", "content": "b.py", "tool_call_id": "c2", "name": "Bash"},
+    ]
+    for name in ("nemotron3", "nemotron3_preserve_thinking"):
+        prompt = get_renderer(name, nemotron_tokenizer).build_generation_prompt(convo)
+        assert all(getattr(c, "tokens", [0]) for c in prompt.chunks), name

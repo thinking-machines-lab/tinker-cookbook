@@ -78,7 +78,7 @@ async def cli_main(
         f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     )
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/harbor_rl/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("harbor_rl", run_name)
     wandb_name = cli_config.wandb_name or run_name
     max_generation_tokens = (
         cli_config.max_generation_tokens

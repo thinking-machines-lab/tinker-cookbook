@@ -79,3 +79,35 @@ def test_qwen3_vl_image_to_chunk_token_counts() -> None:
             f"want {expected_tokens}. If the value is lower, the image processor may be using "
             f"wrong min_pixels (hardcoded defaults instead of model config)."
         )
+
+
+def test_nemotron_3_5_super_image_to_chunk_token_counts() -> None:
+    """The cases cover downscaling to the patch budget, upscaling small images, and odd grids."""
+    processor: Any = get_image_processor("nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16")
+
+    # (width, height, correct_tokens)
+    test_cases: list[tuple[int, int, int]] = [
+        (640, 480, 300),
+        (1920, 1080, 2040),
+        (4000, 3000, 3300),
+        (300, 200, 280),
+        (123, 987, 270),
+    ]
+
+    for width, height, expected_tokens in test_cases:
+        chunk = image_to_chunk(Image.new("RGB", (width, height)), processor)
+        assert chunk.expected_tokens == expected_tokens, (width, height)
+
+
+def test_nemotron_3_5_super_count_matches_preprocessing() -> None:
+    """image_to_chunk repeats the processor's budget arithmetic; a pin bump must not change it."""
+    processor: Any = get_image_processor("nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16")
+
+    sizes = [(1, 1), (16, 16), (17, 33), (640, 480), (1024, 1024), (2047, 15)]
+    sizes += [(15, 2047), (1920, 1080), (4000, 3000), (8192, 8192), (10000, 50), (333, 777)]
+    for width, height in sizes:
+        image = Image.new("RGB", (width, height))
+        preprocessed = processor(images=[image], return_tensors="pt")
+        assert image_to_chunk(image, processor).expected_tokens == int(
+            preprocessed["num_tokens"][0]
+        ), (width, height)

@@ -697,6 +697,14 @@ class RenderContext:
     prev_message: Message | None = None
     """The previous message in the conversation, if any."""
 
+    next_message: Message | None = None
+    """The next message in the conversation, if any.
+
+    Used by renderers whose templates look ahead — e.g. Qwen3.5-family tool-response
+    grouping closes the shared user block only after the final consecutive tool
+    message. None for the last message or when a message is rendered standalone.
+    """
+
     last_user_index: int = -1
     """Index of the last user message in the conversation. -1 if no user messages.
 
@@ -1335,6 +1343,21 @@ class Renderer(ABC):
 
     tokenizer: Tokenizer
 
+    disables_thinking: bool = False
+    """Whether this renderer's generation prompt closes the think block.
+
+    A closed block tells the model not to reason::
+
+        qwen3                   ...assistant\\n<think>\\n                 open, so False
+        qwen3_disable_thinking  ...assistant\\n<think>\\n\\n</think>\\n\\n  closed, so True
+
+    Set it on any renderer that does that. Forgetting is caught by
+    ``test_a_turn_that_reasoned_is_never_trained_after_a_prompt_it_cannot_follow``.
+
+    DeepSeek's non-thinking renderer does not set it and does not need to: it strips reasoning
+    out of the content, so its render already matches its prompt.
+    """
+
     # Pickle metadata — set by get_renderer() via _stamp_pickle_metadata().
     # Class-level defaults ensure these exist even when subclasses bypass super().__init__().
     _renderer_name: str | None = None
@@ -1654,15 +1677,20 @@ class Renderer(ABC):
                 idx=idx,
                 is_last=(idx == len(messages) - 1),
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
                 last_user_index=last_user_idx,
                 in_last_assistant_turn=idx >= turn_start,
             )
             rendered_message = self.render_message(message, ctx)
             header_chunk = rendered_message.header
             output_chunks = rendered_message.output
-            if header_chunk:
+            # Skip empty EncodedTextChunks (header or output): the sampler rejects them with
+            # a 400 "Chunk N has empty tokens list". An empty header happens e.g. for the
+            # second of several consecutive tool messages, which share one turn header.
+            if header_chunk and (
+                not isinstance(header_chunk, tinker.EncodedTextChunk) or header_chunk.tokens
+            ):
                 chunks.append(header_chunk)
-            # Filter out empty EncodedTextChunks, which cause 400 errors in model requests
             chunks.extend(
                 [x for x in output_chunks if not isinstance(x, tinker.EncodedTextChunk) or x.tokens]
             )
@@ -1816,6 +1844,7 @@ class Renderer(ABC):
                 idx=idx,
                 is_last=is_last_message,
                 prev_message=messages[idx - 1] if idx > 0 else None,
+                next_message=messages[idx + 1] if idx + 1 < len(messages) else None,
                 last_user_index=last_user_idx,
                 in_last_assistant_turn=in_last_assistant_turn,
             )
@@ -1861,8 +1890,23 @@ class Renderer(ABC):
         that prefill on whichever side its header logic puts it, so the model is trained to
         produce a token it is always given. Only the weights move; the tokens are untouched.
 
-        Returns them unchanged when the render does not begin with the prompt, which means the
-        two disagree about more than where the boundary falls.
+        If the render does not start with the prompt, the example is broken: it would train the
+        model on a sequence the model is never given. Two things cause that.
+
+        1. A ``disables_thinking`` renderer was given a turn that reasoned. It was told not to
+           reason, so the empty block the prompt ends on is missing from the render::
+
+               prompt  ...assistant\\n<think>\\n\\n</think>\\n\\n
+               render  ...assistant\\n<think>\\n2+2 is 4\\n</think>\\n\\n4<|im_end|>
+
+           The caller can fix this, by using the thinking renderer or dropping the reasoning,
+           so raise and let them choose.
+
+        2. Any other renderer: its own template disagrees with itself. nemotron3 does this
+           (#860) -- its prompt ends ``<think>\\n`` but it writes ``<think></think>`` for a turn
+           with no reasoning. Nobody calling us can fix someone else's chat template, and
+           raising would reject training a thinking renderer on ordinary data with no
+           reasoning, so return the weights unchanged as before.
         """
         boundary = self._first_trained_message_index(messages, train_on_what)
         if boundary is None:
@@ -1872,6 +1916,14 @@ class Renderer(ABC):
 
         prompt = self.build_generation_prompt(messages[:boundary]).to_ints()
         if model_input.to_ints()[: len(prompt)] != prompt:
+            if self.disables_thinking:
+                raise RendererError(
+                    f"{type(self).__name__} has thinking turned off: its generation prompt "
+                    "closes the think block, which tells the model not to reason. This turn "
+                    "contains reasoning, so training on it would teach the model to reason "
+                    "anyway, after being told not to. Either use the thinking version of this "
+                    "renderer, or remove the reasoning from this turn."
+                )
             return weights
 
         return torch.cat([torch.zeros(len(prompt)), weights[len(prompt) :]])
@@ -2116,6 +2168,14 @@ def image_to_chunk(
     elif hasattr(image_processor, "get_resize_config"):
         config = image_processor.get_resize_config({"type": "image", "image": pil_image})
         num_image_tokens = config["num_tokens"]
+    elif hasattr(image_processor, "_compute_target_patches"):
+        # Nemotron 3.5 Super
+        processor: Any = image_processor
+        pixel_shuffle = processor._downsample_factor**2
+        budget = min((processor.max_model_len - 4) * pixel_shuffle, processor.max_num_patches)
+        budget = max(budget, processor.min_num_patches)
+        w_patches, h_patches = processor._compute_target_patches(pil_image, budget)
+        num_image_tokens = w_patches * h_patches // pixel_shuffle
     else:
         raise RendererError(
             f"Don't know how to get the number of image tokens for image processor: {image_processor}"

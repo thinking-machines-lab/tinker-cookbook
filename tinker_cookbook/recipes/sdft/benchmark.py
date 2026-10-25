@@ -100,7 +100,7 @@ def _make_log_path(config: BenchmarkConfig, phase: str) -> str:
     if config.log_root:
         root = config.log_root
     else:
-        root = "/tmp/tinker-examples/sdft-benchmark"
+        root = cli_utils.runs_path("sdft-benchmark")
     model_slug = config.model_name.replace("/", "-")
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
     return f"{root}/{config.dataset}-{model_slug}-{phase}-{timestamp}"
@@ -399,7 +399,7 @@ async def cli_main(config: BenchmarkConfig) -> None:
         logger.info("=" * 60)
 
     # Save summary
-    log_root = config.log_root or "/tmp/tinker-examples/sdft-benchmark"
+    log_root = config.log_root or cli_utils.runs_path("sdft-benchmark")
     summary_path = Path(log_root) / f"benchmark_summary_{config.dataset}.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with open(summary_path, "w") as f:

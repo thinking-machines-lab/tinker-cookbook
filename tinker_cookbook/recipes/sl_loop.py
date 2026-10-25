@@ -10,7 +10,7 @@ import chz
 import datasets
 import tinker
 
-from tinker_cookbook import checkpoint_utils, model_info, renderers
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info, renderers
 from tinker_cookbook.supervised.common import compute_bpb, compute_mean_nll
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -24,7 +24,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     base_url: str | None = None
-    log_path: str = "/tmp/tinker-examples/sl-loop"
+    log_path: str = cli_utils.runs_path("sl-loop")
     model_name: str = "Qwen/Qwen3.5-9B-Base"
     batch_size: int = 128
     learning_rate: float = 1e-4

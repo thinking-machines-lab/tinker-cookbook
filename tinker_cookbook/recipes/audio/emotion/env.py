@@ -53,7 +53,7 @@ from tinker_cookbook.utils import logtree
 if TYPE_CHECKING:
     from tml_renderers import chat  # pyright: ignore[reportMissingImports]
 
-DEFAULT_DATA_DIR = "/tmp/tinker-examples/audio-data/expresso_16khz"
+DEFAULT_DATA_DIR = "~/.cache/tinker-cookbook/audio-data/expresso_16khz"
 
 # Read-speech styles that have short "base" recordings with transcriptions.
 # (narration exists only as longform; singing has no transcripts.)

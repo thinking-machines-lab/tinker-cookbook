@@ -22,7 +22,7 @@ python -m tinker_cookbook.recipes.math_rl.train model_name="Qwen/Qwen3.5-9B-Base
 python -m tinker_cookbook.recipes.math_rl.train env=math model_name="Qwen/Qwen3.5-9B" group_size=16 groups_per_batch=64 learning_rate=2e-5 max_tokens=512
 ```
 
-After 180 steps of training, we observe `"test/env/all/correct": 0.838`, which is logged to `/tmp/tinker-examples/math_rl/math-Qwen-Qwen3.5-9B-32rank-2e-05lr-16group-64batch-importance_sampling-seed0-${DATE}/metrics.jsonl`.
+After 180 steps of training, we observe `"test/env/all/correct": 0.838`, which is logged to `~/tinker-runs/math_rl/math-Qwen-Qwen3.5-9B-32rank-2e-05lr-16group-64batch-importance_sampling-seed0-${DATE}/metrics.jsonl`.
 
 ```
 <|im_start|>user

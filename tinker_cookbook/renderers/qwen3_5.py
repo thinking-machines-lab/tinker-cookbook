@@ -22,6 +22,7 @@ import re
 
 from tinker_cookbook.renderers.base import (
     UNTERMINATED_TOOL_BLOCK_ERROR,
+    ContentPart,
     ImagePart,
     Message,
     ParseTermination,
@@ -46,6 +47,22 @@ _PARAM_BLOCK_RE = re.compile(
 )
 
 
+def _strip_visible_content(content: list[ContentPart]) -> list[ContentPart]:
+    """Trim like the HF template's ``content|trim``, skipping thinking parts."""
+    parts = list(content)
+    visible = [i for i, p in enumerate(parts) if p["type"] != "thinking"]
+    for indices, strip in ((visible, str.lstrip), (visible[::-1], str.rstrip)):
+        for i in indices:
+            part = parts[i]
+            if part["type"] != "text":
+                break
+            text = strip(part["text"])
+            parts[i] = TextPart(type="text", text=text)
+            if text:
+                break
+    return parts
+
+
 class Qwen3_5Renderer(Qwen3VLRenderer):
     """
     Renderer for Qwen3.5 models.
@@ -58,9 +75,30 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
     populated by the base build_generation_prompt/build_supervised_example.
     """
 
+    # The Qwen3.5-family templates wrap a run of consecutive tool responses in a
+    # single <|im_start|>user block (gated on loop.previtem/nextitem).
+    groups_consecutive_tool_responses = True
+
+    @property
+    def has_extension_property(self) -> bool:
+        """Qwen3.5 cannot claim the extension property, even with thinking preserved.
+
+        A turn that did not reason is sampled after the prompt's open ``<think>\\n``, so
+        its tokens continue with a lone ``\\n``. History writes that turn either with the
+        closed empty block, whose ``\\n\\n`` the tokenizer merges into a single token, or,
+        before a later user message, with no block at all. Either way the sampled sequence
+        is not a token-level prefix of the next prompt.
+        """
+        return False
+
+    def _trim_content(self, content: str | list[ContentPart]) -> str | list[ContentPart]:
+        """Trim like the HF template's ``content|trim``."""
+        if isinstance(content, str):
+            return content.strip()
+        return _strip_visible_content(content)
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
-        if isinstance(message["content"], str):
-            message = {**message, "content": message["content"].strip()}
+        message = {**message, "content": self._trim_content(message["content"])}
         return super().render_message(message, ctx)
 
     def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
@@ -234,26 +272,52 @@ class Qwen3_5Renderer(Qwen3VLRenderer):
         self._postprocess_parsed_message(message)
         return message, termination
 
+    def _format_tool_call_argument(self, value: object) -> str:
+        """Serialize one tool-call argument value the way the template does.
+
+        The Qwen3.5 (and Nemotron) templates apply ``|tojson`` only to mappings
+        and sequences; scalars go through ``|string``, i.e. Python-style
+        ``True``/``None``. Qwen3.6 changed this to ``|tojson`` for everything
+        non-string (JSON ``true``/``null``) but reuses this renderer, so boolean
+        and null arguments diverge from the Qwen3.6 template; Qwen3.8 has its own
+        renderer and overrides this accordingly.
+        """
+        if isinstance(value, (dict, list)):
+            return json.dumps(value)
+        return str(value)
+
     def _format_tool_call_xml(self, tool_call: ToolCall) -> str:
         """Format a single tool call in Qwen3.5's XML parameter format."""
         args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
         lines = [f"<tool_call>\n<function={tool_call.function.name}>"]
         for param_name, param_value in args.items():
-            if isinstance(param_value, (dict, list)):
-                value_str = json.dumps(param_value)
-            else:
-                value_str = str(param_value)
+            value_str = self._format_tool_call_argument(param_value)
             lines.append(f"<parameter={param_name}>\n{value_str}\n</parameter>")
         lines.append("</function>\n</tool_call>")
         return "\n".join(lines)
 
     def _format_tool_calls_chunks(self, message: Message) -> list[ImagePart | TextPart]:
-        """Format tool_calls using Qwen3.5's XML parameter format."""
+        """Format tool_calls using Qwen3.5's XML parameter format.
+
+        The template separates the first <tool_call> from the message content with
+        a blank line only when there is visible content (``{%- if content|trim %}``);
+        with no content the block starts immediately.
+        """
         assert "tool_calls" in message, "tool_calls are required to format tool calls"
+        content = message.get("content", "")
+        if isinstance(content, str):
+            has_visible_content = bool(content.strip())
+        else:
+            # Thinking parts are rendered separately by the template, so only text
+            # and image parts count as content for the separator.
+            has_visible_content = any(
+                (p["type"] == "text" and p["text"].strip()) or p["type"] == "image" for p in content
+            )
+        separator = "\n\n" if has_visible_content else ""
         return [
             TextPart(
                 type="text",
-                text="\n\n"
+                text=separator
                 + "\n".join(self._format_tool_call_xml(tc) for tc in message["tool_calls"]),
             )
         ]
@@ -319,6 +383,8 @@ class Qwen3_5DisableThinkingRenderer(Qwen3_5Renderer):
     from Qwen3_5Renderer is the generation suffix: <think>\\n\\n</think>\\n\\n instead
     of <think>\\n, signaling to the model to respond directly without reasoning.
     """
+
+    disables_thinking = True
 
     def _generation_suffix_str(self, role: Role, ctx: RenderContext) -> str:
         maybe_newline = "\n" if ctx.idx > 0 else ""
