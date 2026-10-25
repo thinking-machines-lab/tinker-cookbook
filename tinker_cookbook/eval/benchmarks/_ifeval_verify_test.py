@@ -75,3 +75,12 @@ class TestUnhandledInstructionId:
     )
     def test_documented_approximations_still_pass(self, iid):
         assert verify_instruction(iid, "any response", {})
+
+
+def test_english_capital_is_case_only_no_language_check():
+    """Scope: local check is case-only (no langdetect), unlike upstream.
+
+    Upstream CapitalLettersEnglishChecker would reject this (not English); the
+    local predicate admits it. Pinned so any scope change is deliberate.
+    """
+    assert verify_instruction("change_case:english_capital", "中文 HELLO", {})

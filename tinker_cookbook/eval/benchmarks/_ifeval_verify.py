@@ -212,8 +212,12 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
 
         # --- change_case ---
         elif iid == "change_case:english_capital":
-            # Reference: instructions.py CapitalLettersEnglishChecker, value.isupper().
-            # First-letter-per-word checking accepted title case as "all capital letters".
+            # Case predicate only. Upstream CapitalLettersEnglishChecker requires
+            # value.isupper() AND langdetect == "en"; this local check implements only
+            # the isupper() half (no language detector). Scope consequence: non-English
+            # text with any uppercase Latin letters and no lowercase cased characters,
+            # e.g. "中文 HELLO", is accepted here but rejected upstream. This is not full
+            # checker parity. (Previous first-letter-per-word check accepted title case.)
             return response.isupper()
 
         elif iid == "change_case:english_lowercase":
