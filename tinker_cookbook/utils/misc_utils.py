@@ -5,7 +5,7 @@ Small utilities requiring only basic python libraries.
 import importlib
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -54,24 +54,32 @@ Example::
 """
 
 
-def dict_mean(list_of_dicts: list[dict[str, float | int]]) -> dict[str, float]:
+def dict_mean(list_of_dicts: Sequence[Mapping[str, float | int | None]]) -> dict[str, float]:
     """Compute the element-wise mean across a list of dictionaries.
 
     Keys that appear in only some dictionaries are averaged over only those
-    entries (i.e., missing keys are not treated as zero).
+    entries (i.e., missing keys are not treated as zero). ``None`` values are
+    skipped per key the same way a missing key is: a metric that a given entry
+    could not measure (e.g. a reward's binary verdict on a trial that died
+    before grading) must not poison the mean. A key whose only values are
+    ``None`` is dropped from the result entirely. Averaging ``None`` with a
+    float is never meaningful, so this guard is a general robustness fix, not a
+    behavior change for well-formed inputs.
 
     Args:
-        list_of_dicts (list[dict[str, float | int]]): List of metric
+        list_of_dicts (Sequence[Mapping[str, float | int | None]]): Metric
             dictionaries to average.
 
     Returns:
         dict[str, float]: Dictionary mapping each key to its mean value.
     """
-    key2values = {}
+    key2values: dict[str, list[float | int]] = {}
     for d in list_of_dicts:
         for k, v in d.items():
+            if v is None:
+                continue
             key2values.setdefault(k, []).append(v)
-    return {k: float(np.mean(values)) for k, values in key2values.items()}
+    return {k: float(np.mean(values)) for k, values in key2values.items() if values}
 
 
 def all_same(xs: list[Any]) -> bool:

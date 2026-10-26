@@ -35,7 +35,7 @@ Model, session, or checkpoint doesn't exist. Double-check:
 - Model name spelling (e.g., `Qwen/Qwen3-8B` not `qwen3-8b`)
 - Session ID (use `tc.get_info()` to verify)
 - Checkpoint path format (`tinker://session-id/sampler_weights/name`)
-- That you used `save_weights_for_sampler` (not `save_state`) for sampling/download
+- That you used `save_weights_for_sampler` (not `save_state`) for sampling, and `save_weights_external` or `save_state` for download
 
 ### HTTP 409 — Conflict
 

@@ -15,7 +15,7 @@ Example — merged model::
     from tinker_cookbook import weights
 
     adapter_dir = weights.download(
-        tinker_path="tinker://run-id/sampler_weights/final",
+        tinker_path="tinker://run-id/external_weights/final",
         output_dir="./adapter",
     )
     weights.build_hf_model(

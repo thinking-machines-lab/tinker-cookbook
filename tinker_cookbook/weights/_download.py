@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import logging
 import shutil
-import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -48,10 +47,11 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
       key generated for this download. The files are downloaded and decrypted,
       and then the export is deleted. This starts a training session on the
       checkpoint's base model.
-    - ``tinker://<run_id>/sampler_weights/<name>``:
-      the checkpoint archive is downloaded and extracted.
 
-    Files are validated before they are written (rejects symlinks and path traversal).
+    Sampler checkpoints (``tinker://<run_id>/sampler_weights/<name>``) cannot
+    be downloaded. Save a training checkpoint or external weights instead.
+
+    File paths are validated before they are written (rejects path traversal).
 
     Args:
         tinker_path: Tinker checkpoint path (see above).
@@ -65,8 +65,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
 
     Raises:
         WeightsDownloadError: If the path is invalid, the service cannot be
-            reached, a training checkpoint cannot be exported, the server no
-            longer serves archives, a file fails to download or decrypt, or a
+            reached, a checkpoint cannot be exported, a file fails to download or decrypt, or a
             file path is unsafe.
 
     Example::
@@ -80,6 +79,12 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         parsed_path = tinker.ParsedCheckpointTinkerPath.from_tinker_path(tinker_path)
     except ValueError as e:
         raise WeightsDownloadError(f"Invalid tinker path: {tinker_path!r}") from e
+    if parsed_path.checkpoint_type == "sampler":
+        raise WeightsDownloadError(
+            f"Sampler checkpoints cannot be downloaded: {tinker_path!r}. Download a training "
+            "checkpoint (tinker://<run_id>/weights/<name>) or external weights saved with "
+            "TrainingClient.save_weights_external() instead."
+        )
 
     kwargs: dict = {}
     if base_url is not None:
@@ -98,10 +103,8 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
     try:
         if parsed_path.checkpoint_type == "external":
             _download_external_weights(rc, tinker_path, out)
-        elif parsed_path.checkpoint_type == "training":
-            _download_training_weights(sc, rc, tinker_path, out)
         else:
-            _download_archive(rc, tinker_path, out)
+            _download_training_weights(sc, rc, tinker_path, out)
         status = "success"
     finally:
         try:
@@ -109,32 +112,6 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         except Exception:
             logger.warning("Failed to close the Tinker client.", exc_info=True)
     return output_dir
-
-
-def _download_archive(rc: RestClient, tinker_path: str, out: Path) -> None:
-    try:
-        response = rc.get_checkpoint_archive_url_from_tinker_path(tinker_path).result()
-    except Exception as e:
-        raise WeightsDownloadError(
-            f"Failed to get download URL for {tinker_path!r}: {e}. "
-            f"Check that the checkpoint path is valid and the checkpoint has not expired."
-        ) from e
-
-    out.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
-        try:
-            urllib.request.urlretrieve(response.url, str(tmp_path))
-        except urllib.error.URLError as e:
-            raise WeightsDownloadError(
-                "Failed to download checkpoint archive from signed URL. "
-                "The URL may have expired — try downloading again."
-            ) from e
-        _safe_extract_tar(tmp_path, out)
-    finally:
-        tmp_path.unlink(missing_ok=True)
 
 
 def _download_training_weights(
@@ -268,27 +245,3 @@ def _get_external_weights_urls(
         except Exception:
             logger.warning("Failed to renew the TTL of %s.", tinker_path, exc_info=True)
     return response
-
-
-def _safe_extract_tar(archive_path: Path, extract_dir: Path) -> None:
-    """Extract a tar archive with security validation.
-
-    Rejects archives containing symlinks, hardlinks, or paths that escape
-    the extraction directory (path traversal).
-    """
-    base = extract_dir.resolve()
-    with tarfile.open(archive_path, "r") as tar:
-        members = tar.getmembers()
-        for member in members:
-            if member.issym() or member.islnk():
-                raise WeightsDownloadError(
-                    "Unsafe symlink or hardlink found in tar archive. "
-                    "Archive may be corrupted or malicious."
-                )
-            member_path = (extract_dir / member.name).resolve()
-            if not member_path.is_relative_to(base):
-                raise WeightsDownloadError(
-                    "Unsafe path found in tar archive (path traversal). "
-                    "Archive may be corrupted or malicious."
-                )
-        tar.extractall(path=extract_dir)

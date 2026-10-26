@@ -103,7 +103,7 @@ tinker checkpoint delete <TINKER_PATH>
 from tinker_cookbook import weights
 
 adapter_dir = weights.download(
-    tinker_path="tinker://run-id/sampler_weights/final",
+    tinker_path="tinker://run-id/external_weights/final",
     output_dir="./adapter",
     base_url=None,
 )
@@ -152,7 +152,7 @@ from tinker_cookbook import weights
 
 # Step 1: Download adapter
 adapter_dir = weights.download(
-    tinker_path="tinker://run-id/sampler_weights/final",
+    tinker_path="tinker://run-id/external_weights/final",
     output_dir="./adapter",
 )
 
@@ -174,7 +174,7 @@ url = weights.publish_to_hf_hub(
 
 ### Pitfalls
 
-- `download()` expects `tinker://` path from `save_weights_for_sampler`, not `save_state`
+- `download()` accepts external weights paths (from `save_weights_external`) or training checkpoints (from `save_state`), not sampler checkpoints (from `save_weights_for_sampler`)
 - `build_hf_model()` requires the base model to be downloadable from HuggingFace
 - Set `HF_TOKEN` for private models and publishing
 - `dtype="bfloat16"` is recommended for most models

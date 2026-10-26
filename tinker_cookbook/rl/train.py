@@ -1942,118 +1942,120 @@ async def main(
     )
     if session_display_name is not None:
         logger.info(f"Tinker session display name: {session_display_name}")
-    service_client = tinker.ServiceClient(
+    with tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata(config.recipe_name),
         display_name=session_display_name,
-    )
-    user_metadata: dict[str, str] = {}
-    if wandb_link := ml_logger.get_logger_url():
-        user_metadata["wandb_link"] = wandb_link
-    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
-    model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
+    ) as service_client:
+        user_metadata: dict[str, str] = {}
+        if wandb_link := ml_logger.get_logger_url():
+            user_metadata["wandb_link"] = wandb_link
+        checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
+        model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
-    if resume_info:
-        # Resuming interrupted training - load optimizer state for proper continuation
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info.state_path, config.renderer_name
-        )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
+        if resume_info:
+            # Resuming interrupted training - load optimizer state for proper continuation
+            await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+                service_client, resume_info.state_path, config.renderer_name
             )
-        )
-        logger.info(f"Resumed training from {resume_info.state_path}")
-    elif config.load_checkpoint_path:
-        # Starting fresh from a checkpoint - load weights only (fresh optimizer)
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, config.load_checkpoint_path, config.renderer_name
-        )
-        training_client = await service_client.create_training_client_from_state_async(
-            config.load_checkpoint_path, user_metadata=user_metadata
-        )
-        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
-    else:
-        training_client = await service_client.create_lora_training_client_async(
-            config.model_name, rank=config.lora_rank, user_metadata=user_metadata
-        )
-
-    # Get tokenizer.
-    tokenizer = get_tokenizer(config.model_name)
-
-    # Create dataset from thunk
-    dataset, maybe_test_dataset = await config.dataset_builder()
-    # Build rollout strategy and error counter from config
-    strategy = config.effective_rollout_strategy()
-    error_counter = RolloutErrorCounter() if strategy.catches_group_errors else None
-
-    evaluators = [evaluator() for evaluator in config.evaluator_builders]
-    if maybe_test_dataset is not None:
-        evaluators.append(
-            RLTestSetEvaluator(
-                maybe_test_dataset,
-                max_tokens=config.max_tokens,
-                strategy=strategy,
+            training_client = (
+                await service_client.create_training_client_from_state_with_optimizer_async(
+                    resume_info.state_path, user_metadata=user_metadata
+                )
             )
-        )
-
-    num_batches = len(dataset)
-    end_batch = min(config.max_steps, num_batches) if config.max_steps is not None else num_batches
-    logger.info(f"Will train on {end_batch} batches")
-
-    # Create KL reference client once if KL penalty is enabled
-    if config.kl_penalty_coef > 0:
-        if config.kl_reference_config is None:
-            raise ConfigurationError(
-                "kl_reference_config must be specified when kl_penalty_coef > 0"
+            logger.info(f"Resumed training from {resume_info.state_path}")
+        elif config.load_checkpoint_path:
+            # Starting fresh from a checkpoint - load weights only (fresh optimizer)
+            await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+                service_client, config.load_checkpoint_path, config.renderer_name
             )
-        kl_reference_client = service_client.create_sampling_client(
-            base_model=config.kl_reference_config.base_model,
-            model_path=config.kl_reference_config.load_checkpoint_path,
+            training_client = await service_client.create_training_client_from_state_async(
+                config.load_checkpoint_path, user_metadata=user_metadata
+            )
+            logger.info(f"Loaded weights from {config.load_checkpoint_path}")
+        else:
+            training_client = await service_client.create_lora_training_client_async(
+                config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+            )
+
+        # Get tokenizer.
+        tokenizer = get_tokenizer(config.model_name)
+
+        # Create dataset from thunk
+        dataset, maybe_test_dataset = await config.dataset_builder()
+        # Build rollout strategy and error counter from config
+        strategy = config.effective_rollout_strategy()
+        error_counter = RolloutErrorCounter() if strategy.catches_group_errors else None
+
+        evaluators = [evaluator() for evaluator in config.evaluator_builders]
+        if maybe_test_dataset is not None:
+            evaluators.append(
+                RLTestSetEvaluator(
+                    maybe_test_dataset,
+                    max_tokens=config.max_tokens,
+                    strategy=strategy,
+                )
+            )
+
+        num_batches = len(dataset)
+        end_batch = (
+            min(config.max_steps, num_batches) if config.max_steps is not None else num_batches
         )
-    else:
-        kl_reference_client = None
+        logger.info(f"Will train on {end_batch} batches")
 
-    checkpoint_mgr = checkpoint_utils.CheckpointManager(
-        training_client=training_client,
-        service_client=service_client,
-        log_path=config.log_path,
-        save_every=config.save_every,
-        ttl_seconds=config.ttl_seconds,
-        rolling_save_every=config.rolling_save_every,
-        rolling_ttl_seconds=config.rolling_ttl_seconds,
-        store=store,
-    )
+        # Create KL reference client once if KL penalty is enabled
+        if config.kl_penalty_coef > 0:
+            if config.kl_reference_config is None:
+                raise ConfigurationError(
+                    "kl_reference_config must be specified when kl_penalty_coef > 0"
+                )
+            kl_reference_client = service_client.create_sampling_client(
+                base_model=config.kl_reference_config.base_model,
+                model_path=config.kl_reference_config.load_checkpoint_path,
+            )
+        else:
+            kl_reference_client = None
 
-    # Training loop
-    if config.async_config is not None:
-        training_func = do_async_training
-    elif config.stream_minibatch_config is not None:
-        training_func = do_sync_training_with_stream_minibatch
-    else:
-        training_func = do_sync_training
-    await training_func(
-        start_batch=start_batch,
-        end_batch=end_batch,
-        num_batches=end_batch,
-        config=config,
-        training_client=training_client,
-        kl_reference_client=kl_reference_client,
-        evaluators=evaluators,
-        dataset=dataset,
-        ml_logger=ml_logger,
-        tokenizer=tokenizer,
-        error_counter=error_counter,
-        strategy=strategy,
-        checkpoint_mgr=checkpoint_mgr,
-    )
+        checkpoint_mgr = checkpoint_utils.CheckpointManager(
+            training_client=training_client,
+            service_client=service_client,
+            log_path=config.log_path,
+            save_every=config.save_every,
+            ttl_seconds=config.ttl_seconds,
+            rolling_save_every=config.rolling_save_every,
+            rolling_ttl_seconds=config.rolling_ttl_seconds,
+            store=store,
+        )
 
-    # Save final checkpoint
-    if start_batch < end_batch:
-        await checkpoint_mgr.save_final_async(loop_state={"batch": end_batch})
-    else:
-        logger.info("Training was already complete; nothing to do")
-        await checkpoint_mgr.finalize_async()
+        # Training loop
+        if config.async_config is not None:
+            training_func = do_async_training
+        elif config.stream_minibatch_config is not None:
+            training_func = do_sync_training_with_stream_minibatch
+        else:
+            training_func = do_sync_training
+        await training_func(
+            start_batch=start_batch,
+            end_batch=end_batch,
+            num_batches=end_batch,
+            config=config,
+            training_client=training_client,
+            kl_reference_client=kl_reference_client,
+            evaluators=evaluators,
+            dataset=dataset,
+            ml_logger=ml_logger,
+            tokenizer=tokenizer,
+            error_counter=error_counter,
+            strategy=strategy,
+            checkpoint_mgr=checkpoint_mgr,
+        )
+
+        # Save final checkpoint
+        if start_batch < end_batch:
+            await checkpoint_mgr.save_final_async(loop_state={"batch": end_batch})
+        else:
+            logger.info("Training was already complete; nothing to do")
+            await checkpoint_mgr.finalize_async()
 
     # Cleanup
     if rollout_executor is not None:
