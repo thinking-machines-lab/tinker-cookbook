@@ -85,11 +85,11 @@ async def _(api_key, mo):
     await _fwd.result_async()
     await _opt.result_async()
 
-    _save_result = training_client.save_weights_for_sampler(name="adapter-tutorial")
-    sampler_path = _save_result.result().path
+    _save_result = training_client.save_weights_external("adapter-tutorial")
+    export_path = _save_result.result().path
     print(f"Base model:  {BASE_MODEL}")
-    print(f"Checkpoint:  {sampler_path}")
-    return BASE_MODEL, os, sampler_path
+    print(f"Checkpoint:  {export_path}")
+    return BASE_MODEL, os, export_path
 
 
 @app.cell(hide_code=True)
@@ -103,11 +103,11 @@ def _(mo):
 
 
 @app.cell
-def _(sampler_path):
+def _(export_path):
     from tinker_cookbook import cli_utils, weights
 
     adapter_dir = weights.download(
-        tinker_path=sampler_path,
+        tinker_path=export_path,
         output_dir=cli_utils.runs_path("tutorials", "lora-adapter", "adapter"),
     )
     print(f"Adapter downloaded to: {adapter_dir}")

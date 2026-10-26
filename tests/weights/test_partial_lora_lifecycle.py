@@ -77,8 +77,8 @@ def _train_one_step_and_save(
         optim = await tc.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
         await optim.result_async()
 
-        sampler_resp = await tc.save_weights_for_sampler_async(checkpoint_name)
-        result = await sampler_resp.result_async()
+        export_resp = await tc.save_weights_external_async(checkpoint_name)
+        result = await export_resp.result_async()
         return result.path
 
     return asyncio.run(_run())

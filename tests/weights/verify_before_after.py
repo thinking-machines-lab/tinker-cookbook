@@ -122,7 +122,7 @@ def train_adapters():
             await fwd_bwd.result_async()
             optim = await tc.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
             await optim.result_async()
-            resp = await tc.save_weights_for_sampler_async(f"verify_{label}")
+            resp = await tc.save_weights_external_async(f"verify_{label}")
             result = await resp.result_async()
             return result.path
 

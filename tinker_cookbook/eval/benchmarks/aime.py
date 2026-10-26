@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Sequence
+from decimal import Decimal, InvalidOperation
 from typing import cast
 
 from datasets import Dataset
@@ -99,12 +100,18 @@ class AIMEMessageEnv(MessageEnv):
         response = get_text_content(message)
         boxed = extract_boxed(response)
         extracted_str = extract_number(boxed) if boxed else extract_gsm8k_answer(response)
+        extracted_val = None
         try:
-            extracted_val = int(float(extracted_str))
-            correct = extracted_val == self.expected
-        except (ValueError, TypeError):
-            extracted_val = None
-            correct = False
+            numeric = Decimal(extracted_str)
+            if (
+                numeric.is_finite()
+                and numeric == numeric.to_integral_value()
+                and 0 <= numeric <= 999
+            ):
+                extracted_val = int(numeric)
+        except (InvalidOperation, ValueError, TypeError):
+            pass
+        correct = extracted_val is not None and extracted_val == self.expected
         return MessageStepResult(
             reward=1.0 if correct else 0.0,
             episode_done=True,

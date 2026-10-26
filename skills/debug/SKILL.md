@@ -302,7 +302,7 @@ from tinker_cookbook import weights
 
 # Download adapter
 adapter_dir = weights.download(
-    tinker_path="tinker://session-id/sampler_weights/step_N",
+    tinker_path="tinker://session-id/external_weights/step_N",
     output_dir="./adapter",
 )
 

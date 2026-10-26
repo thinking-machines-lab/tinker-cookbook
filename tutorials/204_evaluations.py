@@ -14,7 +14,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Tutorial 205: Evaluations
+    # Tutorial 204: Evaluations
 
     Tinker's evaluation system uses two abstract classes:
 

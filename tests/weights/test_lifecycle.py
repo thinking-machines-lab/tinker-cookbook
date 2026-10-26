@@ -37,7 +37,7 @@ class TestFullLifecycle:
     LORA_RANK = 8
 
     def _train_and_save(self, log_path: str) -> str:
-        """Train for 1 step and return the sampler checkpoint tinker:// path."""
+        """Train for 1 step and return the external weights tinker:// path."""
         tokenizer = get_tokenizer(self.MODEL_NAME)
         renderer = renderers.get_renderer(self.RENDERER_NAME, tokenizer)
 
@@ -67,9 +67,9 @@ class TestFullLifecycle:
             optim = await tc.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
             await optim.result_async()
 
-            # Save checkpoint
-            sampler_resp = await tc.save_weights_for_sampler_async("lifecycle_test")
-            result = await sampler_resp.result_async()
+            # Export weights
+            export_resp = await tc.save_weights_external_async("lifecycle_test")
+            result = await export_resp.result_async()
             return result.path
 
         return asyncio.run(_run())

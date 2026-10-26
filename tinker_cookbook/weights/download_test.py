@@ -2,7 +2,6 @@
 
 import datetime
 import shutil
-import tarfile
 import tempfile
 import urllib.error
 from pathlib import Path
@@ -12,61 +11,7 @@ import pytest
 from tinker.types import ExternalWeightsUrlsResponse, SaveWeightsExternalResponse
 
 from tinker_cookbook.exceptions import WeightsDownloadError
-from tinker_cookbook.weights._download import _pyrage, _safe_extract_tar, download
-
-
-class TestSafeExtractTar:
-    """Security validation for tar extraction."""
-
-    def test_rejects_symlinks(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            archive_path = root / "bad.tar"
-            extract_dir = root / "extract"
-            extract_dir.mkdir()
-
-            target = root / "target.txt"
-            target.write_text("target")
-            link = root / "link"
-            link.symlink_to(target)
-
-            with tarfile.open(archive_path, "w") as tar:
-                tar.add(link, arcname="link")
-
-            with pytest.raises(WeightsDownloadError, match="symlink"):
-                _safe_extract_tar(archive_path, extract_dir)
-
-    def test_rejects_path_traversal(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            archive_path = root / "bad.tar"
-            extract_dir = root / "extract"
-            extract_dir.mkdir()
-
-            normal_file = root / "normal.txt"
-            normal_file.write_text("content")
-
-            with tarfile.open(archive_path, "w") as tar:
-                tar.add(normal_file, arcname="../../../etc/passwd")
-
-            with pytest.raises(WeightsDownloadError, match="path traversal"):
-                _safe_extract_tar(archive_path, extract_dir)
-
-    def test_extracts_safe_archive(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            archive_path = root / "good.tar"
-            extract_dir = root / "extract"
-            extract_dir.mkdir()
-
-            content_file = root / "data.txt"
-            content_file.write_text("hello")
-
-            with tarfile.open(archive_path, "w") as tar:
-                tar.add(content_file, arcname="data.txt")
-
-            _safe_extract_tar(archive_path, extract_dir)
-            assert (extract_dir / "data.txt").exists()
+from tinker_cookbook.weights._download import _pyrage, download
 
 
 def _future(*, result: object = None, error: Exception | None = None) -> MagicMock:
@@ -139,49 +84,6 @@ def _training_round_trip_clients(
 class TestDownload:
     """Tests for the download function with mocked Tinker SDK."""
 
-    def test_sampler_path_downloads_and_extracts_archive(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            archive_path = root / "archive.tar"
-            content_dir = root / "content"
-            content_dir.mkdir()
-            (content_dir / "adapter_model.safetensors").write_text("fake")
-            (content_dir / "adapter_config.json").write_text("{}")
-
-            with tarfile.open(archive_path, "w") as tar:
-                tar.add(
-                    content_dir / "adapter_model.safetensors", arcname="adapter_model.safetensors"
-                )
-                tar.add(content_dir / "adapter_config.json", arcname="adapter_config.json")
-
-            output_dir = root / "output"
-
-            archive_response = MagicMock()
-            archive_response.url = f"file://{archive_path}"
-            rest_client = MagicMock()
-            rest_client.get_checkpoint_archive_url_from_tinker_path.return_value = _future(
-                result=archive_response
-            )
-
-            service_client = MagicMock()
-            with (
-                _patch_sdk(rest_client, service_client),
-                patch(
-                    "tinker_cookbook.weights._download.urllib.request.urlretrieve",
-                    _copy_file_url,
-                ),
-            ):
-                result = download(
-                    tinker_path="tinker://fake-run/sampler_weights/final",
-                    output_dir=str(output_dir),
-                )
-
-            assert result == str(output_dir)
-            assert (output_dir / "adapter_model.safetensors").exists()
-            assert (output_dir / "adapter_config.json").exists()
-            rest_client.get_external_weights_urls.assert_not_called()
-            service_client.close.assert_called_once_with("success")
-
     def test_external_path_downloads_every_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -215,7 +117,6 @@ class TestDownload:
             for name, content in files.items():
                 assert (output_dir / name).read_text() == content
             rest_client.get_external_weights_urls.assert_called_once_with(tinker_path)
-            rest_client.get_checkpoint_archive_url_from_tinker_path.assert_not_called()
             rest_client.set_checkpoint_ttl_from_tinker_path.assert_not_called()
 
     def test_external_download_failure_keeps_the_existing_checkpoint(self):
@@ -274,7 +175,20 @@ class TestDownload:
                 )
             urlretrieve.assert_not_called()
 
+    def test_sampler_path_is_rejected(self):
+        service_client = MagicMock()
+        with (
+            patch(
+                "tinker_cookbook.weights._download.tinker.ServiceClient",
+                return_value=service_client,
+            ) as service_client_cls,
+            pytest.raises(WeightsDownloadError, match="Sampler checkpoints cannot be downloaded"),
+        ):
+            download(tinker_path="tinker://fake-run/sampler_weights/final", output_dir="unused")
+        service_client_cls.assert_not_called()
+
     def test_training_path_downloads_a_temporary_export_and_deletes_it(self):
+        tinker_path = "tinker://fake-run/weights/final"
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             files = {
@@ -299,11 +213,11 @@ class TestDownload:
                     _copy_file_url,
                 ),
             ):
-                download(tinker_path="tinker://fake-run/weights/final", output_dir=str(output_dir))
+                download(tinker_path=tinker_path, output_dir=str(output_dir))
 
             assert {p.name: p.read_text() for p in output_dir.iterdir()} == files
             service_client.create_training_client_from_state.assert_called_once_with(
-                "tinker://fake-run/weights/final",
+                tinker_path,
                 user_metadata={"created_by": "tinker_cookbook.weights.download"},
             )
             training_client.save_weights_external.assert_called_once()
@@ -318,7 +232,6 @@ class TestDownload:
             )
             rest_client.delete_checkpoint_from_tinker_path.assert_called_once_with(_EXPORT_PATH)
             service_client.close.assert_called_once_with("success")
-            rest_client.get_checkpoint_archive_url_from_tinker_path.assert_not_called()
 
     def test_training_path_deletes_the_export_when_the_download_fails(self):
         def fail(url: str, dest: str) -> None:
