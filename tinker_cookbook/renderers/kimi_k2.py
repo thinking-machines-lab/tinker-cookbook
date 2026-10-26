@@ -468,7 +468,8 @@ class KimiK2Renderer(Renderer):
             if unparsed_tool_calls:
                 assistant_message["unparsed_tool_calls"] = unparsed_tool_calls
 
-        dangling = _detect_dangling_tool_block(content)
+        # The trailing suffix is already reported in full above.
+        dangling = _detect_dangling_tool_block(content[: len(content) - len(trailing)])
         if dangling is not None:
             assistant_message["unparsed_tool_calls"] = [
                 *assistant_message.get("unparsed_tool_calls", []),
@@ -506,7 +507,8 @@ class KimiK2Renderer(Renderer):
                 if unparsed_tool_calls:
                     message["unparsed_tool_calls"] = unparsed_tool_calls
 
-            dangling = _detect_dangling_tool_block(content)
+            # The trailing suffix is already reported in full above.
+            dangling = _detect_dangling_tool_block(content[: len(content) - len(trailing)])
             if dangling is not None:
                 message["unparsed_tool_calls"] = [
                     *message.get("unparsed_tool_calls", []),

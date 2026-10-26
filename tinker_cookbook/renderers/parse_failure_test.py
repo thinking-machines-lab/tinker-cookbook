@@ -318,6 +318,66 @@ def test_kimi_k2_family_complete_tool_call_not_flagged(renderer_name: str):
     assert classify_parse_failure(message, termination) is None
 
 
+@pytest.mark.parametrize("renderer_name", ["kimi_k2", "kimi_k25"])
+@pytest.mark.parametrize("section", ["tool_calls_section", "tool_call_section"])
+@pytest.mark.parametrize(
+    "prefix",
+    ["", "More text before the next section. ", "x" * (PARSE_FAILURE_DETAIL_MAX_CHARS + 1)],
+    ids=["bare", "with-prose", "long-prose"],
+)
+def test_kimi_k2_family_reports_unterminated_trailing_section_once(
+    renderer_name: str, section: str, prefix: str
+):
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = get_renderer(renderer_name, tokenizer)
+    trailing = (
+        f"{prefix}<|{section}_begin|><|tool_call_begin|>functions.fetch:1"
+        '<|tool_call_argument_begin|>{"query":'
+    )
+    response_text = (
+        f"<think></think>I'll search.<|{section}_begin|>{_KIMI_SEARCH_CALL}"
+        f"<|{section}_end|>{trailing}<|im_end|>"
+    )
+    tokens = tokenizer.encode(response_text, add_special_tokens=False)
+
+    message, termination = renderer.parse_response(tokens)
+
+    assert [tc.function.name for tc in message.get("tool_calls", [])] == ["search"]
+    unparsed = message.get("unparsed_tool_calls", [])
+    assert len(unparsed) == 1
+    assert unparsed[0].raw_text == trailing
+    result = classify_parse_failure(message, termination)
+    assert result is not None and result[0] == ParseFailureKind.CONTENT
+    assert list(renderer.parse_response_streaming(tokens))[-1] == message
+
+
+@pytest.mark.parametrize("renderer_name", ["kimi_k2", "kimi_k25"])
+def test_kimi_k2_family_keeps_dangling_call_in_first_section_with_trailing_text(
+    renderer_name: str,
+):
+    tokenizer = get_tokenizer("moonshotai/Kimi-K2-Thinking")
+    renderer = get_renderer(renderer_name, tokenizer)
+    dangling = '<|tool_call_begin|>functions.fetch:1<|tool_call_argument_begin|>{"query":'
+    trailing = "More text after the section."
+    response_text = (
+        f"<think></think>I'll search.<|tool_calls_section_begin|>{_KIMI_SEARCH_CALL}"
+        f"{dangling}<|tool_calls_section_end|>{trailing}<|im_end|>"
+    )
+    tokens = tokenizer.encode(response_text, add_special_tokens=False)
+
+    message, termination = renderer.parse_response(tokens)
+
+    assert [tc.function.name for tc in message.get("tool_calls", [])] == ["search"]
+    unparsed = message.get("unparsed_tool_calls", [])
+    assert len(unparsed) == 2
+    assert unparsed[0].raw_text == trailing
+    assert unparsed[1].raw_text == f"{dangling}<|tool_calls_section_end|>"
+    assert unparsed[1].error.startswith(UNTERMINATED_TOOL_BLOCK_ERROR)
+    result = classify_parse_failure(message, termination)
+    assert result is not None and result[0] == ParseFailureKind.CONTENT
+    assert list(renderer.parse_response_streaming(tokens))[-1] == message
+
+
 @pytest.mark.parametrize(
     "response_text",
     [
