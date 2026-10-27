@@ -243,18 +243,19 @@ def is_task_complete(text: str) -> bool:
 
 
 def get_sandbox_factory(config, *, packages: list[str] | None = None) -> object:
-    """Get a sandbox factory from config, falling back to Modal.
+    """Get a sandbox factory from config.
 
     If ``config.sandbox_factory`` is set, returns it directly — the user
     provides their own :class:`~tinker_cookbook.sandbox.SandboxInterface`
-    implementation.  Otherwise, falls back to Modal with a clear error
-    if Modal is not installed.
+    implementation.  Otherwise returns the built-in factory for
+    ``config.sandbox_backend``, with a clear error if that backend is not
+    installed.
 
     Args:
         config: A :class:`BenchmarkConfig` (imported at call time to avoid
             circular imports).
         packages: Optional apt packages to install in the sandbox image.
-            Only applies when using the default Modal backend. For example,
+            Only applies to the built-in factories. For example,
             ``["git", "python3-pip"]`` for SWE-bench.
 
     Returns:
@@ -263,30 +264,40 @@ def get_sandbox_factory(config, *, packages: list[str] | None = None) -> object:
     if config.sandbox_factory is not None:
         return config.sandbox_factory
 
+    backend = config.sandbox_backend
     try:
-        import modal
+        if backend == "modal":
+            import modal
 
-        from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
+            from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
-        image = modal.Image.debian_slim()
+            image = modal.Image.debian_slim()
+            if packages:
+                image = image.apt_install(*packages)
+
+            async def _modal_factory():
+                return await ModalSandbox.create(image=image, timeout=1800)
+
+            return _modal_factory
+        import sail
+
+        from tinker_cookbook.sandbox.sail_sandbox import SailSandbox
+
+        # Like Modal's debian_slim(), this image has a python3 matching the local interpreter.
+        image = sail.Image.debian()
         if packages:
             image = image.apt_install(*packages)
 
-        async def _modal_factory():
-            return await ModalSandbox.create(image=image, timeout=1800)
+        async def _sail_factory():
+            return await SailSandbox.create(image=image)
 
-        return _modal_factory
+        return _sail_factory
     except ImportError:
-
-        async def _missing_factory():
-            raise RuntimeError(
-                "Code execution benchmarks require a sandbox backend. "
-                "Either:\n"
-                "  1. Install Modal: pip install 'tinker-cookbook[modal]'\n"
-                "  2. Provide a custom sandbox_factory in BenchmarkConfig"
-            )
-
-        return _missing_factory
+        raise RuntimeError(
+            f"The {backend} sandbox backend is not installed. Run "
+            f"pip install 'tinker-cookbook[{backend}]', pick another sandbox_backend, "
+            "or provide a custom sandbox_factory in BenchmarkConfig."
+        ) from None
 
 
 # ---------------------------------------------------------------------------
