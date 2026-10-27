@@ -6,6 +6,8 @@
 uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
 ```
 
+To run the sandboxes on [Sail](https://docs.sailresearch.com/sailbox-sdk) instead of Modal, install the `sail` extra, set `SAIL_API_KEY`, and pass `sandbox_backend=sail`.
+
 RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed code execution. An agent gets a bash tool inside a sandboxed container, attempts a task, and receives reward based on test results.
 
 ## HarborTask
@@ -64,7 +66,7 @@ class SandboxInterface(Protocol):
     async def cleanup(self) -> None: ...
 ```
 
-`ModalSandbox` implements this interface.
+`ModalSandbox` and `SailSandbox` implement this interface.
 
 ### SandboxFactory and injection
 
@@ -84,6 +86,24 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
 The first argument is the task's `environment/` directory (containing a Dockerfile and build context). Each backend converts this to its own image format internally (e.g. Modal builds a `modal.Image`).
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
+
+The agent's commands run in the `workdir` the task declares under `[environment]` in `task.toml`, or in `/` if it declares none. Both built-in factories create a declared `workdir` that the image lacks, as Harbor does.
+
+`sail_sandbox_factory` is the Sail equivalent. It boots the prebuilt image named in the task's `task.toml` when there is one, and otherwise builds the Dockerfile. A task that names a prebuilt image and has no Dockerfile gets the files in its `environment/` directory uploaded to its working directory, as Harbor does. From `task.toml` it also takes:
+
+- `cpus`, `memory_mb`, and `storage_mb` (or the deprecated `memory` and `storage` strings Harbor still accepts), to pick the smallest Sailbox size that covers them.
+- `build_timeout_sec`, as the time allowed for the image pull or build (600 seconds when unset, as in Harbor).
+- `network_mode` under `[environment]`, enforced as the Sailbox's egress policy: `no-network` (which the deprecated `allow_internet = false` also means) or `allowlist` with its `allowed_hosts`.
+
+The factory runs each task in one Linux container with one network policy, and grades it in the same Sailbox. A Sailbox does not run the image's `ENTRYPOINT` or `CMD`, so no service starts. Before pulling or building the image, it rejects:
+
+- `os = "windows"`, or a request for GPUs or a TPU.
+- A `docker-compose.yaml` in `environment/`.
+- A `healthcheck` or `[[steps]]`.
+- A verifier in a separate environment (`environment_mode = "separate"` or a `[verifier.environment]` table).
+- An `[agent]` or `[verifier]` network policy that differs from the environment's.
+
+The bundled scripts choose between the two factories with `sandbox_backend=modal` (default) or `sandbox_backend=sail`, which needs the `sail` extra and `SAIL_API_KEY`.
 
 ## Running
 

@@ -98,6 +98,7 @@ Additional setup:
 - **IFBench**: Also requires ``uv pip install 'ifbench @ git+https://github.com/allenai/IFBench.git'`` (not on PyPI). The benchmark raises ``ImportError`` without it.
 - **HF auth (gated)**: Set `HF_TOKEN` or run `huggingface-cli login` for gated datasets (GPQA).
 - **Modal auth**: Run `modal token new` for sandbox benchmarks (MBPP, LiveCodeBench, Terminal Bench, SWE-bench).
+- **Sail**: Sandbox benchmarks can run on [Sail](https://docs.sailresearch.com/sailbox-sdk) instead of Modal. Install `tinker-cookbook[sail]`, set `SAIL_API_KEY`, and pass `BenchmarkConfig(sandbox_backend="sail")`.
 - **`judge_sampling_client`**: Benchmarks using LLM-as-judge or user simulation require a separate Tinker sampling client for the judge model. Pass via `BenchmarkConfig(judge_sampling_client=..., judge_renderer=...)`.
 
 ### Browse results
