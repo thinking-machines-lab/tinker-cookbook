@@ -194,11 +194,19 @@ class RetryOnFailure(RolloutStrategy):
                 coro = asyncio.wait_for(coro, timeout=timeout)
             return asyncio.create_task(coro)
 
-        # Map task -> env for tracking
+        # Map task -> env for tracking, and env -> launch index so a retry
+        # can re-create the env for the SAME problem. make_envs() returns a
+        # full group; taking new_envs[0] trains a duplicate of the first
+        # problem instead of retrying the failed one whenever the group is
+        # heterogeneous (e.g. one builder spanning several problems). The
+        # index mapping is exact when make_envs() is deterministic, which
+        # every in-repo builder is (dataset rows are fixed per builder).
         task_to_env: dict[asyncio.Task[Trajectory], Env] = {}
-        for env in envs:
+        task_launch_idx: dict[asyncio.Task[Trajectory], int] = {}
+        for launch_idx, env in enumerate(envs):
             task = _launch(env)
             task_to_env[task] = env
+            task_launch_idx[task] = launch_idx
 
         trajectories: list[Trajectory] = []
         surviving_envs: list[Env] = []
@@ -237,14 +245,32 @@ class RetryOnFailure(RolloutStrategy):
                     )
                     if retries_remaining > 0:
                         retries_remaining -= 1
-                        # Create a fresh env for retry.
+                        # Create a fresh env for retry, for the problem that
+                        # actually failed (matched by launch index).
                         # Note: make_envs() creates a full group but we only need one.
                         # The extras are cheap Python objects for most envs; for sandbox
                         # envs the unused containers get GC'd.
                         new_envs = await env_group_builder.make_envs()
-                        new_env = new_envs[0]
+                        failed_idx = task_launch_idx[task]
+                        # Full deterministic groups: re-create the env for the
+                        # problem that actually failed. A shortened retry batch
+                        # (the singleton convention used in tests) falls back to
+                        # the first env, which is that batch's retry env.
+                        if failed_idx >= len(new_envs):
+                            logger.warning(
+                                "Retry batch from make_envs() has %d envs, shorter than "
+                                "the failed task's launch index %d: falling back to "
+                                "new_envs[0]. If this builder produces heterogeneous "
+                                "groups, the retry may target the wrong problem.",
+                                len(new_envs),
+                                failed_idx,
+                            )
+                        new_env = (
+                            new_envs[failed_idx] if failed_idx < len(new_envs) else new_envs[0]
+                        )
                         new_task = _launch(new_env)
                         task_to_env[new_task] = new_env
+                        task_launch_idx[new_task] = failed_idx
                         pending.add(new_task)
                     else:
                         # Budget exhausted — cancel remaining and re-raise.
@@ -372,10 +398,15 @@ class MinViableGroup(RolloutStrategy):
                 coro = asyncio.wait_for(coro, timeout=self.per_rollout_timeout)
             return asyncio.create_task(coro)
 
+        # task -> env and task -> launch index, so a retry re-creates the env
+        # for the problem that failed (see RetryOnFailure.execute for the
+        # rationale; new_envs[0] duplicates the first problem instead).
         task_to_env: dict[asyncio.Task[Trajectory], Env] = {}
-        for env in envs:
+        task_launch_idx: dict[asyncio.Task[Trajectory], int] = {}
+        for launch_idx, env in enumerate(envs):
             task = _launch(env)
             task_to_env[task] = env
+            task_launch_idx[task] = launch_idx
 
         trajectories: list[Trajectory] = []
         surviving_envs: list[Env] = []
@@ -418,9 +449,26 @@ class MinViableGroup(RolloutStrategy):
                             retries_remaining,
                         )
                         new_envs = await env_group_builder.make_envs()
-                        new_env = new_envs[0]
+                        failed_idx = task_launch_idx[task]
+                        # Full deterministic groups: re-create the env for the
+                        # problem that actually failed. A shortened retry batch
+                        # (the singleton convention used in tests) falls back to
+                        # the first env, which is that batch's retry env.
+                        if failed_idx >= len(new_envs):
+                            logger.warning(
+                                "Retry batch from make_envs() has %d envs, shorter than "
+                                "the failed task's launch index %d: falling back to "
+                                "new_envs[0]. If this builder produces heterogeneous "
+                                "groups, the retry may target the wrong problem.",
+                                len(new_envs),
+                                failed_idx,
+                            )
+                        new_env = (
+                            new_envs[failed_idx] if failed_idx < len(new_envs) else new_envs[0]
+                        )
                         new_task = _launch(new_env)
                         task_to_env[new_task] = new_env
+                        task_launch_idx[new_task] = failed_idx
                         pending.add(new_task)
                     else:
                         logger.warning(
