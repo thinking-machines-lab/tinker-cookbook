@@ -55,6 +55,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps: int | None = None
@@ -150,6 +153,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         num_substeps=cli_config.num_substeps,
         wandb_project=cli_config.wandb_project,
         wandb_name=cli_config.wandb_name or run_name,
+        session_name=cli_config.session_name or cli_config.wandb_name or run_name,
         log_path=log_path,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,

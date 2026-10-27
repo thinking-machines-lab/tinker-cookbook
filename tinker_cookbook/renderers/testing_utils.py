@@ -20,11 +20,13 @@ def extract_token_ids(result: Any) -> list[int]:
 
 
 _DEEPSEEK_TOKENIZER_BUG = (
-    "transformers 5.3.0 has a known bug with DeepSeek tokenizer that strips spaces during decode. "
-    "See https://github.com/huggingface/transformers/pull/44801"
+    f"transformers {transformers.__version__} has a known bug with DeepSeek tokenizer that strips "
+    "spaces during decode. See https://github.com/huggingface/transformers/pull/44801"
 )
 
-_HAS_DEEPSEEK_TOKENIZER_BUG = transformers.__version__ == "5.3.0"
+_HAS_DEEPSEEK_TOKENIZER_BUG = (
+    transformers.__version__ == "5.3.0" or transformers.__version__.startswith("5.6.")
+)
 
 skip_deepseek_tokenizer_bug = pytest.mark.skipif(
     _HAS_DEEPSEEK_TOKENIZER_BUG,
@@ -33,6 +35,6 @@ skip_deepseek_tokenizer_bug = pytest.mark.skipif(
 
 
 def skip_if_deepseek_tokenizer_bug(model_name: str) -> None:
-    """Skip the current test if running DeepSeek on transformers 5.3.0."""
+    """Skip the current test if running DeepSeek on a transformers version with the decode bug."""
     if _HAS_DEEPSEEK_TOKENIZER_BUG and "deepseek" in model_name.lower():
         pytest.skip(_DEEPSEEK_TOKENIZER_BUG)

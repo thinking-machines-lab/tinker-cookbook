@@ -9,10 +9,12 @@ Includes:
 - Qwen3VLInstructRenderer: Vision-language instruct models
 """
 
+import copy
 import json
 from typing import cast
 
 import tinker
+from tokenizers import Tokenizer as BackendTokenizer
 
 from tinker_cookbook.exceptions import RendererError
 from tinker_cookbook.image_processing_utils import ImageProcessor
@@ -99,6 +101,20 @@ def _merge_consecutive_text_parts(
     return merged
 
 
+def _content_tokenizer(tokenizer: Tokenizer) -> BackendTokenizer:
+    """A private backend tokenizer that encodes special-token text in content literally.
+
+    Asking the shared HF tokenizer to split special tokens writes its
+    backend's ``encode_special_tokens`` flag whenever the requested value differs
+    and never restores it, so concurrent encodes from several threads race on
+    that write ("RuntimeError: Already borrowed"). This copy is configured once
+    and afterwards only read, as is the shared tokenizer.
+    """
+    content = cast(BackendTokenizer, copy.deepcopy(tokenizer.backend_tokenizer))
+    content.encode_special_tokens = True
+    return content
+
+
 class Qwen3Renderer(Renderer):
     """
     Renderer for Qwen3 models with thinking enabled.
@@ -166,6 +182,7 @@ class Qwen3Renderer(Renderer):
         """
         super().__init__(tokenizer)
         self.strip_thinking_from_history = strip_thinking_from_history
+        self._content_tokenizer = _content_tokenizer(tokenizer)
 
     @property
     def has_extension_property(self) -> bool:
@@ -288,11 +305,7 @@ class Qwen3Renderer(Renderer):
         )
         output: list[tinker.ModelInputChunk] = [
             tinker.types.EncodedTextChunk(
-                tokens=self.tokenizer.encode(
-                    output_content,
-                    add_special_tokens=False,
-                    split_special_tokens=True,
-                )
+                tokens=self._content_tokenizer.encode(output_content, add_special_tokens=False).ids
             ),
             tinker.types.EncodedTextChunk(tokens=[self._end_message_token]),
         ]
@@ -639,6 +652,7 @@ class Qwen3VLRenderer(Qwen3Renderer):
                 parts into a single tokenization unit for HF template compatibility.
         """
         self.tokenizer = tokenizer
+        self._content_tokenizer = _content_tokenizer(tokenizer)
         self.image_processor = image_processor
         self.strip_thinking_from_history = strip_thinking_from_history
         self.merge_text_chunks = merge_text_chunks

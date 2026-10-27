@@ -8,7 +8,9 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 import torch
+import transformers
 from safetensors.torch import load_file, save_file
 from transformers import (
     AutoConfig,
@@ -266,6 +268,34 @@ def _make_tiny_qwen3_5_moe_config() -> PretrainedConfig:
     return config
 
 
+# save_pretrained(save_original_format=...) was added in transformers 5.0.
+requires_transformers_v5 = pytest.mark.skipif(
+    int(transformers.__version__.split(".")[0]) < 5,
+    reason="fused-expert fixture needs save_pretrained(save_original_format=False)",
+)
+
+
+def _save_moe_model_with_fused_experts(config: PretrainedConfig, model_path: Path) -> None:
+    """Save a tiny Qwen3.5 MoE model in the hub checkpoints' fused expert layout.
+
+    Qwen3.5/3.6 MoE checkpoints on the hub store routed experts fused as
+    ``experts.gate_up_proj`` (num_experts, 2*moe_inter, hidden) and
+    ``experts.down_proj`` (num_experts, hidden, moe_inter), which is also the
+    in-memory layout. transformers >=5.7 ``save_pretrained()`` reverts its
+    load-time weight conversions by default and writes separate per-expert
+    ``experts.{i}.{gate,up,down}_proj.weight`` tensors for a model built from
+    config, so opt out to keep the fixture matching what users export from.
+    """
+    save_model_to_disk(
+        config,
+        model_path,
+        tokenizer_name="Qwen/Qwen3.6-35B-A3B",
+        is_vision=True,
+        save_original_format=False,
+    )
+
+
+@requires_transformers_v5
 class TestQwen35MoeSplitQkvAndExperts:
     """Qwen3.5 MoE: split QKV fusion + fused expert weights + vision prefix.
 
@@ -290,12 +320,7 @@ class TestQwen35MoeSplitQkvAndExperts:
                 root / "merged",
             )
 
-            save_model_to_disk(
-                config,
-                model_path,
-                tokenizer_name="Qwen/Qwen3.6-35B-A3B",
-                is_vision=True,
-            )
+            _save_moe_model_with_fused_experts(config, model_path)
 
             saved = load_file(str(model_path / "model.safetensors"))
             orig_qkv = saved[self.FUSED_QKV_KEY].clone()
@@ -370,12 +395,7 @@ class TestQwen35MoeSplitQkvAndExperts:
                 root / "merged",
             )
 
-            save_model_to_disk(
-                config,
-                model_path,
-                tokenizer_name="Qwen/Qwen3.6-35B-A3B",
-                is_vision=True,
-            )
+            _save_moe_model_with_fused_experts(config, model_path)
 
             saved = load_file(str(model_path / "model.safetensors"))
 
@@ -417,6 +437,7 @@ class TestQwen35MoeSplitQkvAndExperts:
 # ---------------------------------------------------------------------------
 
 
+@requires_transformers_v5
 class TestQwen35MoeFP8Export:
     """Qwen3.5 MoE: routed experts quantized to FP8, everything else stays BF16.
 
@@ -437,12 +458,7 @@ class TestQwen35MoeFP8Export:
             adapter_path = root / "adapter"
             output_path = root / "merged"
 
-            save_model_to_disk(
-                config,
-                model_path,
-                tokenizer_name="Qwen/Qwen3.6-35B-A3B",
-                is_vision=True,
-            )
+            _save_moe_model_with_fused_experts(config, model_path)
 
             # Re-save weights in BF16 (from_config creates float32 by default)
             orig_tensors = load_file(str(model_path / "model.safetensors"))

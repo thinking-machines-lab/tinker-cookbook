@@ -204,6 +204,9 @@ class Config:
     log_path: str | None = None  # set this to make the run resumable
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
     base_url: str | None = None
 
@@ -332,6 +335,7 @@ async def main(cfg: Config) -> None:
     service_client = tinker.ServiceClient(
         base_url=cfg.base_url,
         user_metadata=recipe_user_metadata("recipe_decisions_forecasting"),
+        display_name=cfg.session_name or cfg.wandb_name or run_name,
     )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():

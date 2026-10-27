@@ -40,6 +40,20 @@ from tinker_cookbook.utils.session_naming import resolve_session_display_name
 logger = logging.getLogger(__name__)
 
 
+def _resolve_total_steps(max_steps: int | None, n_batches: int, num_epochs: int) -> int:
+    """Total SL steps; the dataset is cycled ``num_epochs`` times and no more."""
+    total_steps = n_batches * num_epochs
+    if max_steps is None:
+        return total_steps
+    if max_steps > total_steps:
+        logger.warning(
+            f"max_steps={max_steps} exceeds num_epochs * len(dataset) = "
+            f"{num_epochs} * {n_batches} = {total_steps}; "
+            f"training will stop after {total_steps} steps."
+        )
+    return min(total_steps, max_steps)
+
+
 @chz.chz
 class Config:
     """Configuration for supervised fine-tuning.
@@ -89,7 +103,9 @@ class Config:
         span_chart_every (int): Write a Gantt-chart HTML every *N* steps
             (0 disables).
         max_steps (int | None): Hard cap on training steps.  ``None`` trains
-            for ``num_epochs * n_batches``.
+            for ``num_epochs * n_batches``.  The dataset is cycled only
+            ``num_epochs`` times, so a larger ``max_steps`` stops early at
+            ``num_epochs * n_batches`` (a warning is logged at startup).
         async_periodic_saves (bool): When ``True``, periodic checkpoint saves
             run as fire-and-forget background tasks instead of blocking the
             training loop.  The checkpoint record is written to
@@ -388,9 +404,7 @@ async def main(config: Config):
 
         dataset, maybe_test_dataset = config.dataset_builder()
         n_batches = len(dataset)
-        total_steps = n_batches * config.num_epochs
-        if config.max_steps is not None:
-            total_steps = min(total_steps, config.max_steps)
+        total_steps = _resolve_total_steps(config.max_steps, n_batches, config.num_epochs)
         progress_denominator = total_steps if total_steps > 0 else 1
         tokenizer = get_tokenizer(config.model_name)
 

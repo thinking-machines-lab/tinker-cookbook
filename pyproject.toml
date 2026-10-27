@@ -28,7 +28,12 @@ dependencies = [
     "tml-renderers>=0.0.1",
     "torch>=2.10", # tml_renderers uses libtorch's stable C ABI, added in 2.10
     "tqdm>=4.60.0",
-    "transformers>=4.57.6,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3,<=5.5.4",
+    # Known-bad releases are excluded rather than capping the upper bound:
+    # - 5.3.0 and 5.6.x: AutoTokenizer resolves DeepSeek V3 to LlamaTokenizer, which
+    #   drops spaces on decode (huggingface/transformers#44801).
+    # - 5.4.x: Qwen VL image processing requires torchvision.
+    # - 5.4.0-5.5.3: AutoTokenizer resolved Kimi K2 to the wrong class on some platforms.
+    "transformers>=4.57.6,!=5.3.0,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3,!=5.6.*",
 ]
 
 [project.urls]

@@ -74,7 +74,8 @@ except ImportError: pass
 
 **Known problem versions:**
 - `pydantic >= 2.13.0b1` (beta): Serialization regression makes `model_dump()` extremely slow on large payloads (tokens/tensors). Symptom: SDK thread stalls for minutes on `forward_backward` submission. Fix: pin `pydantic<2.13` or use a stable release.
-- `transformers == 5.3.0`: Incorrect `tokenizer_class` for DeepSeek V2/V3 models (huggingface/transformers#44801, fixed in 5.3.1). Causes tokenizer loading failures. Upgrade or skip this version.
+- `transformers == 5.3.0` or `5.6.x`: `AutoTokenizer` resolves DeepSeek V2/V3 models to `LlamaTokenizer`, which strips spaces on decode (huggingface/transformers#44801). Upgrade to `>=5.7.0` or skip these versions.
+- `transformers 5.4.0`–`5.5.3`: `AutoTokenizer` resolves Kimi K2 models to the wrong tokenizer class on some platforms. Use `5.5.4` or `>=5.7.0`.
 - `transformers < 5.0`: Bug in `Qwen2VLImageProcessor` that miscounts image tokens for VL models. Fix: upgrade to `>=5.0`.
 - Always check if the user is on the **latest stable** tinker SDK. Suggest `pip install --upgrade tinker`.
 

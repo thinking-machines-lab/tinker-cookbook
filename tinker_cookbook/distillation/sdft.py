@@ -73,6 +73,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import split_list
+from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -783,6 +784,8 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set.
+    session_name: str | None = None
     load_checkpoint_path: str | None = None
     max_steps: int | None = None
 
@@ -843,9 +846,16 @@ async def main(
     start_batch = resume_info.batch if resume_info else 0
 
     # Service and training client setup
+    session_display_name = resolve_session_display_name(
+        session_name=cfg.session_name,
+        wandb_name=cfg.wandb_name,
+    )
+    if session_display_name is not None:
+        logger.info(f"Tinker session display name: {session_display_name}")
     service_client = tinker.ServiceClient(
         base_url=cfg.base_url,
         user_metadata=recipe_user_metadata(cfg.recipe_name),
+        display_name=session_display_name,
     )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():

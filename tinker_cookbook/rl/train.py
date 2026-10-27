@@ -35,6 +35,7 @@ from tinker_cookbook.rl.data_processing import (
     compute_advantages,
     remove_constant_reward_groups,
 )
+from tinker_cookbook.rl.dataset_utils import EpochCycledRLDataset
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator, compute_trajectory_metrics
 from tinker_cookbook.rl.metrics import (
     compute_kl_sample_train,
@@ -544,7 +545,13 @@ class Config:
     num_groups_to_log: int = 4  # Number of groups to log per iteration (0 = disable logging)
     rollout_json_export: bool = True
 
-    # Maximum number of training iterations. If None, train on the full dataset.
+    # Number of passes over the training dataset. Step i trains on
+    # dataset.get_batch(i % len(dataset)); steps, checkpoints and resume use the
+    # global step across epochs.
+    num_epochs: int = 1
+    # Hard cap on training steps. Training runs min(num_epochs * len(dataset),
+    # max_steps) steps; to train longer than one pass, raise num_epochs (a larger
+    # max_steps alone stops early, with a warning at startup).
     max_steps: int | None = None
 
     def effective_termination(self) -> TerminationRewardPolicy | None:
@@ -572,6 +579,22 @@ class Config:
         if self.rollout_error_tolerance is None:
             return default_rollout_strategy_for_model(self.model_name)
         return rollout_strategy_from_config(self.rollout_error_tolerance)
+
+
+def _resolve_end_batch(max_steps: int | None, num_batches: int, num_epochs: int = 1) -> int:
+    """Total RL steps: ``num_epochs`` passes over ``num_batches``, capped by ``max_steps``."""
+    if num_epochs < 1:
+        raise ConfigurationError(f"num_epochs must be >= 1, got {num_epochs}")
+    total = num_batches * num_epochs
+    if max_steps is None:
+        return total
+    if max_steps > total:
+        logger.warning(
+            f"max_steps={max_steps} exceeds num_epochs * len(dataset) = "
+            f"{num_epochs} * {num_batches} = {total}; training will stop after {total} "
+            f"steps. Set num_epochs to train for more passes over the dataset."
+        )
+    return min(max_steps, total)
 
 
 @trace.scope
@@ -680,6 +703,28 @@ async def run_evaluations_parallel(
     return metrics
 
 
+async def _maybe_run_evals(
+    evaluators: list[SamplingClientEvaluator],
+    sampling_client: tinker.SamplingClient,
+    config: Config,
+    step: int,
+    ml_logger: ml_log.Logger,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Run evaluations at ``step`` if it is on the ``eval_every`` cadence, or if ``force``.
+
+    Evaluation is disabled entirely when ``eval_every == 0`` or there are no evaluators.
+    """
+    if config.eval_every == 0 or len(evaluators) == 0:
+        return {}
+    if not force and step % config.eval_every != 0:
+        return {}
+    async with trace.scope_span("run_evals"):
+        return await run_evaluations_parallel(
+            evaluators, sampling_client, config, step, store=ml_logger.store
+        )
+
+
 @trace.scope
 async def do_sync_training_with_stream_minibatch(
     start_batch: int,
@@ -739,14 +784,9 @@ async def do_sync_training_with_stream_minibatch(
 
         with trace.trace_iteration(step=i_batch) as window:
             # Run evaluations
-            if (
-                config.eval_every > 0 and i_batch % config.eval_every == 0
-            ) or i_batch == end_batch - 1:
-                async with trace.scope_span("run_evals"):
-                    eval_metrics = await run_evaluations_parallel(
-                        evaluators, sampling_client, config, i_batch, store=ml_logger.store
-                    )
-                    metrics.update(eval_metrics)
+            metrics.update(
+                await _maybe_run_evals(evaluators, sampling_client, config, i_batch, ml_logger)
+            )
 
             iter_dir = iteration_dir(config.log_path, i_batch)
             with _get_logtree_scope(
@@ -863,6 +903,14 @@ async def do_sync_training_with_stream_minibatch(
             iter_dir.mkdir(parents=True, exist_ok=True)
             trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
+
+    if start_batch < end_batch:
+        # Evals run before each iteration's train step, so the final weights need one more.
+        final_metrics = await _maybe_run_evals(
+            evaluators, sampling_client, config, end_batch, ml_logger, force=True
+        )
+        if final_metrics:
+            ml_logger.log_metrics(final_metrics, step=end_batch)
 
 
 @chz.chz
@@ -1129,17 +1177,10 @@ async def do_async_training(
             nonlocal sampling_client
             nonlocal sampling_client_step
             if config.stream_minibatch_config is not None:
-                # Streaming minibatch: delegate queue consumption to the streaming function.
-                # We need to check for shutdown before entering the streaming function,
-                # since it will block on queue.get() internally.
-                wrapped_trajectory_group = await trajectory_groups_queue.get()
-                if isinstance(wrapped_trajectory_group, _Shutdown):
-                    logger.info("[training_loop] Received shutdown signal")
-                    break
-                if wrapped_trajectory_group is None:
-                    continue
-                await trajectory_groups_queue.put(wrapped_trajectory_group)
-
+                # Streaming minibatch: delegate queue consumption to the streaming function,
+                # which returns None once it reaches the shutdown sentinel. Don't peek and
+                # re-queue here: a re-queued group would land behind an already-enqueued
+                # sentinel and never be trained.
                 with trace.trace_iteration(step=i_batch) as window:
                     streaming_result = await do_train_step_streaming_and_get_sampling_client(
                         config,
@@ -1746,11 +1787,9 @@ async def do_sync_training(
 
         with trace.trace_iteration(step=i_batch) as window:
             # Run evaluations
-            if config.eval_every > 0 and i_batch % config.eval_every == 0:
-                eval_metrics = await run_evaluations_parallel(
-                    evaluators, sampling_client, config, i_batch, store=ml_logger.store
-                )
-                metrics.update(eval_metrics)
+            metrics.update(
+                await _maybe_run_evals(evaluators, sampling_client, config, i_batch, ml_logger)
+            )
 
             # Get batch and sample trajectories
             env_group_builders_P = dataset.get_batch(i_batch)
@@ -1856,6 +1895,14 @@ async def do_sync_training(
             iter_dir.mkdir(parents=True, exist_ok=True)
             trace.save_gantt_chart_html(window, i_batch, iter_dir / "timing_gantt.html")
         ml_logger.log_metrics(metrics, step=i_batch)
+
+    if start_batch < end_batch:
+        # Evals run before each iteration's train step, so the final weights need one more.
+        final_metrics = await _maybe_run_evals(
+            evaluators, sampling_client, config, end_batch, ml_logger, force=True
+        )
+        if final_metrics:
+            ml_logger.log_metrics(final_metrics, step=end_batch)
 
 
 @trace.scope
@@ -1997,10 +2044,8 @@ async def main(
                 )
             )
 
-        num_batches = len(dataset)
-        end_batch = (
-            min(config.max_steps, num_batches) if config.max_steps is not None else num_batches
-        )
+        end_batch = _resolve_end_batch(config.max_steps, len(dataset), config.num_epochs)
+        dataset = EpochCycledRLDataset(dataset, config.num_epochs)
         logger.info(f"Will train on {end_batch} batches")
 
         # Create KL reference client once if KL penalty is enabled

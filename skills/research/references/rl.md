@@ -66,6 +66,8 @@ class MyDatasetBuilder(RLDatasetBuilder):
 
 The dataset's `get_batch(batch_idx)` returns `Sequence[EnvGroupBuilder]`.
 
+Training length: `rl.train.Config` runs `min(num_epochs * len(dataset), max_steps)` steps. For more than one pass over the data, set `num_epochs` (default 1); a `max_steps` above `len(dataset)` alone does not cycle the dataset. To repeat a dataset elsewhere, use `rl.dataset_utils.EpochCycledRLDataset` (optional per-epoch `shuffle_seed`).
+
 ## ProblemEnv — single-turn answer verification
 
 Handles rendering, reward computation (with format penalty), and logging. You implement 4 methods:
