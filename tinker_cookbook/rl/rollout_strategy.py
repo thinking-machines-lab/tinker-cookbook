@@ -237,12 +237,9 @@ class RetryOnFailure(RolloutStrategy):
                     )
                     if retries_remaining > 0:
                         retries_remaining -= 1
-                        # Create a fresh env for retry.
-                        # Note: make_envs() creates a full group but we only need one.
-                        # The extras are cheap Python objects for most envs; for sandbox
-                        # envs the unused containers get GC'd.
-                        new_envs = await env_group_builder.make_envs()
-                        new_env = new_envs[0]
+                        # One replacement env — not a full group. Harbor/Modal
+                        # sandboxes are not GC-collected; see EnvGroupBuilder.make_env.
+                        new_env = await env_group_builder.make_env()
                         new_task = _launch(new_env)
                         task_to_env[new_task] = new_env
                         pending.add(new_task)
@@ -417,8 +414,7 @@ class MinViableGroup(RolloutStrategy):
                             exc,
                             retries_remaining,
                         )
-                        new_envs = await env_group_builder.make_envs()
-                        new_env = new_envs[0]
+                        new_env = await env_group_builder.make_env()
                         new_task = _launch(new_env)
                         task_to_env[new_task] = new_env
                         pending.add(new_task)

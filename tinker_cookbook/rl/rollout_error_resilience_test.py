@@ -280,11 +280,37 @@ class TestRetryOnFailureStrategy:
         assert tg.rollout_errors[0].error_type == "RuntimeError"
 
     def test_retry_creates_fresh_envs(self):
-        """Retry calls make_envs again to get a fresh environment."""
-        builder = _FakeEnvGroupBuilder(n_envs=2)
+        """Retry calls make_env for one replacement, not a second full group."""
+
+        class _CountingBuilder(EnvGroupBuilder):
+            def __init__(self, n_envs: int = 2):
+                self.n_envs = n_envs
+                self.make_envs_calls = 0
+                self.make_env_calls = 0
+                self.envs_created = 0
+
+            async def make_envs(self):
+                self.make_envs_calls += 1
+                self.envs_created += self.n_envs
+                return [_FakeEnv() for _ in range(self.n_envs)]
+
+            async def make_env(self):
+                self.make_env_calls += 1
+                self.envs_created += 1
+                return _FakeEnv()
+
+        builder = _CountingBuilder(n_envs=2)
         policy = _FakePolicy(fail_indices={1})  # one failure triggers one retry
         asyncio.run(do_group_rollout(builder, policy, strategy=RetryOnFailure(max_retries=3)))
-        # Initial make_envs + 1 retry make_envs
+        assert builder.make_envs_calls == 1
+        assert builder.make_env_calls == 1
+        assert builder.envs_created == 3  # group of 2 + one retry, not 2+2
+
+    def test_retry_default_make_env_delegates_to_make_envs(self):
+        """Builders that do not override make_env still get a retry via make_envs."""
+        builder = _FakeEnvGroupBuilder(n_envs=2)
+        policy = _FakePolicy(fail_indices={1})
+        asyncio.run(do_group_rollout(builder, policy, strategy=RetryOnFailure(max_retries=3)))
         assert builder.make_envs_call_count == 2
 
     def test_all_fail_raises_after_retries(self):
