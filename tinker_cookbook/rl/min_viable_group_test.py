@@ -17,7 +17,7 @@ import tinker
 
 from tinker_cookbook.completers import TokenCompleter, TokensWithLogprobs
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError
-from tinker_cookbook.rl.rollout_strategy import MinViableGroup, RolloutResult
+from tinker_cookbook.rl.rollout_strategy import MinViableGroup, RetryOnFailure, RolloutResult
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, StepResult
 
 # ---------------------------------------------------------------------------
@@ -82,6 +82,39 @@ class _ScriptedBuilder(EnvGroupBuilder):
     async def make_envs(self) -> Sequence[Env]:
         self.make_envs_calls += 1
         return self._batches.pop(0)
+
+
+class _CancelRecordingHangEnv(Env):
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def initial_observation(self) -> tuple[tinker.ModelInput, list[str]]:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("unreachable")
+
+    async def step(self, action: list[int], *, extra: Any = None) -> StepResult:
+        raise AssertionError("unreachable")
+
+
+class _BlockingRetryBuilder(EnvGroupBuilder):
+    """First call returns the initial group; a retry blocks until cancelled."""
+
+    def __init__(self, initial_envs: Sequence[Env]):
+        self.initial_envs = initial_envs
+        self.retry_started = asyncio.Event()
+        self.calls = 0
+
+    async def make_envs(self) -> Sequence[Env]:
+        self.calls += 1
+        if self.calls == 1:
+            return self.initial_envs
+        self.retry_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 def _execute(strategy: MinViableGroup, builder: _ScriptedBuilder) -> RolloutResult:
@@ -201,3 +234,23 @@ class TestPerRolloutTimeout:
 
     def test_no_timeout_by_default(self):
         assert MinViableGroup().per_rollout_timeout is None
+
+
+class TestCancellation:
+    @pytest.mark.parametrize(
+        "strategy",
+        [MinViableGroup(min_successful=1), RetryOnFailure(max_retries=1)],
+        ids=["min_viable_group", "retry_on_failure"],
+    )
+    def test_cancelling_during_a_retry_cancels_running_trajectories(self, strategy):
+        async def _test() -> None:
+            hang = _CancelRecordingHangEnv()
+            builder = _BlockingRetryBuilder([_FailEnv(), hang])
+            task = asyncio.create_task(strategy.execute(builder, _AlwaysSamplePolicy()))
+            await asyncio.wait_for(builder.retry_started.wait(), timeout=5.0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert hang.cancelled
+
+        asyncio.run(_test())

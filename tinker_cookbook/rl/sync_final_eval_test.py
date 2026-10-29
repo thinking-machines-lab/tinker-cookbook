@@ -44,6 +44,7 @@ def _config(eval_every: int, tmp_path) -> train.Config:
             max_tokens=8,
             temperature=1.0,
             effective_termination=lambda: None,
+            records_stability_info=lambda: False,
             remove_constant_reward_groups=False,
             span_chart_every=0,
         ),
@@ -61,10 +62,10 @@ def evaluated(monkeypatch) -> list[tuple[str, int]]:
     async def rollout(sampling_client, builder, **kwargs):
         return object()
 
-    async def train_step(config, i_batch, *args):
+    async def train_step(config, i_batch, *args, **kwargs):
         return f"weights@{i_batch + 1}", {}
 
-    async def train_step_streaming(config, i_batch, *args):
+    async def train_step_streaming(config, i_batch, *args, **kwargs):
         return f"weights@{i_batch + 1}", {}, []
 
     async def run_evals(evaluators, sampling_client, config, step, store=None):

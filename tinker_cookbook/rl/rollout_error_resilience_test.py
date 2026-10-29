@@ -407,3 +407,62 @@ class TestImplErrorHandling:
                 )
             )
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Cleanup and cancellation
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupIsShieldedFromCancellation:
+    def test_cancelling_during_cleanup_lets_cleanup_finish(self):
+        """A rollout cancelled while its group is cleaning up (as at the end of async
+        training) still finishes cleanup, then propagates the cancellation."""
+        finished: list[bool] = []
+
+        async def run() -> None:
+            started = asyncio.Event()
+
+            class _SlowCleanupBuilder(_FakeEnvGroupBuilder):
+                async def cleanup(self) -> None:
+                    started.set()
+                    await asyncio.sleep(0.05)
+                    finished.append(True)
+
+            task = asyncio.create_task(
+                do_group_rollout(_SlowCleanupBuilder(n_envs=2), _FakePolicy())
+            )
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(run())
+        assert finished == [True]
+
+    def test_cancelling_again_during_cleanup_still_lets_cleanup_finish(self):
+        """A second cancellation (e.g. the caller cancelling the final drain) doesn't
+        cancel the cleanup either."""
+        finished: list[bool] = []
+
+        async def run() -> None:
+            started = asyncio.Event()
+
+            class _SlowCleanupBuilder(_FakeEnvGroupBuilder):
+                async def cleanup(self) -> None:
+                    started.set()
+                    await asyncio.sleep(0.05)
+                    finished.append(True)
+
+            task = asyncio.create_task(
+                do_group_rollout(_SlowCleanupBuilder(n_envs=2), _FakePolicy())
+            )
+            await started.wait()
+            task.cancel()
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(run())
+        assert finished == [True]

@@ -10,6 +10,7 @@ import pytest
 
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import RLDataset, RLDatasetBuilder
+from tinker_cookbook.utils.cost_estimation import TokenUsage
 
 
 class _Dataset(RLDataset):
@@ -33,7 +34,7 @@ def _run(tmp_path, monkeypatch: pytest.MonkeyPatch, num_batches: int, groups_per
         return MagicMock(name="trajectory_group")
 
     async def fake_prepare_minibatch(*args: Any, **kwargs: Any):
-        return [], {}
+        return [], {}, TokenUsage()
 
     async def fake_full_batch_metrics(training_client, checkpoint_mgr, step, *args, **kwargs):
         trained_steps.append(step - 1)

@@ -40,3 +40,41 @@ def test_configure_logging_module_logs_invocation_and_appends(tmp_path):
     assert final_contents.count("Command line invocation:") == 2
     assert final_contents.index("first message") < final_contents.index(second_invocation)
     assert final_contents.index(second_invocation) < final_contents.index("second message")
+
+
+def test_wandb_log_summary_updates_the_summary_not_the_step_history():
+    """Summary values between steps must not open or close a W&B step."""
+    from unittest.mock import MagicMock
+
+    from . import ml_log
+
+    fake_wandb = MagicMock()
+    with patch.object(ml_log, "wandb", fake_wandb), patch.object(ml_log, "_wandb_available", True):
+        logger = ml_log.WandbLogger(project="p")
+        logger.log_metrics({"loss": 1.0}, step=3)
+        logger.log_summary({"tokens/cumulative/sampled": 10})
+        logger.log_summary({"tokens/cumulative/sampled": 20})
+        logger.log_metrics({"loss": 0.5}, step=3)
+
+    assert fake_wandb.log.call_args_list == [
+        (({"loss": 1.0},), {"step": 3}),
+        (({"loss": 0.5},), {"step": 3}),
+    ]
+    assert fake_wandb.init.return_value.summary.update.call_args_list == [
+        (({"tokens/cumulative/sampled": 10},), {}),
+        (({"tokens/cumulative/sampled": 20},), {}),
+    ]
+
+
+def test_json_logger_writes_summary_rows_without_a_step(tmp_path):
+    import json
+
+    from . import ml_log
+
+    logger = ml_log.JsonLogger(tmp_path)
+    logger.log_metrics({"loss": 1.0}, step=3)
+    logger.log_summary({"tokens/cumulative/sampled": 10})
+    with open(tmp_path / "metrics.jsonl") as f:
+        rows = [json.loads(line) for line in f]
+    assert rows == [{"step": 3, "loss": 1.0}, {"tokens/cumulative/sampled": 10}]
+    ml_log.MultiplexLogger([logger, ml_log.PrettyPrintLogger()]).log_summary({"a": 1})

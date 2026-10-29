@@ -19,14 +19,17 @@ import asyncio
 import logging
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
+from typing import TypeVar
 
 from tinker_cookbook.completers import TokenCompleter
 from tinker_cookbook.exceptions import AllTrajectoriesFailedError, ConfigurationError
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RolloutError, Trajectory
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -86,6 +89,24 @@ class RolloutStrategy(ABC):
                 and any errors encountered.
         """
         ...
+
+
+async def _cancel_pending_on_error(
+    pending: set[asyncio.Task[Trajectory]], awaitable: Awaitable[_T]
+) -> _T:
+    """Await ``awaitable``; if it raises or is cancelled, cancel and await ``pending`` first.
+
+    The retrying strategies keep their in-flight trajectories in ``pending``.
+    ``asyncio.wait`` does not cancel the tasks it waits on, so without this they
+    would keep running after the group rollout is gone.
+    """
+    try:
+        return await awaitable
+    except BaseException:
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise
 
 
 @dataclass(frozen=True)
@@ -207,7 +228,9 @@ class RetryOnFailure(RolloutStrategy):
         pending: set[asyncio.Task[Trajectory]] = set(task_to_env.keys())
 
         while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await _cancel_pending_on_error(
+                pending, asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            )
             for task in done:
                 try:
                     traj = task.result()
@@ -241,7 +264,9 @@ class RetryOnFailure(RolloutStrategy):
                         # Note: make_envs() creates a full group but we only need one.
                         # The extras are cheap Python objects for most envs; for sandbox
                         # envs the unused containers get GC'd.
-                        new_envs = await env_group_builder.make_envs()
+                        new_envs = await _cancel_pending_on_error(
+                            pending, env_group_builder.make_envs()
+                        )
                         new_env = new_envs[0]
                         new_task = _launch(new_env)
                         task_to_env[new_task] = new_env
@@ -384,7 +409,9 @@ class MinViableGroup(RolloutStrategy):
         pending: set[asyncio.Task[Trajectory]] = set(task_to_env.keys())
 
         while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await _cancel_pending_on_error(
+                pending, asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            )
             for task in done:
                 try:
                     traj = task.result()
@@ -417,7 +444,9 @@ class MinViableGroup(RolloutStrategy):
                             exc,
                             retries_remaining,
                         )
-                        new_envs = await env_group_builder.make_envs()
+                        new_envs = await _cancel_pending_on_error(
+                            pending, env_group_builder.make_envs()
+                        )
                         new_env = new_envs[0]
                         new_task = _launch(new_env)
                         task_to_env[new_task] = new_env

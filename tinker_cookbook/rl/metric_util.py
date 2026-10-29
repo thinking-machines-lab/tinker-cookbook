@@ -110,6 +110,11 @@ def _compute_trajectory_metrics(trajectory_groups_P: list[TrajectoryGroup]) -> d
     total_episodes = len(flat_trajs_PG)
     total_ac_tokens = sum(ac_tokens_by_turn)
     total_ob_tokens = sum(ob_tokens_by_turn)
+    total_cached_ob_tokens = sum(
+        transition.ac.prompt_cache_hit_tokens
+        for traj in flat_trajs_PG
+        for transition in traj.transitions
+    )
     # Compute metrics
     metrics = {
         "ac_tokens_per_turn": total_ac_tokens / total_turns if total_turns > 0 else 0.0,
@@ -119,6 +124,8 @@ def _compute_trajectory_metrics(trajectory_groups_P: list[TrajectoryGroup]) -> d
         "total_turns": total_turns,
         "total_ac_tokens": total_ac_tokens,
         "total_ob_tokens": total_ob_tokens,
+        # Prompt tokens the sampler billed as prefix-cache hits (subset of total_ob_tokens).
+        "total_cached_ob_tokens": total_cached_ob_tokens,
     }
     all_rewards = [reward for tg in trajectory_groups_P for reward in tg.get_total_rewards()]
     metrics["reward/total"] = np.mean(all_rewards).item() if all_rewards else 0.0

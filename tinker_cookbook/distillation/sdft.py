@@ -172,6 +172,17 @@ def _build_teacher_forced_sequence(
     return teacher_forced
 
 
+def _completion_positions(mask: torch.Tensor, completion_len: int) -> list[tuple[int, int]]:
+    """Return student loss indices and their offsets in the retained teacher suffix."""
+    indices: list[int] = torch.where(mask > 0)[0].tolist()
+    if not indices:
+        return []
+    first_index = indices[0]
+    return [
+        (index, index - first_index) for index in indices if index - first_index < completion_len
+    ]
+
+
 @trace.scope
 async def compute_sdft_advantages(
     data_D: list[tinker.Datum],
@@ -257,22 +268,25 @@ async def compute_sdft_advantages(
         teacher_lp_tensor = torch.tensor(teacher_completion_lps, dtype=torch.float32)
 
         new_advantages = torch.zeros_like(mask)
-        completion_mask_indices = torch.where(mask > 0)[0]
-
-        num_tokens = min(len(teacher_lp_tensor), len(completion_mask_indices))
-        for t in range(num_tokens):
-            idx = int(completion_mask_indices[t].item())
-            new_advantages[idx] = teacher_lp_tensor[t] - student_lp[idx]
+        positions = [
+            (student_pos, teacher_offset)
+            for student_pos, teacher_offset in _completion_positions(mask, completion_len)
+            if teacher_offset < len(teacher_lp_tensor)
+        ]
+        for student_pos, teacher_offset in positions:
+            new_advantages[student_pos] = (
+                teacher_lp_tensor[teacher_offset] - student_lp[student_pos]
+            )
 
         datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(new_advantages)
 
         masked_advantages = new_advantages * mask
         total_advantage_sum += masked_advantages.sum().item()
         total_mask_sum += mask.sum().item()
-        total_teacher_lp_sum += (teacher_lp_tensor[:num_tokens]).sum().item()
-        total_student_lp_sum += sum(
-            student_lp[int(completion_mask_indices[t].item())].item() for t in range(num_tokens)
+        total_teacher_lp_sum += (
+            teacher_lp_tensor[[teacher_offset for _, teacher_offset in positions]].sum().item()
         )
+        total_student_lp_sum += sum(student_lp[student_pos].item() for student_pos, _ in positions)
 
     metrics: dict[str, float] = {}
     if total_mask_sum > 0:
@@ -383,26 +397,24 @@ async def build_topk_distillation_datums(
 
     for i, datum in enumerate(data_D):
         mask = datum.loss_fn_inputs["mask"].to_torch()
-        completion_mask_indices = torch.where(mask > 0)[0]
         N = datum.model_input.length
         completion_len = completion_lengths_D[i]
         teacher_prompt_len = teacher_prompt_lengths_D[i]
+        positions = _completion_positions(mask, completion_len)
 
         target_tokens_NK = torch.zeros(N, topk, dtype=torch.long)
         weights_NK = torch.zeros(N, topk, dtype=torch.float32)
         n_completion_positions = 0
 
-        if completion_len > 0 and len(completion_mask_indices) > 0:
+        if positions:
             topk_all = topk_responses_D[i].topk_prompt_logprobs
 
-            num_tokens = min(completion_len, len(completion_mask_indices))
-            for t in range(num_tokens):
+            for t, (student_pos, teacher_offset) in enumerate(positions):
                 # Skip first N completion tokens (reference skips 3)
                 if t < skip_first_n_tokens:
                     continue
 
-                teacher_pos = teacher_prompt_len + t
-                student_pos = int(completion_mask_indices[t].item())
+                teacher_pos = teacher_prompt_len + teacher_offset
 
                 if topk_all is None or teacher_pos >= len(topk_all):
                     continue
@@ -435,7 +447,7 @@ async def build_topk_distillation_datums(
                 # Teacher entropy for monitoring (H = -sum p log p)
                 total_teacher_entropy += -(probs * logprobs).sum().item()
 
-            total_completion_tokens += num_tokens
+            total_completion_tokens += len(positions)
 
         raw_datums.append((target_tokens_NK, weights_NK, n_completion_positions))
 
@@ -542,26 +554,24 @@ async def build_reverse_kl_datums(
 
     for i, datum in enumerate(data_D):
         mask = datum.loss_fn_inputs["mask"].to_torch()
-        completion_mask_indices = torch.where(mask > 0)[0]
         N = datum.model_input.length
         completion_len = completion_lengths_D[i]
         teacher_prompt_len = teacher_prompt_lengths_D[i]
+        positions = _completion_positions(mask, completion_len)
 
         target_tokens_NK = torch.zeros(N, topk, dtype=torch.long)
         # All slots start at 0 (masked). Valid slots get the renormalized
         # teacher probability; masked positions and unused slots keep 0.
         weights_NK = torch.zeros(N, topk, dtype=torch.float32)
 
-        if completion_len > 0 and len(completion_mask_indices) > 0:
+        if positions:
             topk_all = topk_responses_D[i].topk_prompt_logprobs
 
-            num_tokens = min(completion_len, len(completion_mask_indices))
-            for t in range(num_tokens):
+            for t, (student_pos, teacher_offset) in enumerate(positions):
                 if t < skip_first_n_tokens:
                     continue
 
-                teacher_pos = teacher_prompt_len + t
-                student_pos = int(completion_mask_indices[t].item())
+                teacher_pos = teacher_prompt_len + teacher_offset
 
                 if topk_all is None or teacher_pos >= len(topk_all):
                     continue

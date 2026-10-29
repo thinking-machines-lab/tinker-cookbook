@@ -306,9 +306,13 @@ if __name__ == "__main__":
 from tinker_cookbook.rl.train import AsyncConfig
 config = Config(
     ...,
-    async_config=AsyncConfig(max_steps_off_policy=4, groups_per_batch=8),
+    # Sampling runs at most max_steps_off_policy steps ahead of training. Nothing is
+    # discarded; AsyncConfig.loss_fn (default "stable_reinforce") stays stable on the stale data.
+    async_config=AsyncConfig(max_steps_off_policy=1, groups_per_batch=8),
 )
 ```
+
+A rollout that never finishes holds one slot forever; for environments that can hang, bound rollouts with `rollout_error_tolerance=RetryOnFailure(per_rollout_timeout=...)`.
 
 **Cleanup resources:** Override `cleanup()` on EnvGroupBuilder for sandboxes, DB connections, etc.
 

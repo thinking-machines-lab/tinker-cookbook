@@ -32,6 +32,7 @@ from tinker_cookbook.supervised.nll_evaluator import SamplerNLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.cost_estimation import CostTracker, TokenUsage, fetch_model_pricing
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import iteration_dir
@@ -401,9 +402,21 @@ async def main(config: Config):
         )
         checkpoint_mgr.restore_last_saved_tokens(resumed_elapsed_tokens)
         elapsed_tokens: int = resumed_elapsed_tokens
+        cost_tracker = CostTracker(
+            fetch_model_pricing(config.model_name),
+            cumulative=TokenUsage(trained=resumed_elapsed_tokens),
+        )
 
         dataset, maybe_test_dataset = config.dataset_builder()
         n_batches = len(dataset)
+        if resume_info and store is not None:
+            resume_step = start_epoch * n_batches + start_batch
+            dropped = store.truncate_metrics(resume_step)
+            if dropped:
+                logger.info(
+                    f"Resuming at step {resume_step}: dropped {dropped} metrics rows "
+                    f"with step >= {resume_step}"
+                )
         total_steps = _resolve_total_steps(config.max_steps, n_batches, config.num_epochs)
         progress_denominator = total_steps if total_steps > 0 else 1
         tokenizer = get_tokenizer(config.model_name)
@@ -521,6 +534,9 @@ async def main(config: Config):
                 ),
                 train_mean_nll=train_nll,
             )
+            # Every token in the batch goes through forward_backward, so the
+            # trained-token count is num_tokens; cumulative matches elapsed_tokens.
+            metrics.update(cost_tracker.record_step(TokenUsage(trained=submitted.num_tokens)))
             # Bits per byte: a tokenizer-independent counterpart to train_mean_nll,
             # letting NLL be compared across models with different tokenizers.
             if submitted.data and "target_tokens" in submitted.data[0].loss_fn_inputs:

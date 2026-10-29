@@ -1,4 +1,5 @@
-"""Tests for the per-call ``max_tokens`` override on token completers."""
+"""Tests for ``TinkerTokenCompleter``: the per-call ``max_tokens`` override and
+the fields it copies from the SDK's ``SampleResponse``."""
 
 import asyncio
 import inspect
@@ -7,6 +8,7 @@ from typing import Any
 
 import pytest
 import tinker
+from tinker.types import SampledSequence, SampleResponse
 
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
 
@@ -16,11 +18,13 @@ class _FakeSequence:
     tokens: list[int]
     logprobs: list[float]
     stop_reason: str = "stop"
+    sequence_id: str = "seq-0"
 
 
 @dataclass
 class _FakeSampleResult:
     sequences: list[_FakeSequence]
+    prompt_cache_hit_tokens: int = 0
 
 
 class _RecordingSamplingClient:
@@ -90,3 +94,40 @@ class TestTokenCompleterInterface:
             param = params["max_tokens"]
             assert param.kind is inspect.Parameter.KEYWORD_ONLY, impl
             assert param.default is None, impl
+
+
+class _FixedResponseSamplingClient:
+    """Stub sampling client that returns one real ``SampleResponse`` for every request."""
+
+    def __init__(self, response: SampleResponse) -> None:
+        self.response = response
+
+    async def sample_async(
+        self,
+        prompt: tinker.ModelInput,
+        num_samples: int,
+        sampling_params: tinker.SamplingParams,
+    ) -> SampleResponse:
+        return self.response
+
+
+class TestTinkerTokenCompleterSampleResponseFields:
+    @pytest.mark.parametrize("cache_hits", [0, 7])
+    def test_prompt_cache_hit_tokens_are_copied_from_the_response(self, cache_hits: int):
+        sequence = SampledSequence(
+            stop_reason="stop",
+            sequence_id="seq-0",
+            _tokens_list=[1, 2],
+            _logprobs_list=[-0.1, -0.2],
+        )
+        response = SampleResponse(sequences=[sequence], prompt_cache_hit_tokens=cache_hits)
+        completer = TinkerTokenCompleter(
+            sampling_client=_FixedResponseSamplingClient(response),  # type: ignore[arg-type]
+            max_tokens=16,
+        )
+
+        result = asyncio.run(completer(_prompt(4), stop=["<stop>"]))
+
+        assert result.prompt_cache_hit_tokens == cache_hits
+        assert result.sequence_id == "seq-0"
+        assert result.tokens == [1, 2]

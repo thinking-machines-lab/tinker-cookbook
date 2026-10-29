@@ -13,6 +13,17 @@ Each entry includes:
 
 ---
 
+### [cookbook] Async RL trains on every rollout and defaults to StableReinforce
+**Date:** 2026-10-28
+**Type:** improvement
+**Tags:** rl
+
+**Behavior change.** Async RL (`Config.async_config`) used to discard rollouts more than `max_steps_off_policy` steps stale and re-run their problems, which biased training toward fast (often easy) problems. Now no rollout is discarded: `max_steps_off_policy` caps how far sampling runs ahead (at most `groups_per_batch * (max_steps_off_policy + 1)` groups started but not yet trained), each batch takes the oldest groups first (with streaming minibatches, in the order they finish), and slow rollouts may be trained more than `max_steps_off_policy` steps stale. Up to `groups_per_batch * (max_steps_off_policy + 1)` rollouts now run at once (previously `groups_per_batch`, which kept sampling from running more than about one batch ahead), so environments with sandboxes start more of them in parallel. Rollouts still running when training ends are cancelled, after their env cleanup finishes. The final weights are always evaluated. Invalid `AsyncConfig` values raise `ConfigurationError`. New metrics: `async/staleness_{max,min,mean}`.
+
+**New default loss for async runs.** `AsyncConfig` has a new `loss_fn` field, default `"stable_reinforce"`, that async runs train with; sync runs keep `Config.loss_fn` (default `"importance_sampling"`). An async run whose `Config.loss_fn` is set to something other than its default and `AsyncConfig.loss_fn` raises a `ConfigurationError`. The math_rl and rubric recipes' `loss_fn` flag now defaults to `stable_reinforce` for both sync and async runs (previously `importance_sampling`); pass `loss_fn=importance_sampling` for the old behavior. `stable_reinforce` adds a small sampler KL term by default (`kl_coeff=0.01` in `loss_fn_config`), and a KL penalty with `kl_discount_factor > 0` is not supported with it (`ConfigurationError`). To use another loss in an async run, set `AsyncConfig.loss_fn`, preferring a clipped loss such as `ppo`: async runs with `max_steps_off_policy > 0` using `importance_sampling` or `cispo` log a warning, since these can become unstable on stale data now that nothing is discarded. RL training data now carries provenance spans (`Datum.with_provenance`) whenever every sampled turn has a `TokensWithLogprobs.sequence_id`. `stable_reinforce` requires provenance, so custom `TokenCompleter`s must set `sequence_id` to train with it.
+
+---
+
 ### [cookbook] Fix base-model single-turn evals + replace `parse_success` bool with `ParseTermination` enum ([#688](https://github.com/thinking-machines-lab/tinker-cookbook/pull/688))
 **Date:** 2026-04-30
 **Type:** fix
