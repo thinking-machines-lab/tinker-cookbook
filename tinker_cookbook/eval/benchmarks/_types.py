@@ -71,6 +71,7 @@ class StoredTrajectoryDict(TypedDict):
     logs: Logs
     error: str | None
     time_seconds: float
+    fingerprint: dict[str, Any] | None
 
 
 class BenchmarkResultDict(TypedDict):
@@ -90,6 +91,8 @@ class BenchmarkResultDict(TypedDict):
     metrics: Metrics
     time_seconds: float
     pass_at_k: dict[str, float]  # string keys for JSON; int keys in PassAtKScores
+    fingerprint: dict[str, Any] | None
+    num_reused: int
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +464,11 @@ class StoredTrajectory:
     """Error message if this example failed."""
     time_seconds: float = 0.0
     """Wall time for this example."""
+    fingerprint: dict[str, Any] | None = None
+    """Identity of the run that produced this row: model, sampling parameters,
+    effective system prompt, and benchmark name. Resume only reuses rows whose
+    fingerprint matches the current run, so a save_dir reused across models or
+    configs never blends one run's rewards into another's score."""
 
     def to_dict(self) -> StoredTrajectoryDict:
         """Serialize to a JSON-compatible dict."""
@@ -482,6 +490,7 @@ class StoredTrajectory:
             logs=self.logs,
             error=self.error,
             time_seconds=self.time_seconds,
+            fingerprint=self.fingerprint,
         )
 
     @classmethod
@@ -509,6 +518,7 @@ class StoredTrajectory:
             logs=d.get("logs", {}),
             error=d.get("error"),
             time_seconds=d.get("time_seconds", 0.0),
+            fingerprint=d.get("fingerprint"),
         )
 
 
@@ -562,6 +572,14 @@ class BenchmarkResult:
     """Wall time for the entire benchmark run in seconds."""
     pass_at_k: PassAtKScores = field(default_factory=dict)
     """Pass@k scores. Only populated when ``BenchmarkConfig.num_samples > 1``."""
+    num_reused: int = 0
+    """Examples whose reward was restored from a previous run's cache instead
+    of being re-sampled, because the stored row's fingerprint matched this
+    run's model and configuration."""
+    fingerprint: dict[str, Any] | None = None
+    """Identity of the run that produced this result (model, sampling
+    parameters, effective system prompt, benchmark name). Lets a later reader
+    of result.json tell which configuration the score belongs to."""
 
     @property
     def num_completed(self) -> int:
