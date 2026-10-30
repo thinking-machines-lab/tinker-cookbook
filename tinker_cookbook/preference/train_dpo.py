@@ -175,8 +175,9 @@ def create_dpo_clients(
     Returns:
         tuple[tinker.TrainingClient, tinker.SamplingClient]: A pair of
             (training client, reference sampling client).  The reference
-            client is a frozen snapshot of the initial weights used to
-            compute reference log-probabilities for the DPO loss.
+            client samples ``config.reference_model_name`` when it is set,
+            and is otherwise a frozen snapshot of the initial weights.  It
+            computes the reference log-probabilities for the DPO loss.
     """
     if resume_info:
         # Resuming interrupted DPO training - load weights + optimizer state
@@ -201,8 +202,13 @@ def create_dpo_clients(
         training_client = service_client.create_lora_training_client(
             base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
-    # Create a sampling client for the reference model from the training client
-    reference_client = training_client.save_weights_and_get_sampling_client()
+    if config.reference_model_name is not None:
+        reference_client = service_client.create_sampling_client(
+            base_model=config.reference_model_name
+        )
+    else:
+        # Snapshot the initial weights as the reference model
+        reference_client = training_client.save_weights_and_get_sampling_client()
     return training_client, reference_client
 
 
