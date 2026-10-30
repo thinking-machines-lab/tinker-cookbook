@@ -244,18 +244,31 @@ class _DeepSeekV3BaseRenderer(Renderer):
         tool_calls: list[ToolCall] = []
         unparsed_tool_calls: list[UnparsedToolCall] = []
 
-        calls_match = re.search(
-            r"<｜tool▁calls▁begin｜>(.*?)<｜tool▁calls▁end｜>", content, re.DOTALL
+        # Parse every section: the caller strips all of them from the content, so a
+        # call left unparsed here would vanish from the message.
+        blocks = (
+            block.group(0)
+            for calls_match in re.finditer(
+                r"<｜tool▁calls▁begin｜>(.*?)<｜tool▁calls▁end｜>", content, re.DOTALL
+            )
+            for block in re.finditer(
+                r"<｜tool▁call▁begin｜>.*?<｜tool▁call▁end｜>", calls_match.group(1), re.DOTALL
+            )
         )
-        if not calls_match:
-            return tool_calls, unparsed_tool_calls
-
-        for match in re.finditer(
-            r"<｜tool▁call▁begin｜>(\w+)<｜tool▁sep｜>(.*?)<｜tool▁call▁end｜>",
-            calls_match.group(1),
-            re.DOTALL,
-        ):
-            raw_text = match.group(0)
+        for raw_text in blocks:
+            match = re.fullmatch(
+                r"<｜tool▁call▁begin｜>(\w+)<｜tool▁sep｜>(.*?)<｜tool▁call▁end｜>",
+                raw_text,
+                re.DOTALL,
+            )
+            if match is None:
+                unparsed_tool_calls.append(
+                    UnparsedToolCall(
+                        raw_text=raw_text,
+                        error="Malformed tool call: expected NAME<｜tool▁sep｜>ARGS with a \\w+ name",
+                    )
+                )
+                continue
             func_name, args_str = match.group(1), match.group(2).strip()
 
             try:
