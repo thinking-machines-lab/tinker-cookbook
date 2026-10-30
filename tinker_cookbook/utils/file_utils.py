@@ -21,4 +21,4 @@ def read_jsonl(path: str) -> list[dict]:
             print(record["step"], record["loss"])
     """
     with open(path) as f:
-        return [json.loads(line) for line in f]
+        return [json.loads(line) for line in f if line.strip()]
