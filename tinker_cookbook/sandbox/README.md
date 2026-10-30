@@ -2,7 +2,7 @@
 
 This directory contains code execution backends for sandboxed evaluation (e.g., grading code in RL environments).
 
-There are currently two available backends: SandboxFusion for local execution and Modal for cloud execution.
+There are currently three available backends: SandboxFusion for local execution, and Modal or Daytona for cloud execution.
 
 ## Backends
 
@@ -65,3 +65,54 @@ print(result.stdout)
 Environment variables:
 
 - `MODAL_POOL_SIZE`: Number of sandboxes in the pool (default: 32)
+
+### Daytona (cloud)
+
+[Daytona Sandboxes](https://www.daytona.io) provide cloud-based isolated execution environments. Requires `DAYTONA_API_KEY` (or `DAYTONA_JWT_TOKEN` + `DAYTONA_ORGANIZATION_ID`).
+
+Install the extra:
+
+```bash
+uv pip install 'tinker-cookbook[daytona] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+```
+
+Example usage (single sandbox, implements `SandboxInterface`):
+
+```python
+from tinker_cookbook.sandbox.daytona_sandbox import DaytonaSandbox
+
+sandbox = await DaytonaSandbox.create(timeout=600)
+await sandbox.write_file("/workspace/code.py", "print('hello')")
+result = await sandbox.run_command("python /workspace/code.py", workdir="/workspace")
+print(result.stdout)
+await sandbox.cleanup()
+```
+
+As with `ModalSandbox`, each `run_command` runs in a fresh `bash -lc`, so the working directory and shell variables do not carry over between calls, while files and background processes last as long as the sandbox. A call returns once its command exits, even if a background process it started (e.g. a server) is still running; what that process prints afterwards is dropped, so redirect it to a file to read it later. The sandbox is ephemeral and lives at most `timeout` seconds: it never stops for being idle, and Daytona deletes it when that time is up if `cleanup()` has not. Sandboxes are labelled `created-by=tinker-cookbook`.
+
+Example usage (stateless grading in a fresh sandbox per call, drop-in for `code_rl`):
+
+```python
+from tinker_cookbook.sandbox.daytona_sandbox import run_code_in_daytona
+
+success, response = await run_code_in_daytona(
+    code="print(2 + 2)",
+    files={"data.txt": "some content"},
+    timeout=30,
+)
+```
+
+Harbor-style per-task Dockerfiles (drop-in for `harbor_rl`):
+
+```python
+from tinker_cookbook.sandbox.daytona_sandbox import daytona_sandbox_factory
+
+# Pass to cli_main(sandbox_factory=daytona_sandbox_factory) or the
+# HarborDatasetBuilder / HarborEnvGroupBuilder constructors.
+```
+
+Environment variables:
+
+- `DAYTONA_SNAPSHOT`: Pre-created snapshot to boot when no image is given, e.g. for grading. Not required: Daytona caches image builds, so each image is built once.
+- `DAYTONA_GRADING_CONCURRENCY`: Max grading sandboxes alive at once in `run_code_in_daytona` (default: 32)
+- `DAYTONA_TARGET`: Region to create sandboxes in (default: the organization's default region)
