@@ -80,6 +80,33 @@ DEFAULT_OUTPUT_FILE = cli_utils.runs_path(
     "prompt_distillation", "data", "prompt_distillation_lang.jsonl"
 )
 
+# The closed label set the classification prompt asks for. Extracted labels are
+# validated against it so an echoed "Final Answer: <anything>" from the text
+# under classification can never be written into the SFT data file.
+ALLOWED_LANGUAGE_LABELS = frozenset(
+    {"ar", "de", "el", "en", "es", "fr", "hi", "ru", "tr", "ur", "vi", "zh", "ot"}
+)
+
+# The verdict format the prompt asks for: 'Respond with EXACTLY one line:
+# "Final Answer: xx"'.
+_FINAL_ANSWER_RE = re.compile(r"Final Answer:\s*(\w+)")
+
+
+def parse_final_answer(response: str) -> str | None:
+    """Extract the classifier's language label from its response.
+
+    Binds to the LAST valid "Final Answer: xx" verdict: the prompt asks the
+    classifier to respond with exactly one final line, so an earlier occurrence
+    (e.g. the classifier quoting a "Final Answer: ..." line from the text under
+    classification) is not the verdict. Labels outside ALLOWED_LANGUAGE_LABELS
+    are rejected outright -- a free-form ``\\w+`` capture must never reach the
+    training data file.
+    """
+    for match in reversed(_FINAL_ANSWER_RE.findall(response)):
+        if match in ALLOWED_LANGUAGE_LABELS:
+            return match
+    return None
+
 
 @chz.chz
 class Config:
@@ -124,10 +151,9 @@ async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any
             prompt=tokenized_prompt, sampling_params=params, num_samples=1
         )
         response = tokenizer.decode(result.sequences[0].tokens)
-        # parse the final answer from the response using regex for example: Final Answer: xx where xx is two character label for each language and nothing else. xx is one of the following: en, fr, es, hi, ja, ko, ru, ot.
-        # the final answer is the xx part
-        search_response = re.search(r"Final Answer: (\w+)", response)
-        final_answer = search_response.group(1) if search_response else None
+        # Bind to the classifier's own (last, validated) verdict rather than the
+        # first "Final Answer:" anywhere, which may be quoted corpus text.
+        final_answer = parse_final_answer(response)
         return (sentence, final_answer)
 
     answers: list[str | None] = []
