@@ -53,6 +53,21 @@ async def _timed(coro):
     return result, time.monotonic() - start
 
 
+def _still_running(pid_file: str) -> str:
+    """A command printing ``running`` or ``gone`` for the process whose PID is in *pid_file*.
+
+    Reads /proc with bash builtins only, as slim images have no pgrep or ps. A zombie counts as
+    gone, and a process is given two seconds to go, as a kill may still be in flight. Prints
+    ``no pid`` if *pid_file* is missing or empty.
+    """
+    return (
+        f'pid=$(< {pid_file}); [ -n "$pid" ] || {{ echo "no pid"; exit 0; }}; '
+        "for _ in 1 2 3 4 5 6 7 8 9 10; do "
+        'if read -r _ _ state _ < "/proc/$pid/stat" 2> /dev/null && [ "$state" != Z ]; '
+        "then sleep 0.2; else echo gone; exit 0; fi; done; echo running"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Core SandboxInterface contract
 # ---------------------------------------------------------------------------
@@ -125,12 +140,15 @@ async def test_run_command_timeout_kills_command(sandbox):
 async def test_run_command_timeout_kills_children_that_outlive_sigterm(sandbox):
     """A child that ignores SIGTERM neither delays the result nor outlives the timeout."""
     result, elapsed = await _timed(
-        sandbox.run_command("(trap '' TERM; sleep 100); echo after", timeout=3)
+        sandbox.run_command(
+            "(trap '' TERM; sleep 100 & echo $! > /tmp/stubborn.pid; wait); echo after",
+            timeout=3,
+        )
     )
     assert result.exit_code == 124
     assert elapsed < 20
-    left = await sandbox.run_command("pgrep -f 'sleep 100' || echo none")
-    assert left.stdout.strip() == "none"
+    left = await sandbox.run_command(_still_running("/tmp/stubborn.pid"))
+    assert left.stdout.strip() == "gone", f"stderr: {left.stderr}"
 
 
 @pytest.mark.timeout(120)
