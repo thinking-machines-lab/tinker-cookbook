@@ -76,19 +76,21 @@ Install the extra:
 uv pip install 'tinker-cookbook[daytona] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
 ```
 
-Example usage (stateful, implements `SandboxInterface`):
+Example usage (single sandbox, implements `SandboxInterface`):
 
 ```python
 from tinker_cookbook.sandbox.daytona_sandbox import DaytonaSandbox
 
-sandbox = await DaytonaSandbox.create()
+sandbox = await DaytonaSandbox.create(timeout=600)
 await sandbox.write_file("/workspace/code.py", "print('hello')")
 result = await sandbox.run_command("python /workspace/code.py", workdir="/workspace")
 print(result.stdout)
 await sandbox.cleanup()
 ```
 
-Example usage (stateless grading, drop-in for `code_rl`):
+As with `ModalSandbox`, each `run_command` runs in a fresh `bash -lc`, so the working directory and shell variables do not carry over between calls, while files and background processes last as long as the sandbox. The sandbox is ephemeral and lives at most `timeout` seconds: it never stops for being idle, and Daytona deletes it when that time is up if `cleanup()` has not. Sandboxes are labelled `created-by=tinker-cookbook`.
+
+Example usage (stateless grading in a fresh sandbox per call, drop-in for `code_rl`):
 
 ```python
 from tinker_cookbook.sandbox.daytona_sandbox import run_code_in_daytona
@@ -109,4 +111,8 @@ from tinker_cookbook.sandbox.daytona_sandbox import daytona_sandbox_factory
 # HarborDatasetBuilder / HarborEnvGroupBuilder constructors.
 ```
 
-Optional: set `DAYTONA_SNAPSHOT` to a pre-created snapshot name to skip image builds. Not required — image builds are cached automatically across sandboxes.
+Environment variables:
+
+- `DAYTONA_SNAPSHOT`: Pre-created snapshot to boot when no image is given, e.g. for grading. Not required: Daytona caches image builds, so each image is built once.
+- `DAYTONA_GRADING_CONCURRENCY`: Max grading sandboxes alive at once in `run_code_in_daytona` (default: 32)
+- `DAYTONA_TARGET`: Region to create sandboxes in (default: the organization's default region)

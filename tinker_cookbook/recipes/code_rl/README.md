@@ -65,7 +65,10 @@ python -m tinker_cookbook.recipes.code_rl.train \
     ...
 ```
 
-Optional: set `DAYTONA_SNAPSHOT` to a pre-created Daytona snapshot name to skip image builds entirely. Not required — Daytona caches image builds across sandboxes automatically.
+Each grading call runs in a fresh sandbox from a Python image with numpy, which Daytona builds once and caches. Optional environment variables for Daytona:
+
+- `DAYTONA_GRADING_CONCURRENCY`: Max grading sandboxes alive at once (default: 32)
+- `DAYTONA_SNAPSHOT`: Pre-created snapshot to grade in instead of the default image (it must provide Python and numpy)
 
 ### Example command
 

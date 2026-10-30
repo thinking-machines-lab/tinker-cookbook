@@ -102,7 +102,7 @@ uv pip install 'tinker-cookbook[daytona] @ git+https://github.com/thinking-machi
 export DAYTONA_API_KEY="***"
 ```
 
-Each task's `environment/Dockerfile` is built into a Daytona image via `Image.from_dockerfile(...)`. Daytona caches image builds by content hash, so rebuilding across a sweep of rollouts is automatic. For further cold-start savings, pre-create a named snapshot with `daytona.snapshot.create(...)` and set `DAYTONA_SNAPSHOT`.
+Daytona builds each task's `environment/Dockerfile`, with `environment/` as the build context, and caches the build by content hash: the first sandbox of a task waits for the build, later ones start in seconds. Each sandbox gets the `cpus`, `memory` and `storage` from the `[environment]` table of the task's `task.toml`, and lives at most `sandbox_timeout` seconds. Make sure your organization's limits cover `group_size * groups_per_batch` such sandboxes at once. On Tier 1 and 2 organizations, sandboxes can only reach [essential services](https://www.daytona.io/docs/en/network-limits/) (PyPI, GitHub, Hugging Face, Ubuntu and Debian mirrors, ...), so a task that downloads from other hosts needs a higher tier.
 
 ## Running
 

@@ -62,7 +62,7 @@ modal = [
     "modal>=1.5.1",
 ]
 daytona = [
-    "daytona>=0.168.0",
+    "daytona>=0.225.0,<2",
 ]
 multiplayer-rl = [
     "textarena>=0.7.4",
