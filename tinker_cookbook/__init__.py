@@ -30,6 +30,9 @@ from tinker_cookbook.exceptions import (
     WeightsError,
     WeightsMergeError,
 )
+from tinker_cookbook.extra_headers import install_extra_headers
+
+install_extra_headers()
 
 __all__ = [
     "__version__",
