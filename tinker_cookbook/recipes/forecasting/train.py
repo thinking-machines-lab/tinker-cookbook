@@ -47,6 +47,11 @@ class Config:
     train_epochs: int = 3
     seed: int = 0
 
+    # Optional web search as of each snapshot, via Linkup Rewind (LINKUP_API_KEY optional)
+    search: bool = False
+    search_max_turns: int = 4
+    search_num_results: int = 5
+
     # RL
     group_size: int = 32
     groups_per_batch: int = 16
@@ -127,7 +132,7 @@ async def cli_main(cfg: Config) -> None:
     )
     model_name = cfg.model_name.lower().replace("/", "-")
     run_name = (
-        f"prophet-arena-{model_name}-bs{cfg.groups_per_batch}-"
+        f"prophet-arena-{'search-' if cfg.search else ''}{model_name}-bs{cfg.groups_per_batch}-"
         f"gs{cfg.group_size}-lr{cfg.learning_rate}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     )
     log_path = cfg.log_path or cli_utils.runs_path("prophet_arena_qwen_rl", run_name)
@@ -146,6 +151,9 @@ async def cli_main(cfg: Config) -> None:
         max_train_questions=cfg.max_train_questions,
         max_validation_questions=cfg.max_validation_questions,
         seed=cfg.seed,
+        search=cfg.search,
+        search_max_turns=cfg.search_max_turns,
+        search_num_results=cfg.search_num_results,
     )
     validation_dataset = await _validation_dataset(dataset_builder)
     train_config = train.Config(
