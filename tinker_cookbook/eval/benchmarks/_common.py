@@ -324,24 +324,42 @@ class SandboxMixin:
 
 
 def extract_boxed(text: str) -> str | None:
-    r"""Extract content from ``\boxed{...}`` handling nested braces.
+    r"""Extract content from the last ``\boxed{...}`` handling nested braces.
+
+    When a response contains several ``\boxed{}`` spans -- e.g. a model boxes an
+    intermediate result, or a self-corrected value, before its final answer --
+    the last one is the answer. This matches the convention used by
+    ``recipes.math_rl.math_grading.extract_boxed`` and by the other extractors
+    in this module, which all take the last match.
+
+    Nested spans resolve to the outermost: ``\boxed{\boxed{3}}`` yields
+    ``\boxed{3}``. An unclosed span is skipped, so a well-formed earlier span is
+    still found.
 
     Returns:
-        The content inside the outermost ``\boxed{}``, or ``None`` if not found.
+        The content inside the last closed ``\boxed{}``, or ``None`` if there is none.
     """
-    idx = text.find("\\boxed{")
-    if idx == -1:
-        return None
-    start = idx + len("\\boxed{")
-    depth = 1
-    i = start
-    while i < len(text) and depth > 0:
-        if text[i] == "{":
-            depth += 1
-        elif text[i] == "}":
-            depth -= 1
-        i += 1
-    return text[start : i - 1] if depth == 0 else None
+    marker = "\\boxed{"
+    result: str | None = None
+    idx = text.find(marker)
+    while idx != -1:
+        start = idx + len(marker)
+        depth = 1
+        i = start
+        while i < len(text) and depth > 0:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            # Closed span: record it and resume past it so nesting keeps the outermost.
+            result = text[start : i - 1]
+            idx = text.find(marker, i)
+        else:
+            # Unclosed span: resume just inside it, in case a later span is well-formed.
+            idx = text.find(marker, start)
+    return result
 
 
 def extract_number(text: str) -> str:
