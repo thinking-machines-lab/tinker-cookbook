@@ -88,7 +88,7 @@ print(result.stdout)
 await sandbox.cleanup()
 ```
 
-As with `ModalSandbox`, each `run_command` runs in a fresh `bash -lc`, so the working directory and shell variables do not carry over between calls, while files and background processes last as long as the sandbox. The sandbox is ephemeral and lives at most `timeout` seconds: it never stops for being idle, and Daytona deletes it when that time is up if `cleanup()` has not. Sandboxes are labelled `created-by=tinker-cookbook`.
+As with `ModalSandbox`, each `run_command` runs in a fresh `bash -lc`, so the working directory and shell variables do not carry over between calls, while files and background processes last as long as the sandbox. A call returns once its command exits, even if a background process it started (e.g. a server) is still running; what that process prints afterwards is dropped, so redirect it to a file to read it later. The sandbox is ephemeral and lives at most `timeout` seconds: it never stops for being idle, and Daytona deletes it when that time is up if `cleanup()` has not. Sandboxes are labelled `created-by=tinker-cookbook`.
 
 Example usage (stateless grading in a fresh sandbox per call, drop-in for `code_rl`):
 

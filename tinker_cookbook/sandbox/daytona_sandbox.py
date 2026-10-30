@@ -98,27 +98,49 @@ _CLIENT_TIMEOUT_SLACK_SECONDS = 30
 _REQUEST_TIMEOUT_SECONDS = 30
 _MAX_POLL_INTERVAL_SECONDS = 1.0
 
-# What each run_command executes, via ``bash -c``, in a Daytona session of its own:
+# What each run_command executes, via ``bash -c``, in a Daytona session of its own
+# ($1: timeout in seconds, $2: the command, $3: max bytes per stream, $4: _CAPTURE_SCRIPT):
 # - a fresh login shell per call, as ModalSandbox runs ``bash -lc``, so the working
 #   directory, variables and ``exit`` never carry over between calls. Its stdin is
 #   empty, so a command that prompts for input fails instead of waiting for it;
 # - ``timeout`` stops the command after $1 seconds and runs it in a process group of
 #   its own, so background processes it starts outlive the session. On a timeout
 #   the whole group is killed, including children that outlive SIGTERM;
-# - each stream keeps its first $3 bytes and drains the rest, so a command with
-#   runaway output neither blocks nor floods the sandbox. The command gets the pipes
-#   only as stdout and stderr: a background process that redirects both elsewhere
-#   then holds no pipe open, and the call returns without waiting for it.
+# - the call ends when the command exits, not when its output closes: a background
+#   process started by the command can hold the output open for as long as it runs
+#   (``cd /app && server > log &`` runs ``cd`` and the server in a background bash
+#   whose output is the command's). If the output is still open once the command has
+#   exited, the script waits up to a second for output on its way, then returns.
 _RUN_SCRIPT = (
-    'exec {out}> >(head -c "$3"; cat > /dev/null) {err}> >(head -c "$3" >&2; cat > /dev/null)\n'
+    'd=$(mktemp -d "${TMPDIR:-/tmp}/.run_command.XXXXXX") || exit 1\n'
     "start=$SECONDS\n"
-    'timeout -k 5 "$1" bash -lc "$2" < /dev/null >&"$out" 2>&"$err" {out}>&- {err}>&- &\n'
+    'timeout -k 5 "$1" bash -c "$4" capture "$d" "$3" "$2" < /dev/null > /dev/null 2>&1 &\n'
     "pid=$!\n"
     'wait "$pid"; code=$?\n'
-    'if [ "$code" -eq 124 ] && [ $((SECONDS - start)) -ge "$1" ]; then\n'
+    'if [ $((SECONDS - start)) -ge "$1" ] && { [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; }; then\n'
     '  kill -KILL -- "-$pid" 2> /dev/null\n'
+    "else\n"
+    "  for _ in 1 2 3 4 5 6 7 8 9 10; do\n"
+    '    [ -e "$d/out.done" ] && [ -e "$d/err.done" ] && break\n'
+    "    sleep 0.1\n"
+    "  done\n"
     "fi\n"
+    'cat "$d/out" 2> /dev/null\n'
+    'cat "$d/err" >&2 2> /dev/null\n'
+    'rm -rf "$d"\n'
     'exit "$code"'
+)
+
+# Runs the command under ``timeout``, in the command's process group ($1: directory for
+# the captured output, $2: max bytes per stream, $3: the command). Each stream goes to a
+# capture process that writes its first $2 bytes to a file as they arrive (``dd bs=1``,
+# so nothing waits in a buffer), marks the file done when the stream ends, and drains
+# the rest. Being in the command's group, the capture processes keep draining output of
+# background processes after the call has returned, and die with the group on a timeout.
+_CAPTURE_SCRIPT = (
+    'exec {o}> >(dd bs=1 count="$2" of="$1/out" 2> /dev/null; : > "$1/out.done"; cat > /dev/null)\n'
+    'exec {e}> >(exec {o}>&-; dd bs=1 count="$2" of="$1/err" 2> /dev/null; : > "$1/err.done"; cat > /dev/null)\n'
+    'bash -lc "$3" < /dev/null >&"$o" 2>&"$e" {o}>&- {e}>&-'
 )
 
 _BUILDING_STATES = frozenset({SandboxState.PENDING_BUILD, SandboxState.BUILDING_SNAPSHOT})
@@ -248,7 +270,7 @@ class DaytonaSandbox(SandboxInterface):
     The filesystem and background processes persist for the sandbox's lifetime, while
     each ``run_command`` runs in a fresh ``bash -lc``, as with ``ModalSandbox``: shell
     state such as the working directory or exported variables does not carry over
-    between calls. Images need ``bash`` and coreutils (``timeout``, ``head``).
+    between calls. Images need ``bash`` and coreutils (``timeout``, ``dd``, ``mktemp``).
 
     For stateless per-call grading, prefer :func:`run_code_in_daytona`.
 
@@ -426,12 +448,23 @@ class DaytonaSandbox(SandboxInterface):
 
         Each call runs in a fresh login shell with an empty stdin, in *workdir* or else the
         image's WORKDIR. A command still running after *timeout* seconds is killed, along
-        with what it started in its process group, and exits with 124.
+        with what it started in its process group, and exits with 124. The call returns
+        once the command exits: background processes it started keep running, and what
+        they print after that is dropped.
         """
         self._raise_if_cleaned_up()
         cap = max_output_bytes if max_output_bytes is not None else self._max_stream_output_bytes
         script = shlex.join(
-            ["bash", "-c", _RUN_SCRIPT, "run_command", str(timeout), command, str(cap)]
+            [
+                "bash",
+                "-c",
+                _RUN_SCRIPT,
+                "run_command",
+                str(timeout),
+                command,
+                str(cap),
+                _CAPTURE_SCRIPT,
+            ]
         )
         if workdir is not None:
             script = f"cd {shlex.quote(workdir)} && {script}"

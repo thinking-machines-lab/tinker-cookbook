@@ -181,6 +181,25 @@ async def test_background_process_survives_the_call(sandbox):
 
 
 @pytest.mark.timeout(120)
+async def test_background_job_holding_the_output_does_not_delay_the_call(sandbox):
+    """The call returns once the command exits, though a background job keeps its output open.
+
+    ``cd /tmp && sleep 300 > /dev/null 2>&1 &`` runs ``cd`` and ``sleep`` in a background
+    bash whose output is the command's, and that bash lives as long as ``sleep``.
+    """
+    result, elapsed = await _timed(
+        sandbox.run_command(
+            "cd /tmp && sleep 300 > /dev/null 2>&1 & echo $! > /tmp/holder.pid\necho started",
+            timeout=30,
+        )
+    )
+    assert (result.exit_code, result.stdout.strip()) == (0, "started"), f"stderr: {result.stderr}"
+    assert elapsed < 10, f"run_command waited {elapsed:.1f}s for the background job"
+    left = await sandbox.run_command(_still_running("/tmp/holder.pid"))
+    assert left.stdout.strip() == "running"
+
+
+@pytest.mark.timeout(120)
 async def test_filesystem_round_trip(sandbox):
     """write_file then read_file returns the same content, creating parent directories."""
     content = "hello from tinker-cookbook\n"
