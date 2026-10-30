@@ -440,8 +440,9 @@ def extract_mcq_answer(text: str, valid_letters: str = "ABCD") -> str:
         if re.fullmatch(pattern, boxed_upper):
             return boxed_upper
 
+    # The letter must end a word, so "The answer is definitely B" does not read as D.
     answer_match = re.search(
-        rf"(?:answer is|answer:)\s*\(?([{valid_letters}])\)?",
+        rf"(?:answer is|answer:)\s*\(?([{valid_letters}])\b\)?",
         text,
         re.IGNORECASE,
     )
