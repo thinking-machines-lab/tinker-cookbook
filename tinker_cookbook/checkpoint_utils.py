@@ -753,9 +753,9 @@ class CheckpointManager:
         deleted so that the last entry in ``checkpoints.jsonl`` always points
         to valid server-side data.
         """
-        # Drain any in-flight periodic save so its record lands in
-        # checkpoints.jsonl *before* the final record.
+        # Pending save records must precede the final record in checkpoints.jsonl.
         await self._resolve_pending_periodic_async()
+        await self._resolve_pending_rolling_async()
         paths = await save_checkpoint_async(
             training_client=self._training_client,
             name="final",

@@ -32,12 +32,27 @@ from tinker_cookbook.supervised.nll_evaluator import SamplerNLLEvaluator
 from tinker_cookbook.supervised.types import SupervisedDatasetBuilder
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
+from tinker_cookbook.utils.cost_estimation import CostTracker, TokenUsage, fetch_model_pricing
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import iteration_dir
 from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_total_steps(max_steps: int | None, n_batches: int, num_epochs: int) -> int:
+    """Total SL steps; the dataset is cycled ``num_epochs`` times and no more."""
+    total_steps = n_batches * num_epochs
+    if max_steps is None:
+        return total_steps
+    if max_steps > total_steps:
+        logger.warning(
+            f"max_steps={max_steps} exceeds num_epochs * len(dataset) = "
+            f"{num_epochs} * {n_batches} = {total_steps}; "
+            f"training will stop after {total_steps} steps."
+        )
+    return min(total_steps, max_steps)
 
 
 @chz.chz
@@ -89,7 +104,9 @@ class Config:
         span_chart_every (int): Write a Gantt-chart HTML every *N* steps
             (0 disables).
         max_steps (int | None): Hard cap on training steps.  ``None`` trains
-            for ``num_epochs * n_batches``.
+            for ``num_epochs * n_batches``.  The dataset is cycled only
+            ``num_epochs`` times, so a larger ``max_steps`` stops early at
+            ``num_epochs * n_batches`` (a warning is logged at startup).
         async_periodic_saves (bool): When ``True``, periodic checkpoint saves
             run as fire-and-forget background tasks instead of blocking the
             training loop.  The checkpoint record is written to
@@ -332,268 +349,286 @@ async def main(config: Config):
     )
     if session_display_name is not None:
         logger.info(f"Tinker session display name: {session_display_name}")
-    service_client = tinker.ServiceClient(
+    with tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata(config.recipe_name),
         display_name=session_display_name,
-    )
+    ) as service_client:
+        user_metadata: dict[str, str] = {}
+        if wandb_link := ml_logger.get_logger_url():
+            user_metadata["wandb_link"] = wandb_link
+        checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
+        model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
 
-    user_metadata: dict[str, str] = {}
-    if wandb_link := ml_logger.get_logger_url():
-        user_metadata["wandb_link"] = wandb_link
-    checkpoint_utils.add_renderer_name_to_user_metadata(user_metadata, config.renderer_name)
-    model_info.warn_if_renderer_not_recommended(config.model_name, config.renderer_name)
-
-    if resume_info:
-        # Resuming interrupted training - load optimizer state for proper continuation
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, resume_info.state_path, config.renderer_name
-        )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
+        if resume_info:
+            # Resuming interrupted training - load optimizer state for proper continuation
+            await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+                service_client, resume_info.state_path, config.renderer_name
             )
-        )
-        logger.info(f"Resumed training from {resume_info.state_path}")
-    elif config.load_checkpoint_path:
-        # Starting fresh from a checkpoint - load weights only (fresh optimizer)
-        await checkpoint_utils.check_renderer_name_for_checkpoint_async(
-            service_client, config.load_checkpoint_path, config.renderer_name
-        )
-        training_client = await service_client.create_training_client_from_state_async(
-            config.load_checkpoint_path, user_metadata=user_metadata
-        )
-        logger.info(f"Loaded weights from {config.load_checkpoint_path}")
-    else:
-        training_client = await service_client.create_lora_training_client_async(
-            base_model=config.model_name,
-            rank=config.lora_rank,
-            user_metadata=user_metadata,
-        )
-
-    checkpoint_mgr = checkpoint_utils.CheckpointManager(
-        training_client=training_client,
-        service_client=service_client,
-        log_path=config.log_path,
-        save_every=config.save_every,
-        save_every_tokens=config.save_every_tokens,
-        save_every_seconds=config.save_every_seconds,
-        ttl_seconds=config.ttl_seconds,
-        rolling_save_every=config.rolling_save_every,
-        rolling_ttl_seconds=config.rolling_ttl_seconds,
-        store=store,
-        async_periodic_saves=config.async_periodic_saves,
-    )
-    checkpoint_mgr.restore_last_saved_tokens(resumed_elapsed_tokens)
-    elapsed_tokens: int = resumed_elapsed_tokens
-
-    dataset, maybe_test_dataset = config.dataset_builder()
-    n_batches = len(dataset)
-    total_steps = n_batches * config.num_epochs
-    if config.max_steps is not None:
-        total_steps = min(total_steps, config.max_steps)
-    progress_denominator = total_steps if total_steps > 0 else 1
-    tokenizer = get_tokenizer(config.model_name)
-
-    evaluators = [evaluator() for evaluator in config.evaluator_builders]
-    if maybe_test_dataset is not None:
-        # Pass the tokenizer so the evaluator also reports test/bpb (bits per
-        # byte), a tokenizer-independent NLL that is comparable across models.
-        evaluators.append(SamplerNLLEvaluator.from_dataset(maybe_test_dataset, tokenizer=tokenizer))
-
-    infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
-    logger.info(
-        f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
-    )
-
-    @trace.scope
-    async def submit_batch(epoch_idx: int, batch_idx: int) -> SubmittedBatch:
-        step = epoch_idx * n_batches + batch_idx
-        trace.update_scope_context({"step": step})
-
-        metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
-        metrics["progress"] = step / progress_denominator
-
-        learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
-            lr_schedule=config.lr_schedule,
-            step=step,
-            total_steps=total_steps,
-        )
-        metrics["learning_rate"] = learning_rate
-
-        adam_params = tinker.AdamParams(
-            learning_rate=learning_rate,
-            beta1=config.adam_beta1,
-            beta2=config.adam_beta2,
-            eps=config.adam_eps,
-        )
-
-        async with trace.scope_span("get_batch"):
-            data = dataset.get_batch(batch_idx)
-        if data:
-            logger.info(colorize_example(data[0], tokenizer))
-
-        # Trigger evaluations BEFORE submitting training operations so they snapshot pre-step weights
-        eval_metrics = None
-        if evaluators and config.eval_every > 0 and step % config.eval_every == 0:
-            async with trace.scope_span("evals"):
-                eval_metrics = await run_evals(evaluators, training_client, step)
-
-        infrequent_eval_metrics = None
-        if (
-            infrequent_evaluators
-            and config.infrequent_eval_every > 0
-            and step % config.infrequent_eval_every == 0
-        ):
-            async with trace.scope_span("infrequent_evals"):
-                infrequent_eval_metrics = await run_evals(
-                    infrequent_evaluators, training_client, step
+            training_client = (
+                await service_client.create_training_client_from_state_with_optimizer_async(
+                    resume_info.state_path, user_metadata=user_metadata
                 )
+            )
+            logger.info(f"Resumed training from {resume_info.state_path}")
+        elif config.load_checkpoint_path:
+            # Starting fresh from a checkpoint - load weights only (fresh optimizer)
+            await checkpoint_utils.check_renderer_name_for_checkpoint_async(
+                service_client, config.load_checkpoint_path, config.renderer_name
+            )
+            training_client = await service_client.create_training_client_from_state_async(
+                config.load_checkpoint_path, user_metadata=user_metadata
+            )
+            logger.info(f"Loaded weights from {config.load_checkpoint_path}")
+        else:
+            training_client = await service_client.create_lora_training_client_async(
+                base_model=config.model_name,
+                rank=config.lora_rank,
+                user_metadata=user_metadata,
+            )
 
-        fwd_bwd_future = await training_client.forward_backward_async(data, loss_fn="cross_entropy")
-        optim_step_future = await training_client.optim_step_async(adam_params)
-
-        return SubmittedBatch(
-            fwd_bwd_future=fwd_bwd_future,
-            optim_step_future=optim_step_future,
-            metrics=metrics,
-            data=data,
-            step=step,
-            epoch_idx=epoch_idx,
-            batch_idx=batch_idx,
-            eval_metrics=eval_metrics,
-            infrequent_eval_metrics=infrequent_eval_metrics,
-            num_tokens=sum(datum.model_input.length for datum in data),
+        checkpoint_mgr = checkpoint_utils.CheckpointManager(
+            training_client=training_client,
+            service_client=service_client,
+            log_path=config.log_path,
+            save_every=config.save_every,
+            save_every_tokens=config.save_every_tokens,
+            save_every_seconds=config.save_every_seconds,
+            ttl_seconds=config.ttl_seconds,
+            rolling_save_every=config.rolling_save_every,
+            rolling_ttl_seconds=config.rolling_ttl_seconds,
+            store=store,
+            async_periodic_saves=config.async_periodic_saves,
+        )
+        checkpoint_mgr.restore_last_saved_tokens(resumed_elapsed_tokens)
+        elapsed_tokens: int = resumed_elapsed_tokens
+        cost_tracker = CostTracker(
+            fetch_model_pricing(config.model_name),
+            cumulative=TokenUsage(trained=resumed_elapsed_tokens),
         )
 
-    @trace.scope
-    async def finish_batch(submitted: SubmittedBatch):
-        nonlocal elapsed_tokens
-        trace.update_scope_context({"step": submitted.step})
+        dataset, maybe_test_dataset = config.dataset_builder()
+        n_batches = len(dataset)
+        if resume_info and store is not None:
+            resume_step = start_epoch * n_batches + start_batch
+            dropped = store.truncate_metrics(resume_step)
+            if dropped:
+                logger.info(
+                    f"Resuming at step {resume_step}: dropped {dropped} metrics rows "
+                    f"with step >= {resume_step}"
+                )
+        total_steps = _resolve_total_steps(config.max_steps, n_batches, config.num_epochs)
+        progress_denominator = total_steps if total_steps > 0 else 1
+        tokenizer = get_tokenizer(config.model_name)
 
-        metrics = submitted.metrics
-        metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
+        evaluators = [evaluator() for evaluator in config.evaluator_builders]
+        if maybe_test_dataset is not None:
+            # Pass the tokenizer so the evaluator also reports test/bpb (bits per
+            # byte), a tokenizer-independent NLL that is comparable across models.
+            evaluators.append(
+                SamplerNLLEvaluator.from_dataset(maybe_test_dataset, tokenizer=tokenizer)
+            )
 
-        elapsed_tokens += submitted.num_tokens
-        await checkpoint_mgr.maybe_save_async(
-            step=submitted.step,
-            loop_state={
-                "epoch": submitted.epoch_idx,
-                "batch": submitted.batch_idx,
-                "elapsed_tokens": elapsed_tokens,
-            },
-            elapsed_tokens=elapsed_tokens,
+        infrequent_evaluators = [evaluator() for evaluator in config.infrequent_evaluator_builders]
+        logger.info(
+            f"Training for {n_batches} batches x {config.num_epochs} epochs = {n_batches * config.num_epochs} steps"
         )
 
-        async with trace.scope_span("step"):
-            fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
-            optim_step_result = await submitted.optim_step_future.result_async()
-
-        if optim_step_result.metrics:
-            metrics.update(optim_step_result.metrics)
-
-        logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
-        weights = [datum.loss_fn_inputs["weights"] for datum in submitted.data]
-        train_nll = compute_mean_nll(logprobs, weights)
-
-        metrics.update(
-            num_sequences=len(submitted.data),
-            num_tokens=submitted.num_tokens,
-            num_loss_tokens=sum(
-                sum(datum.loss_fn_inputs["weights"].data) for datum in submitted.data
-            ),
-            train_mean_nll=train_nll,
-        )
-        # Bits per byte: a tokenizer-independent counterpart to train_mean_nll,
-        # letting NLL be compared across models with different tokenizers.
-        if submitted.data and "target_tokens" in submitted.data[0].loss_fn_inputs:
-            target_tokens = [datum.loss_fn_inputs["target_tokens"] for datum in submitted.data]
-            metrics["train_mean_bpb"] = compute_bpb(logprobs, weights, target_tokens, tokenizer)
-        # Merge evaluation metrics gathered before the training step was submitted
-        if submitted.eval_metrics is not None:
-            metrics.update(submitted.eval_metrics)
-
-        if submitted.infrequent_eval_metrics is not None:
-            metrics.update(submitted.infrequent_eval_metrics)
-
-    log_path = Path(config.log_path)
-
-    async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
-        """Finish a batch, merge timing metrics, and log."""
-        await finish_batch(submitted)
-        submitted.metrics.update(window.get_timing_metrics())
-        window.save_timing(submitted.step, store=store)
-        if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
-            iter_dir = iteration_dir(log_path, submitted.step)
-            if iter_dir is not None:
-                iter_dir.mkdir(parents=True, exist_ok=True)
-                trace.save_gantt_chart_html(window, submitted.step, iter_dir / "timing_gantt.html")
-        ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
-
-    assert config.submit_ahead >= 0, f"submit_ahead must be >= 0, got {config.submit_ahead}"
-
-    # Each step gets its own IterationWindow. Since async is cooperative
-    # (single-threaded), we swap the active window in trace._iteration_window
-    # around each phase so @scope spans land in the correct window.
-    pending: deque[tuple[SubmittedBatch, trace.IterationWindow, float]] = deque()
-    max_pending = 1 + config.submit_ahead
-
-    def _activate_window(window: trace.IterationWindow):
-        return trace._iteration_window.set(window)
-
-    def _deactivate_window(token):
-        trace._iteration_window.reset(token)
-
-    async def drain_oldest() -> None:
-        oldest, window, t_start = pending.popleft()
-        token = _activate_window(window)
-        try:
-            await finish_and_log(oldest, window)
-        finally:
-            window._total_time = time.perf_counter() - t_start
-            _deactivate_window(token)
-
-    reached_max_steps = False
-    for epoch_idx in range(start_epoch, config.num_epochs):
-        logger.info(f"Starting epoch {epoch_idx}")
-        dataset.set_epoch(seed=epoch_idx)
-
-        start_batch_idx = start_batch if epoch_idx == start_epoch else 0
-        for batch_idx in range(start_batch_idx, n_batches):
+        @trace.scope
+        async def submit_batch(epoch_idx: int, batch_idx: int) -> SubmittedBatch:
             step = epoch_idx * n_batches + batch_idx
-            if config.max_steps is not None and step >= config.max_steps:
-                reached_max_steps = True
-                break
-            window = trace.IterationWindow()
-            t_start = time.perf_counter()
+            trace.update_scope_context({"step": step})
+
+            metrics: dict[str, int | float | str] = {"epoch": epoch_idx}
+            metrics["progress"] = step / progress_denominator
+
+            learning_rate = config.learning_rate * compute_schedule_lr_multiplier(
+                lr_schedule=config.lr_schedule,
+                step=step,
+                total_steps=total_steps,
+            )
+            metrics["learning_rate"] = learning_rate
+
+            adam_params = tinker.AdamParams(
+                learning_rate=learning_rate,
+                beta1=config.adam_beta1,
+                beta2=config.adam_beta2,
+                eps=config.adam_eps,
+            )
+
+            async with trace.scope_span("get_batch"):
+                data = dataset.get_batch(batch_idx)
+            if data:
+                logger.info(colorize_example(data[0], tokenizer))
+
+            # Trigger evaluations BEFORE submitting training operations so they snapshot pre-step weights
+            eval_metrics = None
+            if evaluators and config.eval_every > 0 and step % config.eval_every == 0:
+                async with trace.scope_span("evals"):
+                    eval_metrics = await run_evals(evaluators, training_client, step)
+
+            infrequent_eval_metrics = None
+            if (
+                infrequent_evaluators
+                and config.infrequent_eval_every > 0
+                and step % config.infrequent_eval_every == 0
+            ):
+                async with trace.scope_span("infrequent_evals"):
+                    infrequent_eval_metrics = await run_evals(
+                        infrequent_evaluators, training_client, step
+                    )
+
+            fwd_bwd_future = await training_client.forward_backward_async(
+                data, loss_fn="cross_entropy"
+            )
+            optim_step_future = await training_client.optim_step_async(adam_params)
+
+            return SubmittedBatch(
+                fwd_bwd_future=fwd_bwd_future,
+                optim_step_future=optim_step_future,
+                metrics=metrics,
+                data=data,
+                step=step,
+                epoch_idx=epoch_idx,
+                batch_idx=batch_idx,
+                eval_metrics=eval_metrics,
+                infrequent_eval_metrics=infrequent_eval_metrics,
+                num_tokens=sum(datum.model_input.length for datum in data),
+            )
+
+        @trace.scope
+        async def finish_batch(submitted: SubmittedBatch):
+            nonlocal elapsed_tokens
+            trace.update_scope_context({"step": submitted.step})
+
+            metrics = submitted.metrics
+            metrics["progress"] = min((submitted.step + 1) / progress_denominator, 1.0)
+
+            elapsed_tokens += submitted.num_tokens
+            await checkpoint_mgr.maybe_save_async(
+                step=submitted.step,
+                loop_state={
+                    "epoch": submitted.epoch_idx,
+                    "batch": submitted.batch_idx,
+                    "elapsed_tokens": elapsed_tokens,
+                },
+                elapsed_tokens=elapsed_tokens,
+            )
+
+            async with trace.scope_span("step"):
+                fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
+                optim_step_result = await submitted.optim_step_future.result_async()
+
+            if optim_step_result.metrics:
+                metrics.update(optim_step_result.metrics)
+
+            logprobs = [x["logprobs"] for x in fwd_bwd_result.loss_fn_outputs]
+            weights = [datum.loss_fn_inputs["weights"] for datum in submitted.data]
+            train_nll = compute_mean_nll(logprobs, weights)
+
+            metrics.update(
+                num_sequences=len(submitted.data),
+                num_tokens=submitted.num_tokens,
+                num_loss_tokens=sum(
+                    sum(datum.loss_fn_inputs["weights"].data) for datum in submitted.data
+                ),
+                train_mean_nll=train_nll,
+            )
+            # Every token in the batch goes through forward_backward, so the
+            # trained-token count is num_tokens; cumulative matches elapsed_tokens.
+            metrics.update(cost_tracker.record_step(TokenUsage(trained=submitted.num_tokens)))
+            # Bits per byte: a tokenizer-independent counterpart to train_mean_nll,
+            # letting NLL be compared across models with different tokenizers.
+            if submitted.data and "target_tokens" in submitted.data[0].loss_fn_inputs:
+                target_tokens = [datum.loss_fn_inputs["target_tokens"] for datum in submitted.data]
+                metrics["train_mean_bpb"] = compute_bpb(logprobs, weights, target_tokens, tokenizer)
+            # Merge evaluation metrics gathered before the training step was submitted
+            if submitted.eval_metrics is not None:
+                metrics.update(submitted.eval_metrics)
+
+            if submitted.infrequent_eval_metrics is not None:
+                metrics.update(submitted.infrequent_eval_metrics)
+
+        log_path = Path(config.log_path)
+
+        async def finish_and_log(submitted: SubmittedBatch, window: trace.IterationWindow) -> None:
+            """Finish a batch, merge timing metrics, and log."""
+            await finish_batch(submitted)
+            submitted.metrics.update(window.get_timing_metrics())
+            window.save_timing(submitted.step, store=store)
+            if config.span_chart_every > 0 and submitted.step % config.span_chart_every == 0:
+                iter_dir = iteration_dir(log_path, submitted.step)
+                if iter_dir is not None:
+                    iter_dir.mkdir(parents=True, exist_ok=True)
+                    trace.save_gantt_chart_html(
+                        window, submitted.step, iter_dir / "timing_gantt.html"
+                    )
+            ml_logger.log_metrics(metrics=submitted.metrics, step=submitted.step)
+
+        assert config.submit_ahead >= 0, f"submit_ahead must be >= 0, got {config.submit_ahead}"
+
+        # Each step gets its own IterationWindow. Since async is cooperative
+        # (single-threaded), we swap the active window in trace._iteration_window
+        # around each phase so @scope spans land in the correct window.
+        pending: deque[tuple[SubmittedBatch, trace.IterationWindow, float]] = deque()
+        max_pending = 1 + config.submit_ahead
+
+        def _activate_window(window: trace.IterationWindow):
+            return trace._iteration_window.set(window)
+
+        def _deactivate_window(token):
+            trace._iteration_window.reset(token)
+
+        async def drain_oldest() -> None:
+            oldest, window, t_start = pending.popleft()
             token = _activate_window(window)
             try:
-                submitted_batch = await submit_batch(epoch_idx, batch_idx)
+                await finish_and_log(oldest, window)
             finally:
+                window._total_time = time.perf_counter() - t_start
                 _deactivate_window(token)
-            pending.append((submitted_batch, window, t_start))
-            if len(pending) >= max_pending:
-                await drain_oldest()
-        if reached_max_steps:
-            break
 
-    while pending:
-        await drain_oldest()
+        reached_max_steps = False
+        for epoch_idx in range(start_epoch, config.num_epochs):
+            logger.info(f"Starting epoch {epoch_idx}")
+            dataset.set_epoch(seed=epoch_idx)
 
-    did_train = start_epoch < config.num_epochs and (
-        config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
-    )
-    if did_train:
-        await checkpoint_mgr.save_final_async(
-            loop_state={
-                "epoch": config.num_epochs,
-                "batch": 0,
-                "elapsed_tokens": elapsed_tokens,
-            },
+            start_batch_idx = start_batch if epoch_idx == start_epoch else 0
+            for batch_idx in range(start_batch_idx, n_batches):
+                step = epoch_idx * n_batches + batch_idx
+                if config.max_steps is not None and step >= config.max_steps:
+                    reached_max_steps = True
+                    break
+                window = trace.IterationWindow()
+                t_start = time.perf_counter()
+                token = _activate_window(window)
+                try:
+                    submitted_batch = await submit_batch(epoch_idx, batch_idx)
+                finally:
+                    _deactivate_window(token)
+                pending.append((submitted_batch, window, t_start))
+                if len(pending) >= max_pending:
+                    await drain_oldest()
+            if reached_max_steps:
+                break
+
+        while pending:
+            await drain_oldest()
+
+        did_train = start_epoch < config.num_epochs and (
+            config.max_steps is None or start_epoch * n_batches + start_batch < config.max_steps
         )
-    else:
-        logger.info("Training was already complete; nothing to do")
-        await checkpoint_mgr.finalize_async()
+        if did_train:
+            await checkpoint_mgr.save_final_async(
+                loop_state={
+                    "epoch": config.num_epochs,
+                    "batch": 0,
+                    "elapsed_tokens": elapsed_tokens,
+                },
+            )
+        else:
+            logger.info("Training was already complete; nothing to do")
+            await checkpoint_mgr.finalize_async()
 
     ml_logger.close()
     logger.info("Training completed successfully")

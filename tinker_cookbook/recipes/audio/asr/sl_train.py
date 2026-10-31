@@ -40,6 +40,7 @@ from tinker_cookbook.recipes.audio.asr.env import (
 )
 from tinker_cookbook.supervised import train
 from tinker_cookbook.utils.lr_scheduling import LRSchedule
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 
 @chz.chz
@@ -76,6 +77,9 @@ class Config:
     # Logging
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set, otherwise a
+    # default name based on the recipe is used.
+    session_name: str | None = None
 
 
 def cli_main(cfg: Config) -> None:
@@ -119,6 +123,8 @@ def cli_main(cfg: Config) -> None:
         eval_every=cfg.eval_every,
         wandb_project=cfg.wandb_project,
         wandb_name=cfg.wandb_name,
+        session_name=cfg.session_name
+        or default_cookbook_session_name("audio-asr-sl", wandb_name=cfg.wandb_name),
     )
     asyncio.run(train.main(train_config))
 

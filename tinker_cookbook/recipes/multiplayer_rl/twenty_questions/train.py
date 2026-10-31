@@ -23,6 +23,9 @@ class CLIConfig:
     save_every: int = 20
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     log_path: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
@@ -67,6 +70,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
         save_every=cli_config.save_every,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         max_steps=cli_config.max_steps,
     )
 

@@ -627,6 +627,48 @@ async def test_async_periodic_save_final_ordering():
 
 
 @pytest.mark.asyncio
+async def test_final_checkpoint_follows_pending_rolling_save():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mock_training_client = MagicMock()
+        mock_service_client = MagicMock()
+        mock_rest_client = MagicMock()
+        mock_service_client.create_rest_client.return_value = mock_rest_client
+        mock_rest_client.delete_checkpoint_from_tinker_path_async = AsyncMock()
+
+        async def save_state(name: str, ttl_seconds: int | None = None) -> MagicMock:
+            future = MagicMock()
+            future.result_async = AsyncMock(
+                return_value=MagicMock(path=f"tinker://run/state/{name}")
+            )
+            return future
+
+        mock_training_client.save_state_async = AsyncMock(side_effect=save_state)
+        mock_training_client.save_weights_for_sampler_async = _make_save_state_mock(
+            ["tinker://run/sampler/final"]
+        )
+        mgr = CheckpointManager(
+            training_client=mock_training_client,
+            service_client=mock_service_client,
+            log_path=tmpdir,
+            rolling_save_every=1,
+        )
+
+        await mgr.maybe_save_async(step=1, loop_state={"batch": 1})
+        assert mgr._pending_rolling_task is not None
+        await mgr.save_final_async(loop_state={"epoch": 1, "batch": 0})
+
+        checkpoints = load_checkpoints_file(tmpdir)
+        assert [checkpoint.name for checkpoint in checkpoints] == ["000001", "final"]
+        last = get_last_checkpoint(tmpdir)
+        assert last is not None
+        assert last.state_path == "tinker://run/state/final"
+        mock_rest_client.delete_checkpoint_from_tinker_path_async.assert_called_once_with(
+            "tinker://run/state/000001"
+        )
+        assert mgr._pending_rolling_task is None
+
+
+@pytest.mark.asyncio
 async def test_async_periodic_save_failure_is_swallowed():
     """A failed async periodic save should be logged but not raise."""
     mock_training_client = MagicMock()

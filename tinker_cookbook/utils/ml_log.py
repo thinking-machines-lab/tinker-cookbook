@@ -118,6 +118,22 @@ class Logger(ABC):
         """
         pass
 
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Record the latest value of each metric outside the step history (optional).
+
+        For values that move between training steps, such as running totals:
+        each call replaces the previous value rather than adding a row at a
+        step, so it can be made any number of times between steps without
+        disturbing the step sequence (W&B, for one, only publishes a step
+        once a later step is logged, and never accepts a step twice). Loggers
+        without such a channel leave this a no-op, so callers must not rely on
+        it for anything that has to be recorded.
+
+        Args:
+            metrics (dict[str, Any]): Metric name-to-value mapping.
+        """
+        pass
+
     def log_long_text(self, key: str, text: str) -> None:
         """Log long text content (optional to implement).
 
@@ -205,6 +221,10 @@ class JsonLogger(Logger):
         self._store.write_metrics(metrics, step)
         logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
 
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Append the values as a row without a step."""
+        self._store.write_metrics(metrics)
+
 
 class PrettyPrintLogger(Logger):
     """Logger that displays metrics as a Rich-formatted table in the console.
@@ -228,6 +248,10 @@ class PrettyPrintLogger(Logger):
     # Metric suffixes to hide from console output. These are still logged to
     # metrics.jsonl and other sinks — only the pretty-print table is filtered.
     _HIDDEN_SUFFIXES = (":total", ":count")
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Display the values in the console."""
+        self.log_metrics(metrics)
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
@@ -341,6 +365,11 @@ class WandbLogger(Logger):
             wandb.log(metrics, step=step)
             logger.info("Logging to: %s", self.run.url)
 
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Update the run summary; published at once, outside the step history."""
+        if self.run and wandb is not None:
+            self.run.summary.update(metrics)
+
     def close(self) -> None:
         """Close wandb run."""
         if self.run and wandb is not None:
@@ -410,6 +439,11 @@ class NeptuneLogger(Logger):
             assert step is not None, "step is required to be int or float for Neptune logging."
             self.run.log_metrics(metrics, step=step)
             logger.info("Logging to: %s", self.run.get_run_url())
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Set the values as run attributes, outside the step series."""
+        if self.run and NeptuneRun is not None:
+            self.run.log_configs(metrics)
 
     def close(self) -> None:
         """Close neptune run."""
@@ -495,6 +529,11 @@ class MultiplexLogger(Logger):
         """Forward log_metrics to all child loggers."""
         for logger in self.loggers:
             logger.log_metrics(metrics, step)
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Forward summary values to all child loggers."""
+        for logger in self.loggers:
+            logger.log_summary(metrics)
 
     def log_long_text(self, key: str, text: str) -> None:
         """Forward log_long_text to all child loggers."""

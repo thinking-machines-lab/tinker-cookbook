@@ -47,6 +47,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     compute_post_kl: bool = False
 
     # Evals
@@ -68,7 +71,7 @@ class CLIConfig:
 
     # Loss function and configuration.
     # See https://tinker-docs.thinkingmachines.ai/losses
-    loss_fn: LossFnType = "importance_sampling"
+    loss_fn: LossFnType = "stable_reinforce"
     loss_fn_config: dict[str, Any] | None = None
 
     max_steps: int | None = None
@@ -145,6 +148,7 @@ async def cli_main(cli_config: CLIConfig):
         temperature=cli_config.temperature,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         log_path=log_path,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,
@@ -156,6 +160,7 @@ async def cli_main(cli_config: CLIConfig):
         async_config=AsyncConfig(
             max_steps_off_policy=cli_config.max_steps_off_policy,
             groups_per_batch=cli_config.groups_per_batch,
+            loss_fn=cli_config.loss_fn,
         )
         if cli_config.max_steps_off_policy is not None
         else None,

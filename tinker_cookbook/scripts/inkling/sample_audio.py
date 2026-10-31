@@ -107,9 +107,11 @@ def _resolve_audio_input(configured_path: str | None) -> AudioInput:
 def _build_openai_messages(audio: AudioInput) -> list[Message]:
     chat = import_module("tml_renderers.chat")
     audio_base64 = base64.b64encode(audio.path.read_bytes()).decode("ascii")
+    # tml-renderers 0.2.1 and earlier have no from_openai_chat_dicts. There, pass
+    # openai_messages_to_tinker(<these dicts>) to the renderer instead.
     return cast(
         list[Message],
-        chat.OpenAIMessage.from_oss_messages(
+        chat.OpenAIMessage.from_openai_chat_dicts(
             [
                 {
                     "role": "user",

@@ -35,7 +35,7 @@ Model, session, or checkpoint doesn't exist. Double-check:
 - Model name spelling (e.g., `Qwen/Qwen3-8B` not `qwen3-8b`)
 - Session ID (use `tc.get_info()` to verify)
 - Checkpoint path format (`tinker://session-id/sampler_weights/name`)
-- That you used `save_weights_for_sampler` (not `save_state`) for sampling/download
+- That you used `save_weights_for_sampler` (not `save_state`) for sampling, and `save_weights_external` or `save_state` for download
 
 ### HTTP 409 — Conflict
 
@@ -131,7 +131,7 @@ These appear in `ForwardBackwardResult` or sampling responses:
 | Error | Library | Cause | Fix |
 |-------|---------|-------|-----|
 | `Expected N tokens, got M from image` | `transformers` < 5.0 | Bug in `Qwen2VLImageProcessor` | Upgrade: `pip install 'transformers>=5.0'` |
-| DeepSeek tokenizer loading fails | `transformers` == 5.3.0 | Incorrect `tokenizer_class` on hub (huggingface/transformers#44801) | Upgrade to `transformers>=5.3.1` |
+| DeepSeek decode drops spaces / tokenizer loading fails | `transformers` == 5.3.0 or 5.6.x | `AutoTokenizer` picks `LlamaTokenizer` for DeepSeek (huggingface/transformers#44801) | Upgrade to `transformers>=5.7.0` |
 | `ModuleNotFoundError: pkg_resources` | Python 3.14 | `pkg_resources` removed from stdlib | Downgrade Python or update the offending package |
 | `401 Unauthorized` on tokenizer download | HuggingFace | Gated model (Llama) needs auth | Set `HF_TOKEN` environment variable |
 | Corrupted tokenizer cache | HuggingFace | Cache corruption | Delete `~/.cache/huggingface/hub/models--{org}--{model}/` and retry |

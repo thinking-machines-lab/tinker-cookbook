@@ -5,6 +5,7 @@ Contains functions for computing advantages, converting trajectories to training
 and assembling training batches.
 """
 
+import dataclasses
 import logging
 
 import tinker
@@ -92,7 +93,30 @@ def _flatten_chunks(chunks: list[tinker.ModelInputChunk]) -> FlatOb:
     return out
 
 
-def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.Datum]:
+ProvenanceSpan = tinker.PromptProvenanceSpan | tinker.SampledProvenanceSpan
+
+
+def _drop_first_position(spans: list[ProvenanceSpan]) -> list[ProvenanceSpan]:
+    """The spans for the same tokens with the first position removed."""
+    first = spans[0]
+    rest = spans[1:]
+    if first.length == 1:
+        return rest
+    return [dataclasses.replace(first, offset=first.offset + 1, length=first.length - 1), *rest]
+
+
+def _drop_last_position(spans: list[ProvenanceSpan]) -> list[ProvenanceSpan]:
+    """The spans for the same tokens with the last position removed."""
+    last = spans[-1]
+    rest = spans[:-1]
+    if last.length == 1:
+        return rest
+    return [*rest, dataclasses.replace(last, length=last.length - 1)]
+
+
+def trajectory_to_data(
+    traj: Trajectory, traj_advantage: float, include_provenance: bool = True
+) -> list[tinker.Datum]:
     """Return one or more Datum objects corresponding to the trajectory.
 
     If the sequence grows by appending, i.e., each successive observation contains
@@ -116,6 +140,12 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             (observation-action pairs).
         traj_advantage (float): The scalar advantage to assign to all action
             tokens in this trajectory.
+        include_provenance (bool): Whether to record where each token came from
+            (``Datum.with_provenance``): observation tokens are positions in
+            the prompt of the sampling request that saw them, and action
+            tokens are the sampled tokens of their sequence. A datum gets
+            provenance only if every action in it has a ``sequence_id`` and
+            at least one action token is a target. Defaults to True.
 
     Returns:
         list[tinker.Datum]: One or more training datums, each containing
@@ -127,6 +157,9 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
         sampled_logprobs: list[float] = []
         advantages: list[float] = []
         mask: list[float] = []
+        # Where each token of full_sequence came from, while every action so far
+        # has a sequence_id; None once one doesn't (or if not include_provenance).
+        spans: list[ProvenanceSpan] | None = None
 
         @classmethod
         def clear(cls):
@@ -134,6 +167,7 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             cls.sampled_logprobs = []
             cls.advantages = []
             cls.mask = []
+            cls.spans = [] if include_provenance else None
 
     def make_datum_from_state():
         all_tokens_T = _flat_ob_to_model_input(SequenceAccumulator.full_sequence)
@@ -150,7 +184,7 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             == len(advantages_T)
             == len(mask_T)
         )
-        return tinker.Datum(
+        datum = tinker.Datum(
             model_input=input_tokens_T,
             loss_fn_inputs={
                 "target_tokens": TensorData.from_torch(torch.tensor(target_tokens_T)),
@@ -159,7 +193,18 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
                 "mask": TensorData.from_torch(torch.tensor(mask_T)),
             },
         )
+        spans = SequenceAccumulator.spans
+        if not spans:
+            return datum
+        # The input drops the last token of the sequence and the targets drop the first.
+        target_spans = _drop_first_position(spans)
+        if not any(isinstance(span, tinker.SampledProvenanceSpan) for span in target_spans):
+            return datum
+        return datum.with_provenance(
+            model_input=_drop_last_position(spans), loss_fn_inputs=target_spans
+        )
 
+    SequenceAccumulator.clear()
     data: list[tinker.Datum] = []
     for transition in traj.transitions:
         ob = transition.ob
@@ -174,6 +219,26 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
             SequenceAccumulator.clear()
             delta_ob_flat = ob_flat
         delta_ob_len = _flat_ob_token_len(delta_ob_flat)
+        # A transition with no tokens (e.g. a rollout that ended before its first
+        # turn) contributes nothing to the datum, so it needs no provenance.
+        sequence_id = ac_with_logprobs.sequence_id
+        if sequence_id is None and (delta_ob_len > 0 or ac_with_logprobs.tokens):
+            SequenceAccumulator.spans = None
+        if SequenceAccumulator.spans is not None and sequence_id is not None:
+            # The new observation tokens are the end of this request's prompt.
+            prompt_offset = _flat_ob_token_len(SequenceAccumulator.full_sequence)
+            if delta_ob_len > 0:
+                SequenceAccumulator.spans.append(
+                    tinker.PromptProvenanceSpan(
+                        sequence_id=sequence_id, offset=prompt_offset, length=delta_ob_len
+                    )
+                )
+            if ac_with_logprobs.tokens:
+                SequenceAccumulator.spans.append(
+                    tinker.SampledProvenanceSpan(
+                        sequence_id=sequence_id, length=len(ac_with_logprobs.tokens)
+                    )
+                )
         # Parse-error turns flagged for masking (ParseErrorPolicy.mask_error_turns)
         # contribute no training signal: their action tokens get mask=0 and
         # advantage=0, while surrounding turns train normally.
@@ -201,6 +266,7 @@ def trajectory_to_data(traj: Trajectory, traj_advantage: float) -> list[tinker.D
 def assemble_training_data(
     trajectory_groups_P: list[TrajectoryGroup],
     advantages_P: list[torch.Tensor],
+    include_provenance: bool = True,
 ) -> tuple[list[tinker.Datum], list[dict[str, int]]]:
     """Convert trajectories to training data format.
 
@@ -209,6 +275,8 @@ def assemble_training_data(
             to convert into training datums.
         advantages_P (list[torch.Tensor]): Per-group advantage tensors,
             one per trajectory group, as returned by :func:`compute_advantages`.
+        include_provenance (bool): Passed to :func:`trajectory_to_data`.
+            Defaults to True.
 
     Returns:
         tuple[list[tinker.Datum], list[dict[str, int]]]: A flat list of
@@ -225,7 +293,9 @@ def assemble_training_data(
             safezip(traj_group.trajectories_G, advantages_G)
         ):
             # Build the full sequence from the trajectory
-            new_data = trajectory_to_data(traj, float(traj_advantage))
+            new_data = trajectory_to_data(
+                traj, float(traj_advantage), include_provenance=include_provenance
+            )
             data_D.extend(new_data)
             metadata_D.extend([{"group_idx": i_group, "traj_idx": i_traj} for _ in new_data])
 

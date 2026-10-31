@@ -328,7 +328,19 @@ async def do_group_rollout(
     finally:
         # cleanup() is not wrapped in try/except; implementations must handle failures
         # internally and not raise, or exceptions here will mask rollout errors.
-        await env_group_builder.cleanup()
+        # It is shielded so that cancelling the rollout (e.g. when async training ends),
+        # even more than once, still lets it finish releasing resources such as
+        # sandboxes; the cancellation is re-raised once cleanup is done.
+        cleanup_task = asyncio.ensure_future(env_group_builder.cleanup())
+        cancelled = False
+        while not cleanup_task.done():
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+        cleanup_task.result()
 
 
 # ---------------------------------------------------------------------------

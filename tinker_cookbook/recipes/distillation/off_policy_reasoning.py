@@ -112,6 +112,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
 
     # Evaluation and checkpointing
     eval_every: int = 50
@@ -188,6 +191,7 @@ def cli_main(cli_config: CLIConfig):
         base_url=cli_config.base_url,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         lora_rank=cli_config.lora_rank,
         save_every=cli_config.save_every,
         eval_every=cli_config.eval_every,

@@ -14,6 +14,7 @@ In this script, datums_D has size P*G (one datum per rollout).
 import logging
 import time
 from concurrent.futures import Future
+from typing import Literal
 
 import chz
 import datasets
@@ -29,6 +30,7 @@ from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed, grade_an
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -45,10 +47,16 @@ class Config:
     lora_rank: int = 32
     save_every: int = 20  # 0 = disabled
     max_tokens: int = 256
+    loss_fn: Literal["importance_sampling", "cispo", "gspo", "stable_reinforce"] = (
+        "stable_reinforce"
+    )
     ttl_seconds: int | None = 604800  # 7 days
     max_steps: int | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set, otherwise a
+    # default name based on the recipe is used.
+    session_name: str | None = None
 
 
 def get_reward(response: str, answer: str) -> float:
@@ -58,6 +66,26 @@ def get_reward(response: str, answer: str) -> float:
         return 1.0 if grade_answer(given_answer, ground_truth) else 0.0
     except ValueError:
         return 0.0
+
+
+def with_sampled_provenance(
+    datum: types.Datum, prompt_length: int, num_sampled: int, sequence_id: str
+) -> types.Datum:
+    """Name the sampled sequence behind every position, as stable_reinforce requires.
+
+    The model input is the prompt plus all but the last sampled token; the targets are the
+    same tokens shifted by one, so they cover the prompt from its second token on.
+    """
+    return datum.with_provenance(
+        model_input=[
+            types.PromptProvenanceSpan(sequence_id=sequence_id, length=prompt_length),
+            types.SampledProvenanceSpan(sequence_id=sequence_id, length=num_sampled - 1),
+        ],
+        loss_fn_inputs=[
+            types.PromptProvenanceSpan(sequence_id=sequence_id, offset=1, length=prompt_length - 1),
+            types.SampledProvenanceSpan(sequence_id=sequence_id, length=num_sampled),
+        ],
+    )
 
 
 def main(config: Config):
@@ -101,6 +129,8 @@ def main(config: Config):
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata("recipe_rl_loop"),
+        display_name=config.session_name
+        or default_cookbook_session_name("rl-loop", wandb_name=config.wandb_name),
     )
 
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
@@ -158,7 +188,9 @@ def main(config: Config):
         batch_end = min((batch_idx + 1) * config.batch_size, len(train_dataset))
         batch_rows = train_dataset.select(range(batch_start, batch_end))
 
-        sampling_client = training_client.save_weights_and_get_sampling_client()
+        sampling_client = training_client.save_weights_and_get_sampling_client(
+            record_stability_info=config.loss_fn == "stable_reinforce"
+        )
 
         datums_D: list[types.Datum] = []
         rewards_P: list[float] = []
@@ -189,6 +221,7 @@ def main(config: Config):
             rewards_G: list[float] = []
             sampled_tokens_G_T: list[list[int]] = []
             logprobs_G_T: list[list[float]] = []
+            sequence_ids_G: list[str] = []
             for sequence in sample_result.sequences:
                 sampled_tokens = sequence.tokens
                 sampled_logprobs = sequence.logprobs
@@ -196,6 +229,7 @@ def main(config: Config):
 
                 sampled_tokens_G_T.append(sampled_tokens)
                 logprobs_G_T.append(sampled_logprobs)
+                sequence_ids_G.append(sequence.sequence_id)
 
                 parsed_message, _ = renderer.parse_response(sampled_tokens)
                 content = renderers.get_text_content(parsed_message)
@@ -211,8 +245,8 @@ def main(config: Config):
                 # Skip question because all advantages are the same
                 continue
 
-            for sampled_tokens, logprobs, advantage in zip(
-                sampled_tokens_G_T, logprobs_G_T, advantages_G
+            for sampled_tokens, logprobs, advantage, sequence_id in zip(
+                sampled_tokens_G_T, logprobs_G_T, advantages_G, sequence_ids_G
             ):
                 ob_len = prompt.length - 1
                 model_input = prompt.append(types.EncodedTextChunk(tokens=sampled_tokens[:-1]))
@@ -228,23 +262,29 @@ def main(config: Config):
                     f"model_input.length: {model_input.length}, len(target_tokens): {len(target_tokens)}, "
                     f"len(padded_logprobs): {len(padded_logprobs)}, len(padded_advantages): {len(padded_advantages)}"
                 )
-                datum = types.Datum(
-                    model_input=model_input,
-                    loss_fn_inputs={
-                        "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-                        "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
-                        "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
-                    },
-                )
+                loss_fn_inputs = {
+                    "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
+                    "logprobs": TensorData.from_torch(torch.tensor(padded_logprobs)),
+                    "advantages": TensorData.from_torch(torch.tensor(padded_advantages)),
+                }
+                if config.loss_fn == "gspo":
+                    # Take the sequence ratio over the sampled tokens.
+                    ratio_mask = [0.0] * ob_len + [1.0] * len(sampled_tokens)
+                    loss_fn_inputs["sequence_ratio_mask"] = TensorData.from_torch(
+                        torch.tensor(ratio_mask)
+                    )
+                datum = types.Datum(model_input=model_input, loss_fn_inputs=loss_fn_inputs)
+                if config.loss_fn == "stable_reinforce":
+                    datum = with_sampled_provenance(
+                        datum, prompt.length, len(sampled_tokens), sequence_id
+                    )
                 datums_D.append(datum)
 
         # Training step
         if len(datums_D) == 0:
             logger.warning("Batch %d: all advantages zero, skipping training step", batch_idx)
         else:
-            fwd_bwd_future = training_client.forward_backward(
-                datums_D, loss_fn="importance_sampling"
-            )
+            fwd_bwd_future = training_client.forward_backward(datums_D, loss_fn=config.loss_fn)
             optim_step_future = training_client.optim_step(adam_params)
             _fwd_bwd_result = fwd_bwd_future.result()
             optim_result = optim_step_future.result()

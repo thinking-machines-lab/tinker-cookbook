@@ -14,6 +14,7 @@ from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.rl import preference_envs, train
 from tinker_cookbook.supervised import train as supervised_train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,11 @@ class CLIConfig:
     run_rm: bool = True
     run_rl: bool = True
     wandb_project: str | None = None
-    wandb_name: str | None = "rlhf"
+    wandb_name: str | None = None
+    # Display name prefix for the Tinker sessions; each stage appends -sft, -rm, or -rl.
+    # Defaults to the stage's wandb_name when set, otherwise a default name based on the
+    # recipe is used.
+    session_name: str | None = None
     lora_rank: int = 64
     max_length: int = 16384
     batch_size: int = 256
@@ -46,6 +51,10 @@ class CLIConfig:
     max_steps: int | None = None
 
 
+def _stage_name(name: str | None, stage: str) -> str | None:
+    return f"{name}-{stage}" if name else None
+
+
 def sft_stage(
     log_path: str,
     base_model: str,
@@ -58,6 +67,7 @@ def sft_stage(
     save_every: int,
     eval_every: int,
     max_steps: int | None = None,
+    session_name: str | None = None,
 ):
     """
     Train base policy on NoRobots dataset
@@ -92,7 +102,9 @@ def sft_stage(
         eval_every=eval_every,
         lora_rank=lora_rank,
         wandb_project=wandb_project,
-        wandb_name=f"{wandb_name}-sft",
+        wandb_name=_stage_name(wandb_name, "sft"),
+        session_name=_stage_name(session_name, "sft")
+        or default_cookbook_session_name("rlhf-sft", wandb_name=_stage_name(wandb_name, "sft")),
         max_steps=max_steps,
     )
 
@@ -112,6 +124,7 @@ def train_rm(
     save_every: int,
     eval_every: int,
     max_steps: int | None = None,
+    session_name: str | None = None,
 ):
     """Train reward model using Anthropic HHH preference comparisons."""
     # Use HHH comparison builder for Anthropic data
@@ -148,7 +161,9 @@ def train_rm(
         eval_every=eval_every,
         lora_rank=lora_rank,
         wandb_project=wandb_project,
-        wandb_name=f"{wandb_name}-rm",
+        wandb_name=_stage_name(wandb_name, "rm"),
+        session_name=_stage_name(session_name, "rm")
+        or default_cookbook_session_name("rlhf-rm", wandb_name=_stage_name(wandb_name, "rm")),
         max_steps=max_steps,
     )
 
@@ -172,6 +187,7 @@ async def train_rl(
     eval_every: int,
     num_groups_to_log: int = 4,
     max_steps: int | None = None,
+    session_name: str | None = None,
 ):
     """Train policy using RL with prompts from Anthropic HHH data."""
     # Get checkpoints from previous stages
@@ -233,7 +249,9 @@ async def train_rl(
         log_path=log_path,
         evaluator_builders=[get_evaluator_builder],
         wandb_project=wandb_project,
-        wandb_name=f"{wandb_name}-rl",
+        wandb_name=_stage_name(wandb_name, "rl"),
+        session_name=_stage_name(session_name, "rl")
+        or default_cookbook_session_name("rlhf-rl", wandb_name=_stage_name(wandb_name, "rl")),
         lora_rank=lora_rank,
         save_every=save_every,
         eval_every=eval_every,
@@ -261,6 +279,7 @@ def cli_main(cli_config: CLIConfig):
             cli_config.save_every,
             cli_config.eval_every,
             max_steps=cli_config.max_steps,
+            session_name=cli_config.session_name,
         )
     if cli_config.run_rm:
         train_rm(
@@ -275,6 +294,7 @@ def cli_main(cli_config: CLIConfig):
             cli_config.save_every,
             cli_config.eval_every,
             max_steps=cli_config.max_steps,
+            session_name=cli_config.session_name,
         )
     if cli_config.run_rl:
         asyncio.run(
@@ -294,6 +314,7 @@ def cli_main(cli_config: CLIConfig):
                 cli_config.eval_every,
                 cli_config.num_groups_to_log,
                 max_steps=cli_config.max_steps,
+                session_name=cli_config.session_name,
             )
         )
 

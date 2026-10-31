@@ -610,6 +610,7 @@ async def run_benchmark(
                         elapsed,
                         example_id=_get_example_id(env, idx),
                     )
+                    stored.metrics.update(step_metrics)
                     if config.grade_fn is not None:
                         stored.reward = total_reward
                     await _save_trajectory(storage, benchmark.name, stored)

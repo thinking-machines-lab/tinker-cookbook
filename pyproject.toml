@@ -24,11 +24,16 @@ dependencies = [
     "safetensors>=0.4.0",
     "termcolor>=2.0.0",
     "tiktoken>=0.12.0", # Required for Kimi tokenizer
-    "tinker>=0.34.0",
+    "tinker>=0.35.0",
     "tml-renderers>=0.0.1",
     "torch>=2.10", # tml_renderers uses libtorch's stable C ABI, added in 2.10
     "tqdm>=4.60.0",
-    "transformers>=4.57.6,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3,<=5.5.4",
+    # Known-bad releases are excluded rather than capping the upper bound:
+    # - 5.3.0 and 5.6.x: AutoTokenizer resolves DeepSeek V3 to LlamaTokenizer, which
+    #   drops spaces on decode (huggingface/transformers#44801).
+    # - 5.4.x: Qwen VL image processing requires torchvision.
+    # - 5.4.0-5.5.3: AutoTokenizer resolved Kimi K2 to the wrong class on some platforms.
+    "transformers>=4.57.6,!=5.3.0,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3,!=5.6.*",
 ]
 
 [project.urls]
@@ -94,7 +99,8 @@ inspect = [
     "inspect-evals>=0.3.106",
 ]
 litellm = [
-    "litellm>=1.80.0,!=1.82.7,!=1.82.8",
+    # Exact pin: litellm 1.82.7/1.82.8 shipped malware on PyPI, so bump on purpose to releases at least 7 days old.
+    "litellm==1.105.1",
 ]
 eval-math500 = [
     "tinker_cookbook[math-rl]",
@@ -160,6 +166,12 @@ version-file = "tinker_cookbook/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["tinker_cookbook"]
 exclude = ["*_test.py", "**/results/"]
+
+[tool.uv]
+exclude-newer = "7 days"
+# tinker is our own SDK, and the cookbook often requires a release that is only days old.
+# Its dependencies still go through the cooldown.
+exclude-newer-package = { tinker = false }
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]

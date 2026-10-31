@@ -1,7 +1,7 @@
 """PREPARE: merge a tinker:// checkpoint into a servable model on the Volume.
 
     modal run -m tinker_cookbook.inference.modal.prepare \\
-        --tinker-path tinker://<run-id>/sampler_weights/<name> \\
+        --tinker-path tinker://<run-id>/external_weights/<name> \\
         --base-model Qwen/Qwen3-8B --name my-finetune
 
 Also callable from another app via prepare.remote(...).

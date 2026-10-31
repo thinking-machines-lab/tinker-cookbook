@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import posixpath
 from dataclasses import dataclass
 from datetime import datetime
@@ -242,7 +243,10 @@ class LocalStorage:
         """See :meth:`Storage.write`."""
         full = self._resolve(path)
         full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_bytes(data)
+        # Write to a sibling temp file and rename so readers never see a partial file.
+        tmp = full.with_name(f".{full.name}.{os.getpid()}.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, full)
 
     def append(self, path: str, data: bytes) -> None:
         """See :meth:`Storage.append`."""

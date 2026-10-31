@@ -63,7 +63,8 @@ tokenizer = tc.get_tokenizer()
 ### Loss functions
 
 - `"cross_entropy"` — Standard SL loss
-- `"importance_sampling"` — On-policy RL (default for GRPO)
+- `"importance_sampling"` — On-policy RL
+- `"stable_reinforce"` — REINFORCE variant that stays stable when the sampling policy differs from the one being trained (default for async runs in `rl/train.py`, via `AsyncConfig.loss_fn`; needs provenance spans, see `Datum.with_provenance`)
 - `"ppo"` — Proximal Policy Optimization
 - `"cispo"` — Conservative Importance Sampling PPO
 - `"dro"` — Distributionally Robust Optimization

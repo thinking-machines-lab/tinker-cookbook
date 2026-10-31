@@ -63,6 +63,9 @@ class Config:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
     base_url: str | None = None
 
@@ -162,6 +165,7 @@ async def cli_main(cfg: Config) -> None:
         save_every=cfg.save_every,
         wandb_project=cfg.wandb_project,
         wandb_name=cfg.wandb_name or run_name,
+        session_name=cfg.session_name or cfg.wandb_name or run_name,
         base_url=cfg.base_url,
         kl_penalty_coef=0.0,
         compute_post_kl=False,
