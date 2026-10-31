@@ -1,23 +1,29 @@
 """
 Code grading utilities for RL training.
 
-Supports two execution backends:
+Supports three execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
+- sail: Cloud-based Sail sandbox
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
 from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 
+if TYPE_CHECKING:
+    from tinker_cookbook.sandbox.modal_sandbox import ModalSandboxPool
+    from tinker_cookbook.sandbox.sail_sandbox import SailSandboxPool
+
 # Global sandbox backend clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
-_modal_pool: Any = None  # ModalSandboxPool, but avoid import at module level
+_modal_pool: ModalSandboxPool | None = None
+_sail_pool: SailSandboxPool | None = None
 
 
 def _get_sandboxfusion_client() -> SandboxFusionClient:
@@ -28,7 +34,7 @@ def _get_sandboxfusion_client() -> SandboxFusionClient:
     return _sandboxfusion_client
 
 
-def _get_modal_pool():
+def _get_modal_pool() -> ModalSandboxPool:
     """Get or create the Modal sandbox pool."""
     global _modal_pool
     if _modal_pool is None:
@@ -39,6 +45,22 @@ def _get_modal_pool():
         image = modal.Image.debian_slim().pip_install("numpy")
         _modal_pool = ModalSandboxPool(image=image)
     return _modal_pool
+
+
+def _get_sail_pool() -> SailSandboxPool:
+    """Get or create the Sail sandbox pool.
+
+    Nothing terminates the pool here; it terminates its Sailboxes when the process exits.
+    """
+    global _sail_pool
+    if _sail_pool is None:
+        import sail
+
+        from tinker_cookbook.sandbox.sail_sandbox import SailSandboxPool
+
+        image = sail.Image.from_registry("python:3.12-slim").pip_install("numpy")
+        _sail_pool = SailSandboxPool(image=image)
+    return _sail_pool
 
 
 def extract_code_from_model(model_response: str) -> str | None:
@@ -91,14 +113,14 @@ async def _check_with_sandboxfusion(
     )
 
 
-async def _check_with_modal(
+async def _check_with_pool(
+    pool: ModalSandboxPool | SailSandboxPool,
     test_cases: dict[str, str],
     generation: str,
     timeout: int,
     total_timeout: int,
 ) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using Modal sandbox."""
-    pool = _get_modal_pool()
+    """Execute tests in a fresh workdir of a pooled cloud sandbox."""
     result = await pool.run_in_workdir(
         files={
             "test_cases.txt": json.dumps(test_cases),
@@ -145,7 +167,13 @@ async def sandbox_check_correctness(
         total_timeout = (timeout + 1) * test_cnt + 5
 
         if use_backend == SandboxBackend.MODAL:
-            return await _check_with_modal(test_cases, generation, timeout, total_timeout)
+            return await _check_with_pool(
+                _get_modal_pool(), test_cases, generation, timeout, total_timeout
+            )
+        elif use_backend == SandboxBackend.SAIL:
+            return await _check_with_pool(
+                _get_sail_pool(), test_cases, generation, timeout, total_timeout
+            )
         elif use_backend == SandboxBackend.SANDBOXFUSION:
             return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
         else:

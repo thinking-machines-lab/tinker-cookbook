@@ -61,6 +61,9 @@ math-rl = [
 modal = [
     "modal>=1.5.1",
 ]
+sail = [
+    "sail>=0.17.0",
+]
 multiplayer-rl = [
     "textarena>=0.7.4",
 ]
@@ -142,6 +145,7 @@ all = [
     "tinker_cookbook[audio]",
     "tinker_cookbook[math-rl]",
     "tinker_cookbook[modal]",
+    "tinker_cookbook[sail]",
     "tinker_cookbook[multiplayer-rl]",
     "tinker_cookbook[vector-search]",
     "tinker_cookbook[wandb]",
@@ -171,7 +175,8 @@ exclude = ["*_test.py", "**/results/"]
 exclude-newer = "7 days"
 # tinker is our own SDK, and the cookbook often requires a release that is only days old.
 # Its dependencies still go through the cooldown.
-exclude-newer-package = { tinker = false }
+# The sail extra pins the newest Sail SDK release, so sail skips the cooldown the same way.
+exclude-newer-package = { tinker = false, sail = false }
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]

@@ -12,6 +12,7 @@ from tinker_cookbook.recipes.harbor_rl.harbor_env import (
     SandboxFactory,
 )
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
+from tinker_cookbook.sandbox import CloudSandboxBackend
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class CLIConfig:
     sandbox_timeout: int = 3600
     command_timeout: int = 120
     grader_timeout: int = 60
+    sandbox_backend: CloudSandboxBackend = "modal"
     max_trajectory_tokens: int = 32 * 1024
     max_generation_tokens: int | None = None
     context_overflow_reward: float = -0.1
