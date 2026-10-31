@@ -106,7 +106,15 @@ class _RecordingSamplingClient:
     ):
         self.temperatures.append(sampling_params.temperature)
         return SimpleNamespace(
-            sequences=[SimpleNamespace(tokens=[4, 5], logprobs=[0.1, 0.2], stop_reason="stop")]
+            sequences=[
+                SimpleNamespace(
+                    tokens=[4, 5],
+                    logprobs=[0.1, 0.2],
+                    stop_reason="stop",
+                    sequence_id="seq-0",
+                )
+            ],
+            prompt_cache_hit_tokens=0,
         )
 
 
