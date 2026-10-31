@@ -512,6 +512,7 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     # Evaluation cadence in training iterations (0 = disabled).
     eval_every: int = 20
+    eval_temperature: float = 1.0
     # Checkpoint cadence in training iterations (0 = disabled).
     save_every: int = 20
     # Optional evaluators run during training.
@@ -2497,6 +2498,7 @@ async def main(
                     maybe_test_dataset,
                     max_tokens=config.max_tokens,
                     strategy=strategy,
+                    temperature=config.eval_temperature,
                 )
             )
 
