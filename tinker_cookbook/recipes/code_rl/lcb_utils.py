@@ -801,6 +801,129 @@ else:
     sys.exit(0)
 """
 
+# Sandbox side of out-of-band grading (see code_grading.sandbox_check_correctness). It runs the program
+# on the test INPUTS exactly as run_test does (same import preamble, same stdin-program rewrite into
+# code(), one module or Solution instance across tests, per-test alarm and stdin mocking) and prints the
+# raw outputs after a per-run marker. It never sees the expected outputs and never decides a verdict, so
+# a program that exits early, patches the harness or forges a record cannot produce a pass: the outputs
+# are compared with run_test outside the sandbox.
+RUN_CODE = r"""
+import ast, json, signal, sys
+from testing_util import Capturing, RuntimeModule, call_method, reliability_guard
+
+with open("payload.json") as fin:
+    payload = json.load(fin)
+real_stdout = sys.stdout
+test, timeout = payload["program"], payload["timeout"]
+in_outs = json.loads(payload["input_output"])
+fn_name = in_outs.get("fn_name")
+records = []
+
+
+def enc(x):
+    # Type-preserving JSON, so run_test's comparison quirks (tuples, int-keyed dicts) replay exactly.
+    if isinstance(x, tuple):
+        return {"__t": [enc(v) for v in x]}
+    if isinstance(x, list):
+        return [enc(v) for v in x]
+    if isinstance(x, dict):
+        return {"__d": [[enc(k), enc(v)] for k, v in x.items()]}
+    return x
+
+
+def done(status, **kw):
+    record = json.dumps({"status": status, "records": records, **kw})
+    real_stdout.write("\n" + payload["marker"] + record + "\n")
+    real_stdout.flush()
+    raise SystemExit(0)
+
+
+reliability_guard()
+sol = payload["preamble"]
+if fn_name is not None:
+    sol += test
+    signal.alarm(timeout)
+    try:
+        mod = RuntimeModule.from_string("tmp_sol", "", sol)
+        tmp = mod if "class Solution" not in test else mod.Solution()
+        signal.alarm(0)
+    except Exception as e:
+        signal.alarm(0)
+        done("compile_error", error=repr(e))
+    method_name = fn_name
+else:
+    try:
+        astree = ast.parse(test)
+        last_block = astree.body[-1]
+        if isinstance(last_block, ast.If):
+            if ast.unparse(last_block.test).strip() == "__name__ == '__main__'":
+                test = ast.unparse(astree.body[:-1]) + "\n" + ast.unparse(last_block.body)
+    except Exception:
+        pass
+    new_test = []
+    for x in test.split("\n"):
+        is_import = x.startswith("from ") or x.startswith("import ")
+        new_test.append(x + "\n" if is_import else "\t" + x + "\n")
+    tmp_test, started = "", False
+    for i in new_test:
+        if i.startswith("\t") and not started:
+            tmp_test += "stdin = sys.stdin\nstdout = sys.stdout\ndef code():\n" + i
+            started = True
+        elif started and (i.startswith("from ") or i.startswith("import ")):
+            tmp_test += "\t" + i
+        else:
+            tmp_test += i
+    sol += tmp_test
+    signal.alarm(timeout)
+    try:
+        tmp = RuntimeModule.from_string("tmp_sol", "", sol)
+        signal.alarm(0)
+    except Exception as e:
+        signal.alarm(0)
+        done("compile_error", error=repr(e))
+    method_name = "code"
+try:
+    method = getattr(tmp, method_name)
+except Exception as e:
+    done("no_method", error=repr(e))
+
+for inputs in in_outs["inputs"]:
+    if fn_name is not None:
+        inputs = [json.loads(line) for line in inputs.split("\n")]
+        try:
+            if isinstance(inputs[0], dict):
+                inputs = [{int(k): v for k, v in inputs[0].items()}]
+        except Exception:
+            pass
+        signal.alarm(timeout)
+        try:
+            output = method(*inputs)
+            json.dumps(output)  # run_test does this too: unserialisable output is a runtime error
+            signal.alarm(0)
+            records.append({"ok": True, "out": enc(output)})
+        except Exception as e:
+            signal.alarm(0)
+            records.append({"ok": False, "error": repr(e)})
+            done("ran")
+    else:
+        if isinstance(inputs, list):
+            inputs = "\n".join(inputs)
+        signal.alarm(timeout)
+        with Capturing() as output:
+            try:
+                call_method(method, inputs)
+                signal.alarm(0)
+                ok, err = True, None
+            except Exception as e:
+                signal.alarm(0)
+                ok, err = False, repr(e)
+        if not ok:
+            records.append({"ok": False, "error": err})
+            done("ran")
+        records.append({"ok": True, "out": output[0]})
+done("ran")
+"""
+
 LCB_SYSTEM_MESSAGE_GENERIC = "You are an expert Python programmer. You will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests."
 LCB_FORMATTING_MESSAGE_WITH_STARTER_CODE = "You will use the following starter code to write the solution to the problem and enclose your code within delimiters."
 LCB_FORMATTING_WITHOUT_STARTER_CODE = "Read the inputs from stdin solve the problem and write the answer to stdout (do not directly test on the sample inputs). Enclose your code within delimiters as follows. Ensure that when the python program runs, it reads the inputs, runs the algorithm and writes output to STDOUT."
