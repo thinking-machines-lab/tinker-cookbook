@@ -31,7 +31,7 @@ You can also evaluate offline:
 python -m tinker_cookbook.recipes.verifiers_rl.evaluate vf_env_id=env-id vf_env_args='{}' ...
 ```
 
-This recipe requires `verifiers>=0.3.1`, installed by `pip install 'tinker_cookbook[verifiers]'`.
+This recipe requires `verifiers>=0.4.0`, installed by `pip install 'tinker_cookbook[verifiers]'`.
 
 ## How it plugs in
 

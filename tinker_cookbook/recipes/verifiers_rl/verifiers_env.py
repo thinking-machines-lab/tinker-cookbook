@@ -109,9 +109,8 @@ def _episode_to_trajectory(episode: vf.Episode) -> tuple[Trajectory, float, Metr
     if not episode.ok or not trace.ok:
         return failed, trace.reward, _trace_metrics(trace, failed=True)
     # verifiers marks a rejected compaction attempt (a leaf the harness never
-    # resumed from) as a non-trainable branch since #2521 (after 0.3.1); earlier
-    # releases have no compaction, so every branch there is trainable.
-    branches = [b for b in trace.branches if getattr(b, "trainable", True)]
+    # resumed from) as a non-trainable branch.
+    branches = [b for b in trace.branches if b.trainable]
     if len(branches) > 1:
         raise ValueError(
             f"trace has {len(branches)} trainable branches; this recipe trains linear "
@@ -217,7 +216,7 @@ class VerifiersRLDatasetBuilder(RLDatasetBuilder):
             set_vf_env(vf_env)
         taskset = vf_env.taskset
         if self.dataset_n >= 0:
-            taskset = taskset.head(self.dataset_n)
+            taskset = taskset.take(self.dataset_n)
         elif taskset.INFINITE:
             raise ValueError(f"taskset {self.vf_env_id!r} is infinite; bound it with dataset_n")
         if self.dataset_seed is not None:

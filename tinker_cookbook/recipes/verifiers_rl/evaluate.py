@@ -108,7 +108,7 @@ async def evaluate(
         raise ValueError("model_name or model_path must be provided")
 
     vf_env = load_vf_env(vf_env_id, vf_env_args)
-    tasks = list(vf_env.taskset.head(num_examples))
+    tasks = list(vf_env.taskset.take(num_examples))
 
     # Create sampling client from checkpoint path or base model
     if model_path:

@@ -22,7 +22,9 @@ class TestVerifiersEnvGroupBuilderPickle:
 
         from tinker_cookbook.recipes.verifiers_rl.verifiers_env import VerifiersEnvGroupBuilder
 
-        task = vf.Task(vf.TaskData(idx=42, name="arithmetic", prompt="What is 2+2?"))
+        task = vf.Task(
+            vf.TaskData.model_validate({"idx": 42, "name": "arithmetic", "prompt": "What is 2+2?"})
+        )
         builder = VerifiersEnvGroupBuilder(vf_env=MagicMock(), task=task)
         state = builder.__getstate__()
         assert state["vf_env"] is None
@@ -39,7 +41,7 @@ class TestVerifiersEnvGroupBuilderPickle:
             set_vf_env,
         )
 
-        task = vf.Task(vf.TaskData(idx=7, name="arithmetic"))
+        task = vf.Task(vf.TaskData.model_validate({"idx": 7, "name": "arithmetic"}))
         builder = VerifiersEnvGroupBuilder(vf_env=MagicMock(), task=task)
         payload = pickle.dumps(builder)
 

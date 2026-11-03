@@ -87,7 +87,7 @@ trackio = [
 verifiers = [
     # The recipe drives the verifiers v1 stack (`verifiers.v1`); the pre-0.3
     # legacy API is not supported.
-    "verifiers>=0.3.1",
+    "verifiers>=0.4.0",
     "openai>=1.0.0",
 ]
 inspect = [

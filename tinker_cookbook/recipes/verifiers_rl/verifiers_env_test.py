@@ -46,7 +46,7 @@ def _episode(nodes, rewards=None, metrics=None):
     import verifiers.v1 as vf
 
     trace = vf.Trace(
-        task=vf.TraceTask(type="Task", data=vf.TaskData(idx=0)),
+        task=vf.TraceTask(type="Task", data=vf.TaskData.model_validate({"idx": 0})),
         agent=vf.AgentInfo(config=vf.AgentConfig()),
         nodes=nodes,
         rewards=rewards or {},
@@ -298,16 +298,6 @@ class TestConvertEpisodesToTrajectoryGroup:
         assert datum.loss_fn_inputs["target_tokens"].tolist() == [2, 3, 4, 5]
 
 
-def _branch_standing_available() -> bool:
-    import verifiers.v1 as vf
-
-    return "trainable" in vf.Branch.model_fields
-
-
-@pytest.mark.skipif(
-    not _has_verifiers or not _branch_standing_available(),
-    reason="verifiers release without branch standing (pre-#2521)",
-)
 class TestNonTrainableBranches:
     """A rejected compaction attempt is a dangling leaf verifiers marks non-trainable."""
 
