@@ -28,9 +28,11 @@ _SAMPLING_KEYS = frozenset(
     {"max_tokens", "temperature", "top_p", "top_k", "seed", "stop_token_ids"}
 )
 """Request keys mapped onto ``tinker.SamplingParams``."""
-_WIRE_KEYS = frozenset({"logprobs", "skip_special_tokens"})
-"""Keys the renderers client always sends for token-in/token-out bookkeeping; the
-endpoint always returns per-token logprobs and raw token ids, so they carry no choice."""
+_WIRE_KEYS = frozenset({"logprobs", "skip_special_tokens", "routed_experts_prompt_start"})
+"""Engine bookkeeping keys the verifiers train client sends: ``logprobs`` and
+``skip_special_tokens`` on every turn, ``routed_experts_prompt_start`` on a turn bridged
+from the previous one. The endpoint always returns per-token logprobs and raw token ids
+and Tinker returns no routed experts, so none of them changes the sampled distribution."""
 
 
 class TinkerGenerateServer:

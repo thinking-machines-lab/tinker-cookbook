@@ -161,3 +161,88 @@ async def test_generate_rejects_unsupported_sampling_params() -> None:
     assert status == 400
     assert "repetition_penalty" in data["error"] and "stop" in data["error"]
     assert fake.calls == []
+
+
+class _MessageTokenRenderer:
+    """An asset-free renderer: one token per message, a generation-prompt token, and a
+    bridge that extends the previous turn's tokens with the new tail."""
+
+    def render(self, messages, tools=None, add_generation_prompt=True, **kwargs):
+        from renderers import RenderedTokens
+
+        n = len(messages)
+        return RenderedTokens(
+            token_ids=[100 + i for i in range(n)] + [1],
+            message_indices=list(range(n)) + [-1],
+        )
+
+    def bridge_to_next_turn(self, prompt_ids, completion_ids, new_messages, tools=None, **kwargs):
+        from renderers import RenderedTokens
+
+        previous = [*prompt_ids, *completion_ids]
+        n = len(new_messages)
+        return RenderedTokens(
+            token_ids=previous + [200 + i for i in range(n)] + [1],
+            message_indices=[-1] * len(previous) + list(range(n)) + [-1],
+        )
+
+    def get_stop_token_ids(self) -> list[int]:
+        return [0]
+
+    def parse_response(self, completion_ids, prompt_ids=None, tools=None):
+        from renderers.base import ParsedResponse
+
+        return ParsedResponse(content="ok")
+
+
+@pytest.mark.asyncio
+async def test_bridged_second_turn_through_the_train_client(monkeypatch) -> None:
+    """verifiers' TrainClient sends `routed_experts_prompt_start` on a turn it bridged from
+    the previous one; the endpoint samples it, and still rejects other unsupported keys."""
+    import renderers
+    import renderers.base
+    import verifiers.v1 as vf
+    from verifiers.v1 import graph
+    from verifiers.v1.clients import TrainClient
+    from verifiers.v1.dialects import ChatDialect
+
+    from tinker_cookbook.recipes.verifiers_rl.tinker_generate import TinkerGenerateServer
+
+    monkeypatch.setattr(renderers.base, "load_tokenizer", lambda name: None)
+    monkeypatch.setattr(renderers, "create_renderer", lambda *a, **kw: _MessageTokenRenderer())
+
+    trace = vf.Trace(
+        agent=vf.AgentInfo(config=vf.AgentConfig()),
+        task=vf.TraceTask(type="Task", data=vf.TaskData.model_validate({"idx": 0})),
+    )
+    user = vf.UserMessage(content="u1")
+    fake = _FakeSamplingClient()
+    async with TinkerGenerateServer(fake) as server:  # type: ignore[arg-type]
+        client = TrainClient(server.train_client_config("message-token-renderer-bridge-test"))
+
+        async def turn(prompt, **sampling):
+            pending = graph.prepare_turn(trace, prompt)
+            response = await client.get_response(
+                ChatDialect(),
+                {"model": "tinker"},
+                vf.SamplingConfig.model_validate({"max_tokens": 8, **sampling}),
+                turn=pending,
+            )
+            pending.commit(response)
+            return response
+
+        try:
+            first = await turn([user])
+            second_prompt = [user, first.message, vf.UserMessage(content="u2")]
+            await turn(second_prompt)
+            # Same prompt again: nothing new to bridge, so this turn renders fresh.
+            with pytest.raises(vf.ProviderError) as rejected:
+                await turn(second_prompt, repetition_penalty=1.1)
+        finally:
+            await client.close()
+
+    assert rejected.value.status_code == 400
+    first_call, second_call = fake.calls
+    # The second turn is the bridge: the first turn's prompt and completion, then the tail.
+    assert second_call["prompt"].to_ints() == [100, 1, 7, 8, 9, 200, 1]
+    assert first_call["prompt"].to_ints() == [100, 1]
