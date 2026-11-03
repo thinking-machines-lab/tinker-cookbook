@@ -88,6 +88,10 @@ verifiers = [
     # The recipe drives the verifiers v1 stack (`verifiers.v1`); the pre-0.3
     # legacy API is not supported.
     "verifiers>=0.4.0",
+    # verifiers 0.4.0 reads renderers' completion logprobs as a list; renderers 0.2
+    # returns a numpy array and every multi-token turn fails. Drop the cap with the
+    # first verifiers release that handles it.
+    "renderers<0.2",
     "openai>=1.0.0",
 ]
 inspect = [
