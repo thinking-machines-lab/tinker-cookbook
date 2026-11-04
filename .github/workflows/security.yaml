@@ -1,0 +1,68 @@
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  trufflehog:
+    runs-on: ubuntu-latest
+    env:
+      TRUFFLEHOG_VERSION: "3.97.0"
+      # From the release's checksums.txt.
+      TRUFFLEHOG_SHA256: "62224de2f9dd7cd418800feb953760a302ed2f82a7c547fe1146a4874fb179e4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # --since-commit needs the base commit
+
+      - name: install trufflehog
+        run: |
+          tarball="trufflehog_${TRUFFLEHOG_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}/${tarball}"
+          echo "${TRUFFLEHOG_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" trufflehog
+
+      - name: scan new commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # New branches send an all-zero base, and a force-push can drop it from the clone.
+          since=()
+          if [[ -n "$BASE_SHA" && ! "$BASE_SHA" =~ ^0+$ ]] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            since=(--since-commit "$BASE_SHA")
+          else
+            echo "::notice::Base commit '${BASE_SHA}' is not usable; scanning all reachable commits."
+          fi
+          set +e
+          "$RUNNER_TEMP/trufflehog" git "file://$PWD" "${since[@]}" \
+            --no-update --no-verification --fail --force-skip-binaries \
+            --config .github/trufflehog.yaml \
+            --include-detectors=PrivateKey,Slack,SlackWebhook,GCP,HuggingFace,AWS,Anthropic,OpenAI,WeightsAndBiases,CustomRegex \
+            --filter-entropy=3
+          rc=$?
+          set -e
+          # 183 means secrets found; any other failure is the scanner's, so don't block.
+          if [[ $rc -eq 183 ]]; then
+            echo "::error::Possible secrets found (above). Remove and rotate them, or mark a false positive with '# trufflehog:ignore'."
+            exit 1
+          elif [[ $rc -ne 0 ]]; then
+            echo "::warning::trufflehog exited $rc; passing without a completed scan."
+          fi
+
+  actions-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: check workflow actions are allowlisted and pinned
+        env:
+          GH_TOKEN: ${{ github.token }}  # enables zizmor's online audits
+        run: python3 .github/workflows/scripts/check_github_actions_allowlist.py

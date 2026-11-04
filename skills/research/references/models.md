@@ -32,6 +32,7 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` | Hybrid + Vision | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` | Hybrid | MoE | Medium |
 | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16` | Hybrid | MoE | Large |
 | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16` | Hybrid | MoE | Large |
@@ -44,11 +45,18 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 | `openai/gpt-oss-120b` | Reasoning | MoE | Medium |
 | `openai/gpt-oss-20b` | Reasoning | MoE | Small |
 | `deepseek-ai/DeepSeek-V3.1` | Hybrid | MoE | Large |
+| `deepseek-ai/DeepSeek-V4.1-Flash` | Hybrid | MoE | Large |
+| `deepseek-ai/DeepSeek-V4.1-Flash-1017` | Hybrid | MoE | Large |
 | `moonshotai/Kimi-K2.6` | Hybrid + Vision | MoE | Large |
 | `zai-org/GLM-5.3` | Reasoning | MoE | Large |
+| `zai-org/GLM-5.3-Flash` | Reasoning | MoE | Large |
 
-GLM-5.3 is served only as the long-context variant `zai-org/GLM-5.3:peft:262144`.
-Pass that id to `ServiceClient`; the cookbook's own helpers accept either form.
+GLM-5.3 and GLM-5.3-Flash are served only as the long-context variants
+`zai-org/GLM-5.3:peft:262144` and `zai-org/GLM-5.3-Flash:peft:262144`.
+Pass those ids to `ServiceClient`; the cookbook's own helpers accept either form.
+DeepSeek-V4.1-Flash is likewise served as `deepseek-ai/DeepSeek-V4.1-Flash:peft:262144`,
+or `deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144` for the newer `DeepSeek-V4.1-Flash-1017`
+(display name `DeepSeek-V4.1-Flash-1017 (256K)`).
 
 ## Model types explained
 
@@ -70,6 +78,7 @@ total, so a large-total-parameter MoE model can sit in a smaller tier.
 Every model needs a matching renderer. Always use automatic lookup:
 ```python
 from tinker_cookbook import model_info
+
 renderer_name = model_info.get_recommended_renderer_name(model_name)
 ```
 

@@ -24,6 +24,8 @@ _TEXT_RENDERERS = [
     ("deepseekv3", "deepseek-ai/DeepSeek-V3-0324"),
     ("deepseekv3_disable_thinking", "deepseek-ai/DeepSeek-V3-0324"),
     ("deepseekv3_thinking", "deepseek-ai/DeepSeek-V3-0324"),
+    ("deepseekv4_1", "deepseek-ai/DeepSeek-V4.1-Flash"),
+    ("deepseekv4_1_disable_thinking", "deepseek-ai/DeepSeek-V4.1-Flash"),
     ("glm5_3_max_reasoning", "zai-org/GLM-5.3"),
     ("glm5_3_low_reasoning", "zai-org/GLM-5.3"),
 ]

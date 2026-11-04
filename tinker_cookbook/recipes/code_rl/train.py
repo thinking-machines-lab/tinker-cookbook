@@ -39,6 +39,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     compute_post_kl: bool = False
     eval_every: int = 20
     save_every: int = 20
@@ -81,7 +84,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/code_rl/{run_name}"
+        log_path = cli_utils.runs_path("code_rl", run_name)
 
     wandb_name = cli_config.wandb_name or run_name
 
@@ -105,6 +108,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         max_tokens=cli_config.max_tokens,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         log_path=log_path,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,

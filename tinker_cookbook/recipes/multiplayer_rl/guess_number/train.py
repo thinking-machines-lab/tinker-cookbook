@@ -20,6 +20,9 @@ class CLIConfig:
     save_every: int = 20
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     log_path: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
@@ -39,7 +42,7 @@ def build_config(cli_config: CLIConfig) -> train.Config:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/guess-number/{run_name}"
+        log_path = cli_utils.runs_path("guess-number", run_name)
 
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
@@ -62,8 +65,10 @@ def build_config(cli_config: CLIConfig) -> train.Config:
         learning_rate=cli_config.learning_rate,
         max_tokens=cli_config.max_tokens,
         eval_every=cli_config.eval_every,
+        save_every=cli_config.save_every,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         max_steps=cli_config.max_steps,
     )
 

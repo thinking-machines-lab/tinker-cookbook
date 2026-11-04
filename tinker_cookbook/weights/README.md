@@ -43,9 +43,10 @@ Use `hyperparam_utils.get_lr(model_name)` when available. LoRA training typicall
 | **Qwen3 / Qwen3.5 / Qwen3.6 / Qwen3.8** | `get_lr(model_name)` | `get_lr(model_name, is_lora=False)` | Calibrated; scales with hidden size |
 | **Kimi-K2.6** | ~5e-4 | ~5e-5 | Not yet calibrated in `get_lr`; start with 5e-4 for LoRA |
 | **DeepSeek V3.1** | ~5e-4 | ~5e-5 | Not yet calibrated; similar architecture to Kimi |
+| **DeepSeek V4.1** | ~5e-4 | ~5e-5 | Not yet calibrated |
 | **GPT-OSS** | ~5e-4 | ~5e-5 | Not yet calibrated |
 | **Nemotron-3** | ~5e-4 | ~5e-5 | Not yet calibrated |
-| **GLM-5.3** | ~5e-4 | ~5e-5 | Not yet calibrated; similar scale to Kimi |
+| **GLM-5.3 / GLM-5.3-Flash** | ~5e-4 | ~5e-5 | Not yet calibrated; similar scale to Kimi |
 | **DPO** (all models) | ~1e-5 | — | Start with `dpo_beta=0.1` |
 
 ### LoRA Rank and Alpha

@@ -318,9 +318,13 @@ class EvalStore:
         The ``runs.jsonl`` index is append-only and not modified; ``list_runs()``
         checks for ``metadata.json`` existence so deleted runs are excluded.
         """
-        for benchmark in self.list_benchmarks(run_id):
-            self.storage.remove(self._path("runs", run_id, benchmark, "result.json"))
-            self.storage.remove(self._path("runs", run_id, benchmark, "trajectories.jsonl"))
+        for benchmark in self.storage.list_dir(self._path("runs", run_id)):
+            result_path = self._path("runs", run_id, benchmark, "result.json")
+            trajectories_path = self._path("runs", run_id, benchmark, "trajectories.jsonl")
+            if not self.storage.exists(result_path) and not self.storage.exists(trajectories_path):
+                continue
+            self.storage.remove(result_path)
+            self.storage.remove(trajectories_path)
             self.storage.remove_dir(self._path("runs", run_id, benchmark))
         self.storage.remove(self._path("runs", run_id, "metadata.json"))
         self.storage.remove(self._path("runs", run_id, "summary.json"))

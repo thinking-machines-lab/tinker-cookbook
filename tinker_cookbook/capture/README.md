@@ -70,10 +70,11 @@ see the fork-vs-spawn notes under Limitations. Without the store daemon, wire th
 directly:
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.capture import CaptureExporter, JsonlFileSink, capture, instrument_tinker, uninstrument_tinker
 from tinker_cookbook.stores.storage import LocalStorage
 
-exporter = CaptureExporter(JsonlFileSink(LocalStorage("/tmp/my-run")))
+exporter = CaptureExporter(JsonlFileSink(LocalStorage(cli_utils.runs_path("my-run"))))
 instrument_tinker(exporter)
 
 with capture(run_id="my-run"):

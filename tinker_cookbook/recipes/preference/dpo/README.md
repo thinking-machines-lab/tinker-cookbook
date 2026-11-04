@@ -5,7 +5,6 @@ Please check our [doc](https://tinker-docs.thinkingmachines.ai/cookbook/preferen
 Here is an example command:
 ```
 python -m tinker_cookbook.recipes.preference.dpo.train \
-    log_path=/tmp/dpo-hhh-experiment \
     model_name=Qwen/Qwen3.5-9B-Base \
     dataset=hhh \
     renderer_name=role_colon \

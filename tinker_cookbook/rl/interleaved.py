@@ -26,6 +26,7 @@ from collections.abc import Sequence
 
 import chz
 
+from tinker_cookbook.rl.dataset_utils import cycle_permutation
 from tinker_cookbook.rl.types import EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.utils.misc_utils import safezip
 
@@ -47,9 +48,10 @@ class _InterleavedRLDataset(RLDataset):
     **Shuffled permutations.** Each source maintains a shuffled
     permutation of its group indices. Within each cycle (one pass through
     all of a source's groups), groups are visited in shuffled order.
-    When a cycle is exhausted, a fresh permutation is generated from the
-    same deterministic RNG stream, so repeated passes see problems in a
-    different order.
+    When a cycle is exhausted, the next cycle's permutation comes from
+    :func:`~tinker_cookbook.rl.dataset_utils.cycle_permutation` (the same
+    helper :class:`~tinker_cookbook.rl.dataset_utils.EpochCycledRLDataset`
+    uses), so repeated passes see problems in a different order.
 
     **Lazy resolution.** Source groups are not materialized during init.
     Only one ``get_batch(0)`` call per source is made to learn the number
@@ -162,12 +164,11 @@ class _InterleavedRLDataset(RLDataset):
     ) -> tuple[list[list[tuple[int, int]]], list[int]]:
         """Precompute the deterministic assignment of groups to batches.
 
-        Uses a single seeded RNG for both source selection and permutation
-        generation, ensuring the full schedule is reproducible from ``seed``.
-
-        Each source maintains a shuffled permutation of its group indices.
-        When all groups in a cycle are consumed, a fresh permutation is
-        generated so the next pass sees problems in a different order.
+        Source selection uses an RNG seeded with ``seed``. Each source visits
+        its groups in :func:`~tinker_cookbook.rl.dataset_utils.cycle_permutation`
+        order, keyed by ``(seed, source index, cycle)``, so the next pass sees
+        problems in a different order and the full schedule is reproducible
+        from ``seed``.
 
         Returns:
             schedule: List of batches, each a list of
@@ -177,12 +178,13 @@ class _InterleavedRLDataset(RLDataset):
         rng = random.Random(self._seed)
         n_sources = len(self._sources)
 
-        def new_permutation(size: int) -> list[int]:
-            perm = list(range(size))
-            rng.shuffle(perm)
-            return perm
+        def permutation(src_idx: int, cycle: int) -> Sequence[int]:
+            return cycle_permutation(
+                self._source_total_groups[src_idx], f"{self._seed}:{src_idx}", cycle
+            )
 
-        permutations = [new_permutation(self._source_total_groups[i]) for i in range(n_sources)]
+        cycles = [0] * n_sources
+        permutations = [permutation(i, 0) for i in range(n_sources)]
         positions = [0] * n_sources
         source_counts = [0] * n_sources
         schedule: list[list[tuple[int, int]]] = []
@@ -193,7 +195,8 @@ class _InterleavedRLDataset(RLDataset):
                 src_idx = rng.choices(range(n_sources), weights=self._weights, k=1)[0]
 
                 if positions[src_idx] >= self._source_total_groups[src_idx]:
-                    permutations[src_idx] = new_permutation(self._source_total_groups[src_idx])
+                    cycles[src_idx] += 1
+                    permutations[src_idx] = permutation(src_idx, cycles[src_idx])
                     positions[src_idx] = 0
 
                 flat_idx = permutations[src_idx][positions[src_idx]]

@@ -55,10 +55,6 @@ tc.save_state(name="step_100", ttl_seconds=None)
 tc.save_weights_for_sampler(name="step_100_sampler", ttl_seconds=None)
 sc = tc.save_weights_and_get_sampling_client()  # Ephemeral, not persistently saved
 
-# Load checkpoint
-tc.load_state(path="tinker://...")
-tc.load_state_with_optimizer(path="tinker://...")
-
 # Metadata
 info = tc.get_info()
 tokenizer = tc.get_tokenizer()
@@ -67,7 +63,8 @@ tokenizer = tc.get_tokenizer()
 ### Loss functions
 
 - `"cross_entropy"` — Standard SL loss
-- `"importance_sampling"` — On-policy RL (default for GRPO)
+- `"importance_sampling"` — On-policy RL
+- `"stable_reinforce"` — REINFORCE variant that stays stable when the sampling policy differs from the one being trained (default for async runs in `rl/train.py`, via `AsyncConfig.loss_fn`; needs provenance spans, see `Datum.with_provenance`)
 - `"ppo"` — Proximal Policy Optimization
 - `"cispo"` — Conservative Importance Sampling PPO
 - `"dro"` — Distributionally Robust Optimization

@@ -36,11 +36,12 @@ from tinker_cookbook.recipes.audio.medical_asr.env import (
 )
 from tinker_cookbook.supervised import train
 from tinker_cookbook.utils.lr_scheduling import LRSchedule
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 
 @chz.chz
 class Config:
-    log_path: str = "/tmp/tinker-examples/medical-asr"
+    log_path: str = cli_utils.runs_path("medical-asr")
     model_name: str = "thinkingmachines/Inkling"
     base_url: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
@@ -48,7 +49,7 @@ class Config:
     # Data. WAV cache lives outside log_path so clearing logs doesn't re-download.
     # split_tag documents the split design in the run config; changing it does
     # nothing on its own (the split is a seeded random 80/20 in env.py).
-    audio_cache_dir: str = "/tmp/tinker-examples/medical-asr-clips"
+    audio_cache_dir: str = "~/.cache/tinker-cookbook/medical-asr-clips"
     max_length: int = 8192
     seed: int = 0
     split_tag: str = "random_speaker_adapted"
@@ -71,6 +72,9 @@ class Config:
     # Logging
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set, otherwise a
+    # default name based on the recipe is used.
+    session_name: str | None = None
 
 
 def cli_main(cfg: Config) -> None:
@@ -110,6 +114,8 @@ def cli_main(cfg: Config) -> None:
         save_every=cfg.save_every,
         wandb_project=cfg.wandb_project,
         wandb_name=cfg.wandb_name,
+        session_name=cfg.session_name
+        or default_cookbook_session_name("medical-asr", wandb_name=cfg.wandb_name),
     )
     asyncio.run(train.main(train_config))
 

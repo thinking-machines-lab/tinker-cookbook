@@ -83,6 +83,20 @@ class TestNemotron3:
             "nemotron3_ultra_preserve_thinking",
         ]
 
+    def test_super_3_5_attributes(self):
+        attrs = get_model_attributes(
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16:peft:262144"
+        )
+        assert attrs.is_vl is True
+        assert get_recommended_renderer_names(
+            "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+        ) == [
+            "nemotron3_ultra",
+            "nemotron3_ultra_disable_thinking",
+            "nemotron3_ultra_medium_thinking",
+            "nemotron3_ultra_preserve_thinking",
+        ]
+
     def test_ultra_uses_nemotron3_ultra_renderer(self):
         assert (
             get_recommended_renderer_name("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16")
@@ -112,6 +126,52 @@ class TestNemotron3:
         ]
 
 
+class TestDeepSeekV4_1:
+    def test_peft_suffix_uses_deepseekv4_1_renderer(self):
+        assert (
+            get_recommended_renderer_name("deepseek-ai/DeepSeek-V4.1-Flash:peft:262144")
+            == "deepseekv4_1"
+        )
+
+    def test_attributes(self):
+        attrs = get_model_attributes("deepseek-ai/DeepSeek-V4.1-Flash")
+        assert attrs.organization == "deepseek-ai"
+        assert attrs.version_str == "4.1"
+        assert attrs.size_str == "552B-A16B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("deepseek-ai/DeepSeek-V4.1-Flash") == [
+            "deepseekv4_1",
+            "deepseekv4_1_low_reasoning",
+            "deepseekv4_1_max_reasoning",
+            "deepseekv4_1_disable_thinking",
+            "deepseekv4_1_preserve_thinking",
+        ]
+
+
+class TestDeepSeekV4_1Flash1017:
+    def test_peft_suffix_uses_deepseekv4_1_renderer(self):
+        assert (
+            get_recommended_renderer_name("deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144")
+            == "deepseekv4_1"
+        )
+
+    def test_attributes(self):
+        attrs = get_model_attributes("deepseek-ai/DeepSeek-V4.1-Flash-1017")
+        assert attrs.organization == "deepseek-ai"
+        assert attrs.version_str == "4.1"
+        assert attrs.size_str == "552B-A16B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("deepseek-ai/DeepSeek-V4.1-Flash-1017") == [
+            "deepseekv4_1",
+            "deepseekv4_1_low_reasoning",
+            "deepseekv4_1_max_reasoning",
+            "deepseekv4_1_disable_thinking",
+            "deepseekv4_1_preserve_thinking",
+        ]
+
+
 class TestGlm5_3:
     def test_glm5_3_uses_glm5_3_renderer(self):
         assert get_recommended_renderer_name("zai-org/GLM-5.3") == "glm5_3_max_reasoning"
@@ -129,6 +189,25 @@ class TestGlm5_3:
         assert attrs.is_chat is True
         assert attrs.is_vl is False
         assert get_recommended_renderer_names("zai-org/GLM-5.3") == [
+            "glm5_3_max_reasoning",
+            "glm5_3_low_reasoning",
+            "glm5_3_high_reasoning",
+        ]
+
+    def test_glm5_3_flash_peft_suffix_uses_glm5_3_renderer(self):
+        assert (
+            get_recommended_renderer_name("zai-org/GLM-5.3-Flash:peft:262144")
+            == "glm5_3_max_reasoning"
+        )
+
+    def test_glm5_3_flash_attributes(self):
+        attrs = get_model_attributes("zai-org/GLM-5.3-Flash")
+        assert attrs.organization == "zai-org"
+        assert attrs.version_str == "5.3"
+        assert attrs.size_str == "320B-A18B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("zai-org/GLM-5.3-Flash") == [
             "glm5_3_max_reasoning",
             "glm5_3_low_reasoning",
             "glm5_3_high_reasoning",

@@ -1,6 +1,6 @@
 name: nightly
 
-on:
+on:  # zizmor: ignore[dangerous-triggers] upstream only runs on schedule/dispatch
   workflow_run:
     workflows: ["smoke-test-recipes"]
     types: [completed]
@@ -26,7 +26,7 @@ jobs:
           fetch-depth: 0
 
       - name: install-uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           enable-cache: true
 

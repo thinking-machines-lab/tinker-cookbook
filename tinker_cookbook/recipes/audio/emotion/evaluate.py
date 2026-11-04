@@ -183,7 +183,7 @@ class Config:
     model_name: str = "thinkingmachines/Inkling"
     model_path: str | None = None  # tinker:// sampler checkpoint; None = base model
     base_url: str | None = None
-    log_path: str = "/tmp/tinker-examples/audio-rl-eval"
+    log_path: str = cli_utils.runs_path("audio-rl-eval")
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     data_dir: str = DEFAULT_DATA_DIR

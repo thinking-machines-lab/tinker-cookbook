@@ -85,13 +85,15 @@ Rewards are emotion classification accuracy and transcription word error rate.
 any sampler — use it for before/after comparisons:
 
 ```bash
+RUNS_DIR="${TINKER_COOKBOOK_RUNS_DIR:-$HOME/tinker-runs}"
+
 # Before: the base model.
 uv run python -m tinker_cookbook.recipes.audio.emotion.evaluate \
-    log_path=/tmp/audio-rl-eval-before
+    log_path=$RUNS_DIR/audio-rl-eval-before
 
 # After: a sampler checkpoint saved by sl_train.py or rl_train.py (see checkpoints.jsonl).
 uv run python -m tinker_cookbook.recipes.audio.emotion.evaluate \
-    log_path=/tmp/audio-rl-eval-after \
+    log_path=$RUNS_DIR/audio-rl-eval-after \
     model_path="tinker://<run-id>/sampler_weights/<step>"
 ```
 

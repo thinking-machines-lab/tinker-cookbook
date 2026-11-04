@@ -85,11 +85,11 @@ async def _(api_key, mo):
     await _fwd.result_async()
     await _opt.result_async()
 
-    _save_result = training_client.save_weights_for_sampler(name="adapter-tutorial")
-    sampler_path = _save_result.result().path
+    _save_result = training_client.save_weights_external("adapter-tutorial")
+    export_path = _save_result.result().path
     print(f"Base model:  {BASE_MODEL}")
-    print(f"Checkpoint:  {sampler_path}")
-    return BASE_MODEL, os, sampler_path
+    print(f"Checkpoint:  {export_path}")
+    return BASE_MODEL, os, export_path
 
 
 @app.cell(hide_code=True)
@@ -103,15 +103,15 @@ def _(mo):
 
 
 @app.cell
-def _(sampler_path):
-    from tinker_cookbook import weights
+def _(export_path):
+    from tinker_cookbook import cli_utils, weights
 
     adapter_dir = weights.download(
-        tinker_path=sampler_path,
-        output_dir="/tmp/tinker-tutorials/lora-adapter/adapter",
+        tinker_path=export_path,
+        output_dir=cli_utils.runs_path("tutorials", "lora-adapter", "adapter"),
     )
     print(f"Adapter downloaded to: {adapter_dir}")
-    return adapter_dir, weights
+    return adapter_dir, cli_utils, weights
 
 
 @app.cell(hide_code=True)
@@ -125,8 +125,8 @@ def _(mo):
 
 
 @app.cell
-def _(BASE_MODEL, adapter_dir, weights):
-    PEFT_OUTPUT = "/tmp/tinker-tutorials/lora-adapter/peft_adapter"
+def _(BASE_MODEL, adapter_dir, cli_utils, weights):
+    PEFT_OUTPUT = cli_utils.runs_path("tutorials", "lora-adapter", "peft_adapter")
 
     weights.build_lora_adapter(
         base_model=BASE_MODEL,

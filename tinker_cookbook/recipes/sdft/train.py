@@ -74,6 +74,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
 
     # Evaluation and checkpointing
     eval_every: int = 20
@@ -111,7 +114,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
             f"{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-"
             f"{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = f"/tmp/tinker-examples/sdft/{run_name}"
+        log_path = cli_utils.runs_path("sdft", run_name)
 
     wandb_name = cli_config.wandb_name or Path(log_path).name
 
@@ -157,6 +160,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         log_path=log_path,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         load_checkpoint_path=cli_config.load_checkpoint_path,
         max_steps=cli_config.max_steps,
     )

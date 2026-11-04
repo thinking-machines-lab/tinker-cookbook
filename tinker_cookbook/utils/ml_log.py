@@ -118,6 +118,22 @@ class Logger(ABC):
         """
         pass
 
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Record the latest value of each metric outside the step history (optional).
+
+        For values that move between training steps, such as running totals:
+        each call replaces the previous value rather than adding a row at a
+        step, so it can be made any number of times between steps without
+        disturbing the step sequence (W&B, for one, only publishes a step
+        once a later step is logged, and never accepts a step twice). Loggers
+        without such a channel leave this a no-op, so callers must not rely on
+        it for anything that has to be recorded.
+
+        Args:
+            metrics (dict[str, Any]): Metric name-to-value mapping.
+        """
+        pass
+
     def log_long_text(self, key: str, text: str) -> None:
         """Log long text content (optional to implement).
 
@@ -205,6 +221,10 @@ class JsonLogger(Logger):
         self._store.write_metrics(metrics, step)
         logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
 
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Append the values as a row without a step."""
+        self._store.write_metrics(metrics)
+
 
 class PrettyPrintLogger(Logger):
     """Logger that displays metrics as a Rich-formatted table in the console.
@@ -228,6 +248,10 @@ class PrettyPrintLogger(Logger):
     # Metric suffixes to hide from console output. These are still logged to
     # metrics.jsonl and other sinks — only the pretty-print table is filtered.
     _HIDDEN_SUFFIXES = (":total", ":count")
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Display the values in the console."""
+        self.log_metrics(metrics)
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
@@ -283,7 +307,8 @@ def _rich_console_use_logger(console: Console):
 class WandbLogger(Logger):
     """Logger that streams metrics and config to Weights & Biases.
 
-    Requires ``wandb`` to be installed and ``WANDB_API_KEY`` to be set.
+    Requires ``wandb`` to be installed. Authentication is handled by W&B,
+    using credentials from e.g. ``wandb login`` or ``WANDB_API_KEY``.
 
     Args:
         project (str | None): W&B project name.
@@ -293,7 +318,8 @@ class WandbLogger(Logger):
 
     Raises:
         ImportError: If ``wandb`` is not installed.
-        ConfigurationError: If ``WANDB_API_KEY`` is not set.
+        ConfigurationError: If ``wandb.init`` fails (e.g. missing credentials
+            or no network access).
     """
 
     def __init__(
@@ -309,17 +335,24 @@ class WandbLogger(Logger):
                 "pip install wandb (or uv add wandb)"
             )
 
-        if not os.environ.get("WANDB_API_KEY"):
-            raise ConfigurationError("WANDB_API_KEY environment variable not set")
-
         # Initialize wandb run
         assert wandb is not None  # For type checker
-        self.run = wandb.init(
-            project=project,
-            config=dump_config(config) if config else None,
-            dir=str(log_dir) if log_dir else None,
-            name=wandb_name,
-        )
+        try:
+            self.run = wandb.init(
+                project=project,
+                config=dump_config(config) if config else None,
+                dir=str(log_dir) if log_dir else None,
+                name=wandb_name,
+            )
+        except Exception as e:
+            raise ConfigurationError(
+                f"Failed to initialize W&B run for project {project!r}: "
+                f"{type(e).__name__}: {e}\n"
+                "W&B logging was requested via wandb_project. To fix this, either:\n"
+                "  - authenticate with `wandb login` or set WANDB_API_KEY,\n"
+                "  - set WANDB_MODE=offline to log locally without a network connection, or\n"
+                "  - leave wandb_project unset to disable W&B logging."
+            ) from e
 
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
@@ -331,6 +364,11 @@ class WandbLogger(Logger):
         if self.run and wandb is not None:
             wandb.log(metrics, step=step)
             logger.info("Logging to: %s", self.run.url)
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Update the run summary; published at once, outside the step history."""
+        if self.run and wandb is not None:
+            self.run.summary.update(metrics)
 
     def close(self) -> None:
         """Close wandb run."""
@@ -401,6 +439,11 @@ class NeptuneLogger(Logger):
             assert step is not None, "step is required to be int or float for Neptune logging."
             self.run.log_metrics(metrics, step=step)
             logger.info("Logging to: %s", self.run.get_run_url())
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Set the values as run attributes, outside the step series."""
+        if self.run and NeptuneRun is not None:
+            self.run.log_configs(metrics)
 
     def close(self) -> None:
         """Close neptune run."""
@@ -487,6 +530,11 @@ class MultiplexLogger(Logger):
         for logger in self.loggers:
             logger.log_metrics(metrics, step)
 
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Forward summary values to all child loggers."""
+        for logger in self.loggers:
+            logger.log_summary(metrics)
+
     def log_long_text(self, key: str, text: str) -> None:
         """Forward log_long_text to all child loggers."""
         for logger in self.loggers:
@@ -559,8 +607,6 @@ def setup_logging(
     if wandb_project:
         if not _wandb_available:
             print("WARNING: wandb is not installed. Skipping W&B logging.")
-        elif not os.environ.get("WANDB_API_KEY"):
-            print("WARNING: WANDB_API_KEY environment variable not set. Skipping W&B logging. ")
         else:
             loggers.append(
                 WandbLogger(

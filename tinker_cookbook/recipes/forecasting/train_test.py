@@ -29,7 +29,7 @@ def test_final_checkpoint_is_evaluated_once(tmp_path: Path, monkeypatch) -> None
             return "sampling-client"
 
     monkeypatch.setattr(recipe.tinker, "ServiceClient", ServiceClient)
-    monkeypatch.setattr(recipe.train, "RLTestSetEvaluator", lambda *args, **kwargs: "evaluator")
+    monkeypatch.setattr(recipe, "ForecastEvaluator", lambda *args, **kwargs: "evaluator")
 
     calls = 0
 

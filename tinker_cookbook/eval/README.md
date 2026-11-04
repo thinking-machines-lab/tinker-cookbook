@@ -24,6 +24,7 @@ Full benchmark framework reusing the RL `Env` abstraction. Each benchmark create
 ### Run benchmarks
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.benchmarks import run_benchmark, run_benchmarks
 
 # Single benchmark
@@ -36,7 +37,7 @@ print(f"GSM8K: {result.score:.1%}")  # GSM8K: 78.3%
 results = await run_benchmarks(
     ["gsm8k", "mmlu_pro", "ifeval"],
     sampling_client, renderer,
-    BenchmarkConfig(save_dir="evals/step500", max_examples=200),
+    BenchmarkConfig(save_dir=cli_utils.runs_path("evals", "step500"), max_examples=200),
 )
 ```
 
@@ -102,14 +103,15 @@ Additional setup:
 ### Browse results
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.benchmarks import load_result, load_trajectories, print_trajectory
 
 # Load aggregated score
-result = load_result("evals/step500", "gsm8k")
+result = load_result(cli_utils.runs_path("evals", "step500"), "gsm8k")
 print(f"{result.name}: {result.score:.1%} ({result.num_correct}/{result.num_examples})")
 
 # Browse incorrect examples
-wrong = load_trajectories("evals/step500", "gsm8k", incorrect_only=True)
+wrong = load_trajectories(cli_utils.runs_path("evals", "step500"), "gsm8k", incorrect_only=True)
 for t in wrong[:5]:
     print(f"Expected: {t.logs['expected']}, Got: {t.logs['extracted']}")
     print_trajectory(t)
@@ -120,7 +122,7 @@ for t in wrong[:5]:
 When `num_samples > 1`, the runner evaluates each example multiple times and computes unbiased pass@k estimates (per the Codex paper):
 
 ```python
-config = BenchmarkConfig(num_samples=10, save_dir="evals/pass_at_k")
+config = BenchmarkConfig(num_samples=10, save_dir=cli_utils.runs_path("evals", "pass_at_k"))
 result = await run_benchmark("mbpp", sampling_client, renderer, config)
 print(result.pass_at_k)  # {1: 0.45, 5: 0.72, 10: 0.85}
 ```
@@ -210,10 +212,11 @@ Key points:
 Persistent, file-based storage for tracking evaluation across checkpoints. Matches examples by `example_id` to identify regressions and improvements.
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.stores.eval_store import EvalStore
 from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 
-store = EvalStore("~/experiments/evals")
+store = EvalStore(cli_utils.runs_path("evals"))
 
 # Run evals for a checkpoint
 run_id = store.create_run(

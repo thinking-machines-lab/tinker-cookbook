@@ -40,11 +40,12 @@ from tinker_cookbook.recipes.audio.asr.env import (
 )
 from tinker_cookbook.supervised import train
 from tinker_cookbook.utils.lr_scheduling import LRSchedule
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 
 @chz.chz
 class Config:
-    log_path: str = "/tmp/tinker-examples/audio-asr"
+    log_path: str = cli_utils.runs_path("audio-asr")
     model_name: str = "thinkingmachines/Inkling"
     base_url: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
@@ -54,7 +55,7 @@ class Config:
     n_train: int = 64
     n_eval: int = 32
     shuffle_buffer_size: int = 1_000  # buffered rows carry decoded audio; keep modest
-    audio_cache_dir: str = "/tmp/tinker-examples/audio-asr-clips"
+    audio_cache_dir: str = "~/.cache/tinker-cookbook/audio-asr-clips"
     max_length: int = 8192
     seed: int = 0  # data selection + epoch shuffling
 
@@ -76,6 +77,9 @@ class Config:
     # Logging
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set, otherwise a
+    # default name based on the recipe is used.
+    session_name: str | None = None
 
 
 def cli_main(cfg: Config) -> None:
@@ -119,6 +123,8 @@ def cli_main(cfg: Config) -> None:
         eval_every=cfg.eval_every,
         wandb_project=cfg.wandb_project,
         wandb_name=cfg.wandb_name,
+        session_name=cfg.session_name
+        or default_cookbook_session_name("audio-asr-sl", wandb_name=cfg.wandb_name),
     )
     asyncio.run(train.main(train_config))
 

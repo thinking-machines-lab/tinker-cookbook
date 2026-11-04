@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 
 import chz
 import tinker
@@ -7,6 +6,7 @@ from inspect_ai import Tasks, eval_async
 from inspect_ai.model import GenerateConfig as InspectAIGenerateConfig
 from inspect_ai.model import Model as InspectAIModel
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.eval.inspect_utils import InspectAPIFromTinkerSampling
 from tinker_cookbook.exceptions import ConfigurationError
@@ -50,6 +50,7 @@ class InspectEvaluatorBuilder:
     # Maximum number of samples to evaluate. If None, evaluates all samples.
     limit: int | None = None
     debug_errors: bool = True
+    # Directory for Inspect eval logs. If None, uses cli_utils.runs_path("inspect-logs").
     log_dir: str | None = None
     # Maximum concurrent sampling requests to Tinker.
     max_connections: int = 512
@@ -119,7 +120,7 @@ class InspectEvaluator(SamplingClientEvaluator):
             # the inspect evaluation can still fail if e.g. the parser returns an error for
             # a given sample.
             fail_on_error=False,
-            log_dir=self.config.log_dir or str(Path("~/inspect-logs").expanduser()),
+            log_dir=self.config.log_dir or cli_utils.runs_path("inspect-logs"),
             max_connections=self.config.max_connections,
             log_level=self.config.log_level,
             log_realtime=False,

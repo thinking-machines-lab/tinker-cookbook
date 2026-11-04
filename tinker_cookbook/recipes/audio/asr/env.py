@@ -110,7 +110,7 @@ class AudioASRDatasetBuilder(SupervisedDatasetBuilder):
         )
         if not self.n_eval:
             return train_ds, None
-        # The eval dataset feeds the auto-added NLLEvaluator ("test/nll").
+        # The eval dataset feeds the auto-added SamplerNLLEvaluator ("test/nll").
         eval_clips = load_clips(
             self.audio_cache_dir, "validation", self.n_eval, self.seed, self.shuffle_buffer_size
         )

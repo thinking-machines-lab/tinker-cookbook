@@ -83,20 +83,18 @@ def grader_fn(response: str, target: str) -> bool:
     return target.lower() in response.lower()
 
 
-evaluator = CustomEvaluator(
-    dataset=QA_DATASET,
-    grader_fn=grader_fn,
-    renderer_name="qwen3_5_disable_thinking",
-    model_name="Qwen/Qwen3.5-9B",
-)
-
-service_client = tinker.ServiceClient()
-sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.5-9B")
-
-
 async def main():
+    evaluator = CustomEvaluator(
+        dataset=QA_DATASET,
+        grader_fn=grader_fn,
+        renderer_name="qwen3_5_disable_thinking",
+        model_name="Qwen/Qwen3.5-9B",
+    )
+    service_client = tinker.ServiceClient()
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.5-9B")
     result = await evaluator(sampling_client)
     print(result)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

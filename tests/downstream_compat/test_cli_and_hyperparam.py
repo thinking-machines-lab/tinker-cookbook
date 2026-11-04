@@ -247,6 +247,24 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 2_440_000,
         (False, False, True): 136_448,
     },
+    "deepseek-ai/DeepSeek-V4.1-Flash": {
+        (True, True, True): 108_821_760,
+        (True, True, False): 108_687_360,
+        (True, False, True): 107_808_000,
+        (True, False, False): 107_673_600,
+        (False, True, True): 1_148_160,
+        (False, True, False): 1_013_760,
+        (False, False, True): 134_400,
+    },
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017": {
+        (True, True, True): 108_821_760,
+        (True, True, False): 108_687_360,
+        (True, False, True): 107_808_000,
+        (True, False, False): 107_673_600,
+        (False, True, True): 1_148_160,
+        (False, True, False): 1_013_760,
+        (False, False, True): 134_400,
+    },
     "meta-llama/Llama-3.1-70B": {
         (True, True, True): 13_079_808,
         (True, True, False): 12_943_360,
@@ -346,6 +364,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 584_832,
         (False, False, True): 133_760,
     },
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": {
+        (True, True, True): 113_160_192,
+        (True, True, False): 113_025_024,
+        (True, False, True): 111_484_928,
+        (True, False, False): 111_349_760,
+        (False, True, True): 1_810_432,
+        (False, True, False): 1_675_264,
+        (False, False, True): 135_168,
+    },
     "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": {
         (True, True, True): 113_160_192,
         (True, True, False): 113_025_024,
@@ -408,6 +435,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, True): 3_081_344,
         (False, True, False): 2_920_320,
         (False, False, True): 161_024,
+    },
+    "zai-org/GLM-5.3-Flash": {
+        (True, True, True): 77_923_584,
+        (True, True, False): 77_764_608,
+        (True, False, True): 75_914_496,
+        (True, False, False): 75_755_520,
+        (False, True, True): 2_168_064,
+        (False, True, False): 2_009_088,
+        (False, False, True): 158_976,
     },
 }
 

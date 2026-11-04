@@ -23,3 +23,13 @@ repos:
     # Run the formatter.
     - id: ruff-format
       exclude: tool_declaration_ts\.py$
+
+- repo: local
+  hooks:
+    - id: trufflehog
+      name: trufflehog secret scan
+      entry: .github/workflows/scripts/trufflehog.sh
+      language: script
+      stages: [pre-commit]
+      pass_filenames: true
+      require_serial: true

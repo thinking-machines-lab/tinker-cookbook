@@ -85,6 +85,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     compute_post_kl: bool = False
 
     # Evaluation and checkpointing
@@ -120,7 +123,7 @@ async def cli_main(cli_config: CLIConfig):
             f"{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-"
             f"{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_path = f"/tmp/tinker-examples/distillation/{run_name}"
+        log_path = cli_utils.runs_path("distillation", run_name)
 
     # Create wandb name if not specified
     if cli_config.wandb_name is not None:
@@ -166,6 +169,7 @@ async def cli_main(cli_config: CLIConfig):
         loss_fn_config=cli_config.loss_fn_config,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         log_path=log_path,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,

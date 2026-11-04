@@ -91,6 +91,9 @@ class BenchmarkConfig:
     # Logging
     log_root: str | None = None
     wandb_project: str | None = None
+    # Prefix for Tinker session display names; each phase appends its name and dataset.
+    # When unset, the phase's W&B run name is used.
+    session_name: str | None = None
     base_url: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
@@ -100,7 +103,7 @@ def _make_log_path(config: BenchmarkConfig, phase: str) -> str:
     if config.log_root:
         root = config.log_root
     else:
-        root = "/tmp/tinker-examples/sdft-benchmark"
+        root = cli_utils.runs_path("sdft-benchmark")
     model_slug = config.model_name.replace("/", "-")
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
     return f"{root}/{config.dataset}-{model_slug}-{phase}-{timestamp}"
@@ -179,6 +182,9 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
         log_path=log_path,
         wandb_project=config.wandb_project,
         wandb_name=f"sdft-bench-sft-{config.dataset}",
+        session_name=f"{config.session_name}-sft-{config.dataset}"
+        if config.session_name
+        else f"sdft-bench-sft-{config.dataset}",
         base_url=config.base_url,
         eval_every=config.eval_every,
         save_every=config.save_every,
@@ -242,6 +248,9 @@ async def run_sdft(config: BenchmarkConfig) -> str | None:
         log_path=log_path,
         wandb_project=config.wandb_project,
         wandb_name=f"sdft-bench-sdft-{config.dataset}",
+        session_name=f"{config.session_name}-sdft-{config.dataset}"
+        if config.session_name
+        else f"sdft-bench-sdft-{config.dataset}",
         max_steps=config.max_steps,
     )
 
@@ -399,7 +408,7 @@ async def cli_main(config: BenchmarkConfig) -> None:
         logger.info("=" * 60)
 
     # Save summary
-    log_root = config.log_root or "/tmp/tinker-examples/sdft-benchmark"
+    log_root = config.log_root or cli_utils.runs_path("sdft-benchmark")
     summary_path = Path(log_root) / f"benchmark_summary_{config.dataset}.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with open(summary_path, "w") as f:

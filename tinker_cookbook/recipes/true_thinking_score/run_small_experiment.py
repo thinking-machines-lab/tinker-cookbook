@@ -21,6 +21,7 @@ from pathlib import Path
 
 import tinker
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.true_thinking_score.tts import generate_cot_and_compute_tts
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 
@@ -56,7 +57,7 @@ MODEL_NAME = "Qwen/Qwen3.5-4B"
 
 
 async def main():
-    log_dir = Path("/tmp/tinker-tts-experiment")
+    log_dir = Path(cli_utils.runs_path("tts-experiment"))
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=== TTS Small-Scale Experiment ===")

@@ -55,6 +55,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps: int | None = None
@@ -68,7 +71,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         f"_lr{cli_config.learning_rate}_rank{cli_config.lora_rank}_{date_and_time}"
     )
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/verifiers_rl/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("verifiers_rl", run_name)
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
     env_args = json.loads(cli_config.vf_env_args) if cli_config.vf_env_args else {}
@@ -150,6 +153,7 @@ async def cli_main(cli_config: CLIConfig, env: Any | None):
         num_substeps=cli_config.num_substeps,
         wandb_project=cli_config.wandb_project,
         wandb_name=cli_config.wandb_name or run_name,
+        session_name=cli_config.session_name or cli_config.wandb_name or run_name,
         log_path=log_path,
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,

@@ -36,15 +36,13 @@ In the example below, the same model (`Qwen/Qwen3.6-35B-A3B`) is used as both te
 Generate prompt distillation data using the teacher model with [`create_data.py`](create_data.py):
 
 ```bash
-mkdir -p /tmp/tinker-datasets
-python -m tinker_cookbook.recipes.prompt_distillation.create_data \
-  output_file=/tmp/tinker-datasets/prompt_distillation_lang.jsonl
+python -m tinker_cookbook.recipes.prompt_distillation.create_data
 ```
 
 This command will:
 
 - Use the configured teacher model to generate language classification examples
-- Save the distilled dataset to the specified output file
+- Save the distilled dataset to `~/tinker-runs/prompt_distillation/data/prompt_distillation_lang.jsonl` (override with `output_file=...`); the training step reads from the same path by default
 - Create diverse training examples suitable for student model fine-tuning
 
 ### Step 2: Train the Student Model

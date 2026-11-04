@@ -12,7 +12,54 @@ import tinker
 import torch
 
 from tinker_cookbook.utils import trace
+from tinker_cookbook.utils.cost_estimation import TokenUsage
 from tinker_cookbook.utils.misc_utils import safezip
+
+
+def _full_sequence_inputs(data_D: list[tinker.Datum]) -> list[tinker.ModelInput]:
+    """Rebuild each datum's unshifted token sequence (its input plus the last target)."""
+    return [
+        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
+        for datum in data_D
+    ]
+
+
+@trace.scope
+async def score_sequences(
+    sampling_client: tinker.SamplingClient, sequence_inputs: list[tinker.ModelInput]
+) -> tuple[list[list[float | None]], TokenUsage]:
+    """Prompt logprobs of each sequence under ``sampling_client``, plus what the calls used.
+
+    Each sequence is sent as one ``sample_async`` request with
+    ``include_prompt_logprobs=True`` and ``max_tokens=1``: the same request
+    ``compute_logprobs`` makes, but keeping the whole ``SampleResponse`` so
+    the usage it reports can be counted. Requests run concurrently.
+
+    Returns:
+        The per-sequence prompt logprobs (``None`` for positions the server
+        does not score, as from ``compute_logprobs``), and the usage: the
+        prompt tokens split by the prefix-cache hits each response reports,
+        and the tokens the requests actually returned as sampled.
+    """
+    responses = await asyncio.gather(
+        *[
+            sampling_client.sample_async(
+                prompt=sequence_input,
+                num_samples=1,
+                sampling_params=tinker.SamplingParams(max_tokens=1),
+                include_prompt_logprobs=True,
+            )
+            for sequence_input in sequence_inputs
+        ]
+    )
+    prompt_tokens = sum(sequence_input.length for sequence_input in sequence_inputs)
+    cached_tokens = sum(r.prompt_cache_hit_tokens for r in responses)
+    usage = TokenUsage(
+        sampled=sum(len(seq.tokens) for r in responses for seq in r.sequences),
+        prefill_cached=cached_tokens,
+        prefill_uncached=prompt_tokens - cached_tokens,
+    )
+    return [cast(list[float | None], r.prompt_logprobs) for r in responses], usage
 
 
 def compute_kl_sample_train(
@@ -70,7 +117,7 @@ def compute_kl_sample_train(
 @trace.scope
 async def compute_post_kl(
     data_D: list[tinker.Datum], post_sampling_client: tinker.SamplingClient
-) -> dict[str, float]:
+) -> tuple[dict[str, float], TokenUsage]:
     """Compute post-update KL divergence metrics.
 
     Measures how much the policy changed after a training update by computing
@@ -87,22 +134,17 @@ async def compute_post_kl(
             with the post-update model weights.
 
     Returns:
-        dict[str, float]: Dictionary with keys:
+        tuple[dict[str, float], TokenUsage]: Dictionary with keys:
             - ``kl_pre_post_v1``: Mean logprob difference (first-order KL estimate).
             - ``kl_pre_post_v2``: Half mean squared logprob difference (second-order KL).
+
+            and the usage of the scoring calls, from :func:`score_sequences`.
     """
     # Compute logprobs at all data items
     # This is a bit ugly, but we first reconstruct the original sequence from before we did the
     # shifting to get the inputs and targets.
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
-    new_logprobs_D = await asyncio.gather(
-        *[
-            post_sampling_client.compute_logprobs_async(sequence_input)
-            for sequence_input in full_sequence_inputs_D
-        ]
+    new_logprobs_D, usage = await score_sequences(
+        post_sampling_client, _full_sequence_inputs(data_D)
     )
 
     prev_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
@@ -117,7 +159,7 @@ async def compute_post_kl(
     kl_post_v1 = flat_diffs.mean().item()
     kl_post_v2 = 0.5 * (flat_diffs**2).mean().item()
 
-    return {"kl_pre_post_v1": kl_post_v1, "kl_pre_post_v2": kl_post_v2}
+    return {"kl_pre_post_v1": kl_post_v1, "kl_pre_post_v2": kl_post_v2}, usage
 
 
 @trace.scope
@@ -126,7 +168,7 @@ async def incorporate_kl_penalty(
     base_sampling_client: tinker.SamplingClient,
     kl_penalty_coef: float,
     kl_discount_factor: float,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], TokenUsage]:
     """Compute KL penalty against the base model and adjust advantages in-place.
 
     Computes the per-token logprob difference between the sampling policy and
@@ -151,20 +193,14 @@ async def incorporate_kl_penalty(
             future sums of the KL penalty. Set to 0 to disable discounting.
 
     Returns:
-        dict[str, float]: Dictionary with key ``kl_policy_base`` containing the
-            mean logprob difference between the sampling policy and base model
-            (averaged over action tokens).
+        tuple[dict[str, float], TokenUsage]: Dictionary with key
+            ``kl_policy_base`` containing the mean logprob difference between
+            the sampling policy and base model (averaged over action tokens),
+            and the usage of the scoring calls, from :func:`score_sequences`.
     """
     # Compute logprobs at all data items
-    full_sequence_inputs_D = [
-        datum.model_input.append_int(cast(int, datum.loss_fn_inputs["target_tokens"].data[-1]))
-        for datum in data_D
-    ]
-    base_logprobs_D = await asyncio.gather(
-        *[
-            base_sampling_client.compute_logprobs_async(sequence_input)
-            for sequence_input in full_sequence_inputs_D
-        ]
+    base_logprobs_D, usage = await score_sequences(
+        base_sampling_client, _full_sequence_inputs(data_D)
     )
     # compute the logprob differences, zeroed out when the mask == 0
     sampled_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
@@ -186,7 +222,7 @@ async def incorporate_kl_penalty(
             datum.loss_fn_inputs["advantages"].to_torch() + kl_advantages
         )
 
-    return {"kl_policy_base": float(avg_logp_diff)}
+    return {"kl_policy_base": float(avg_logp_diff)}, usage
 
 
 def discounted_future_sum_vectorized(x: torch.Tensor, gamma: float) -> torch.Tensor:

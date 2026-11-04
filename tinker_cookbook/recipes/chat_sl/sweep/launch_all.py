@@ -31,6 +31,8 @@ import asyncio
 import sys
 from dataclasses import dataclass
 
+from tinker_cookbook import cli_utils
+
 # ---------------------------------------------------------------------------
 # Model sweep configurations
 # ---------------------------------------------------------------------------
@@ -115,9 +117,6 @@ NEW_MODELS: list[ModelSweepConfig] = [
 # ---------------------------------------------------------------------------
 
 
-SWEEP_ROOT = "/tmp/tinker-sweeps"
-
-
 def build_sweep_command(
     cfg: ModelSweepConfig, jobs_per_model: int, skip_existing: bool = False
 ) -> list[str]:
@@ -128,7 +127,7 @@ def build_sweep_command(
     # Use a model-specific sweep directory to avoid collisions when
     # multiple models launch concurrently with the same timestamp.
     model_slug = cfg.model_name.replace("/", "-")
-    sweep_dir = f"{SWEEP_ROOT}/{model_slug}"
+    sweep_dir = cli_utils.runs_path("sweeps", model_slug)
 
     cmd = [
         sys.executable,
@@ -159,7 +158,7 @@ async def run_model_sweep(
     jobs_per_model: int,
     dry_run: bool,
     semaphore: asyncio.Semaphore,
-    log_dir: str = "/tmp/tinker-sweep-logs",
+    log_dir: str = cli_utils.runs_path("sweep-logs"),
     skip_existing: bool = False,
 ) -> tuple[str, bool]:
     """Run sweep for one model, respecting the concurrency semaphore."""

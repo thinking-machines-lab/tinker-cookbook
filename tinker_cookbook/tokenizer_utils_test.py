@@ -106,3 +106,15 @@ def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -
 
     mock_adapter.assert_called_once_with("thinkingmachines/Inkling")
     assert tokenizer is mock_adapter.return_value
+
+
+@patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
+def test_nemotron_3_5_super_tokenizer_skips_remote_code(
+    mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only its config.json is remote code; an explicit False avoids the interactive prompt."""
+    monkeypatch.delenv("HF_TRUST_REMOTE_CODE", raising=False)
+    _get_hf_tokenizer("nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16")
+    mock_auto.from_pretrained.assert_called_once_with(
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16", trust_remote_code=False
+    )

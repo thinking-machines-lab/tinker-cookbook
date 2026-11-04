@@ -505,7 +505,7 @@ def save_checkpoint(
         save_checkpoint(
             training_client=training_client,
             name="step-100",
-            log_path="./logs",
+            log_path=cli_utils.runs_path("my-run"),
             loop_state={"epoch": 0, "batch": 100},
         )
     """
@@ -551,7 +551,7 @@ class CheckpointManager:
         mgr = CheckpointManager(
             training_client=tc,
             service_client=sc,
-            log_path="/tmp/logs",
+            log_path=cli_utils.runs_path("my-run"),
             save_every=20,
             rolling_save_every=1,
         )
@@ -753,9 +753,9 @@ class CheckpointManager:
         deleted so that the last entry in ``checkpoints.jsonl`` always points
         to valid server-side data.
         """
-        # Drain any in-flight periodic save so its record lands in
-        # checkpoints.jsonl *before* the final record.
+        # Pending save records must precede the final record in checkpoints.jsonl.
         await self._resolve_pending_periodic_async()
+        await self._resolve_pending_rolling_async()
         paths = await save_checkpoint_async(
             training_client=self._training_client,
             name="final",

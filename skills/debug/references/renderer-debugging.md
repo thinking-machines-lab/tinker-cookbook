@@ -14,7 +14,8 @@ Key renderer methods:
 ## Check your transformers version first
 
 Different `transformers` versions have known bugs that affect specific models:
-- `transformers == 5.3.0`: Incorrect `tokenizer_class` for DeepSeek V2/V3 on the hub (huggingface/transformers#44801, fixed in 5.3.1). Causes tokenizer loading to fail or use the wrong tokenizer class.
+- `transformers == 5.3.0` or `5.6.x`: `AutoTokenizer` resolves DeepSeek V2/V3 to `LlamaTokenizer`, which strips spaces on decode (huggingface/transformers#44801). Renderer parse tests show `"I'mfine,thankyou!"` style output. Upgrade to `>=5.7.0`.
+- `transformers 5.4.0`–`5.5.3`: Kimi K2 tokenizer resolves to the wrong class on some platforms. Use `5.5.4` or `>=5.7.0`.
 - `transformers < 5.0`: Bug in `Qwen2VLImageProcessor` — miscounts image tokens for VL models
 - Always print `transformers.__version__` in your debug output
 

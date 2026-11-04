@@ -21,7 +21,7 @@ _QWEN3 = ("qwen3", "qwen3_disable_thinking")
 _QWEN3_INSTRUCT = ("qwen3_instruct",)
 _QWEN3_VL = ("qwen3_vl",)
 _QWEN3_VL_INSTRUCT = ("qwen3_vl_instruct",)
-_QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking")
+_QWEN3_5 = ("qwen3_5", "qwen3_5_disable_thinking", "qwen3_5_preserve_thinking")
 _QWEN3_8 = (
     "qwen3_8_xhigh_reasoning",
     "qwen3_8_disable_thinking",
@@ -29,6 +29,13 @@ _QWEN3_8 = (
     "qwen3_8_low_reasoning",
 )
 _DEEPSEEKV3 = ("deepseekv3", "deepseekv3_thinking")
+_DEEPSEEKV4_1 = (
+    "deepseekv4_1",
+    "deepseekv4_1_low_reasoning",
+    "deepseekv4_1_max_reasoning",
+    "deepseekv4_1_disable_thinking",
+    "deepseekv4_1_preserve_thinking",
+)
 _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
@@ -154,6 +161,9 @@ def get_deepseek_info() -> dict[str, ModelAttributes]:
     return {
         "DeepSeek-V3.1": ModelAttributes(org, "3", "671B-A37B", True, _DEEPSEEKV3),
         "DeepSeek-V3.1-Base": ModelAttributes(org, "3", "671B-A37B", False, _ROLE_COLON),
+        # Image support is coming soon.
+        "DeepSeek-V4.1-Flash": ModelAttributes(org, "4.1", "552B-A16B", True, _DEEPSEEKV4_1),
+        "DeepSeek-V4.1-Flash-1017": ModelAttributes(org, "4.1", "552B-A16B", True, _DEEPSEEKV4_1),
     }
 
 
@@ -199,6 +209,8 @@ def get_zai_info() -> dict[str, ModelAttributes]:
     org = "zai-org"
     return {
         "GLM-5.3": ModelAttributes(org, "5.3", "744B-A40B", True, _GLM5_3),
+        # Image support is coming soon.
+        "GLM-5.3-Flash": ModelAttributes(org, "5.3", "320B-A18B", True, _GLM5_3),
     }
 
 
@@ -223,6 +235,9 @@ def get_nvidia_info() -> dict[str, ModelAttributes]:
         ),
         "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": ModelAttributes(
             org, "3.5", "30B-A3B", True, _NEMOTRON3_LIGHTNING
+        ),
+        "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": ModelAttributes(
+            org, "3.5", "120B-A12B", True, _NEMOTRON3_ULTRA, is_vl=True
         ),
     }
 

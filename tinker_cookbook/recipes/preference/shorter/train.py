@@ -28,6 +28,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
@@ -42,7 +45,7 @@ def cli_main(cli_config: CLIConfig):
     model_tag = model_name.replace("/", "-")
     run_name = f"shorter-{model_tag}-{cli_config.batch_size}batch-{cli_config.group_size}group-{cli_config.learning_rate}lr-{date_and_time}"
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/shorter/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("shorter", run_name)
     wandb_name = cli_config.wandb_name or run_name
 
     comparison_builder = ShorterComparisonBuilder()
@@ -67,6 +70,7 @@ def cli_main(cli_config: CLIConfig):
         compute_post_kl=True,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         max_steps=cli_config.max_steps,
     )
 

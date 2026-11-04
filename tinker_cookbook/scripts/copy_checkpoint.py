@@ -1,4 +1,7 @@
-"""Copy trainable Tinker weights into the currently authenticated account.
+"""Deprecated: use `ServiceClient.copy_weights()` instead.
+See the [copy_weights API reference](https://tinker-docs.thinkingmachines.ai/tinker/api-reference/serviceclient/#copy_weights).
+
+Copy trainable Tinker weights into the currently authenticated account.
 
 This copies a trainable Tinker checkpoint by loading the source weights and
 saving them as a new destination-owned checkpoint.
@@ -34,6 +37,8 @@ import re
 
 import tinker
 
+from tinker_cookbook.utils.deprecation import warn_deprecated
+
 CHECKPOINT_NAME_RE = re.compile(r"/weights/([^/]+)$")
 TRAINING_WEIGHTS_PATH_RE = re.compile(r"/weights/[^/]+$")
 
@@ -45,6 +50,10 @@ def copy_checkpoint(
     output_name: str | None,
     output_kind: str,
 ) -> None:
+    warn_deprecated(
+        "copy_checkpoint",
+        message="Use ServiceClient.copy_weights() instead. This script will be removed in a future release.",
+    )
     if not TRAINING_WEIGHTS_PATH_RE.search(source_path):
         raise SystemExit(
             f"Source path must be a tinker://.../weights/<name> checkpoint, "

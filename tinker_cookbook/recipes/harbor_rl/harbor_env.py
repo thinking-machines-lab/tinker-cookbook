@@ -120,7 +120,9 @@ class HarborEnvGroupBuilder(EnvGroupBuilder):
         self.max_trajectory_tokens = max_trajectory_tokens
         self.max_generation_tokens = max_generation_tokens
         self.context_overflow_reward = context_overflow_reward
-        self.sandbox_factory = sandbox_factory or default_sandbox_factory
+        self.sandbox_factory = (
+            sandbox_factory if sandbox_factory is not None else default_sandbox_factory
+        )
         self.reward_fn = reward_fn
         self._sandboxes: list[SandboxInterface] = []
 

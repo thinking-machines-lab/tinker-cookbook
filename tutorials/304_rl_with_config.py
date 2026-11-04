@@ -177,12 +177,13 @@ def _(mo):
 
 @app.cell
 def _(ArithmeticDatasetBuilder):
+    from tinker_cookbook import cli_utils
     from tinker_cookbook.rl import train as rl_train
 
     MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     rl_config = rl_train.Config(
-        log_path="/tmp/tinker-tutorials/rl-config",
+        log_path=cli_utils.runs_path("tutorials", "rl-config"),
         model_name=MODEL_NAME,
         recipe_name="tutorial_rl",
         dataset_builder=ArithmeticDatasetBuilder(
@@ -246,10 +247,10 @@ def _(mo):
 
 
 @app.cell
-def _():
+def _(rl_config):
     from pathlib import Path
 
-    log_dir = Path("/tmp/tinker-tutorials/rl-config")
+    log_dir = Path(rl_config.log_path)
     if log_dir.exists():
         for f in sorted(log_dir.iterdir()):
             print(f"  {f.name}")

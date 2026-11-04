@@ -1,9 +1,9 @@
 """
 Nemotron family renderer.
 
-The supported Nemotron models (3 Nano, 3 Super, 3 Ultra, and 3.5 Lightning)
-use a chat format similar to Qwen3.5 (im_start/im_end tokens, thinking blocks,
-XML-style tool calls) but differ in the following ways:
+The supported Nemotron models (3 Nano, 3 Super, 3 Ultra, 3.5 Lightning, and
+3.5 Super) use a chat format similar to Qwen3.5 (im_start/im_end tokens,
+thinking blocks, XML-style tool calls) but differ in the following ways:
 
 1. Tool declarations: Nemotron uses structured XML inside <tools>...</tools>
    (Qwen3.5 uses JSON per line).
@@ -15,8 +15,8 @@ XML-style tool calls) but differ in the following ways:
    to ALL assistant messages that lack thinking, including historical ones
    (Qwen3.5 only does this for messages after the last user query).
 
-4. Think block separator: Nano/Super use one newline between </think> and
-   text content (Qwen3.5 uses two newlines). Ultra and 3.5 Lightning use no
+4. Think block separator: 3 Nano/3 Super use one newline between </think> and
+   text content (Qwen3.5 uses two newlines). Ultra and the 3.5 models use no
    separator newline.
 
 5. Disable-thinking generation suffix: <think></think> with no trailing
@@ -30,9 +30,9 @@ XML-style tool calls) but differ in the following ways:
 
 Thinking modes
 --------------
-These Nemotron models support reasoning ON/OFF. Super additionally supports a
-low-effort reasoning mode that produces shorter thinking traces; Ultra
-additionally supports a medium-effort reasoning mode.
+These Nemotron models support reasoning ON/OFF. 3 Super additionally supports a
+low-effort reasoning mode that produces shorter thinking traces; 3 Ultra and
+3.5 Super additionally support a medium-effort reasoning mode.
 
 +---------------------+-------------------------------+---------------------+
 | Mode                | HF template params            | Renderer name       |
@@ -40,11 +40,11 @@ additionally supports a medium-effort reasoning mode.
 | Reasoning ON (full) | enable_thinking=True          | nemotron3           |
 +---------------------+-------------------------------+---------------------+
 | Low-effort thinking | enable_thinking=True,         | nemotron3_low       |
-| (Super only)        | low_effort=True               | _thinking           |
+| (3 Super only)      | low_effort=True               | _thinking           |
 +---------------------+-------------------------------+---------------------+
 | Medium-effort       | enable_thinking=True,         | nemotron3_ultra     |
 | thinking            | medium_effort=True            | _medium_thinking    |
-| (Ultra only)        |                               |                     |
+| (Ultra, 3.5 Super)  |                               |                     |
 +---------------------+-------------------------------+---------------------+
 | Reasoning OFF       | enable_thinking=False         | nemotron3_disable   |
 |                     |                               | _thinking           |
@@ -54,8 +54,8 @@ The low-effort mode appends ``{reasoning effort: low}`` to the last user
 message, signaling the model to use shorter reasoning traces. The generation
 suffix remains ``<think>\\n`` (thinking is still enabled).
 
-The Ultra medium-effort mode appends ``{reasoning effort: efficient}`` to the
-last user message, matching Ultra's ``medium_effort=True`` HF template path.
+The medium-effort mode appends ``{reasoning effort: efficient}`` to the last
+user message, matching the Ultra-format ``medium_effort=True`` HF template path.
 
 Reference: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
 """
@@ -64,7 +64,9 @@ import dataclasses
 import json
 from collections.abc import Mapping
 
+from tinker_cookbook.image_processing_utils import ImageProcessor
 from tinker_cookbook.renderers.base import (
+    ContentPart,
     ImagePart,
     Message,
     RenderContext,
@@ -151,6 +153,11 @@ class Nemotron3Renderer(Qwen3_5Renderer):
       message when none is present, matching HF template behavior.
     """
 
+    @property
+    def has_extension_property(self) -> bool:
+        """With thinking preserved, history renders each turn as a supervised example does."""
+        return not self.strip_thinking_from_history
+
     def _normalize_messages(self, messages: list[Message]) -> list[Message]:
         """Prepend empty system message if not present.
 
@@ -229,6 +236,11 @@ class Nemotron3Renderer(Qwen3_5Renderer):
                 return "<think></think>\n"
         return "<think></think>"
 
+    def _trim_content(self, content: str | list[ContentPart]) -> str | list[ContentPart]:
+        # Nemotron's template does not trim user, system, or tool content, so list
+        # content passes through unchanged.
+        return content.strip() if isinstance(content, str) else content
+
     def render_message(self, message: Message, ctx: RenderContext) -> RenderedMessage:
         """Render a message, using idx < last_user_index for thinking stripping.
 
@@ -246,6 +258,32 @@ class Nemotron3Renderer(Qwen3_5Renderer):
     def _format_thinking_text(self, thinking: str) -> str:
         """Nemotron-3 uses a single separator newline after </think>."""
         return f"<think>\n{thinking}\n</think>\n"
+
+    def _wrap_image_parts(self, parts: list[ImagePart | TextPart]) -> list[ImagePart | TextPart]:
+        """Match the Nemotron-3.5 Super template and processor.
+
+        The HF processor expands each ``<image>`` placeholder to ``<img>``, the image
+        tokens, and ``</img>``. The template starts an image on a new line when it follows
+        text, and labels each image ``<image N>`` when a message has more than one, counted
+        per message.
+        """
+        num_images = sum(part["type"] == "image" for part in parts)
+        chunks: list[ImagePart | TextPart] = []
+        image_index = 0
+        text_before = ""  # the last non-empty text since the previous image
+        for part in parts:
+            if part["type"] != "image":
+                chunks.append(part)
+                text_before = part["text"] or text_before
+                continue
+            image_index += 1
+            newline = "\n" if text_before and not text_before.endswith("\n") else ""
+            label = f"<image {image_index}>" if num_images > 1 else ""
+            chunks.append(TextPart(type="text", text=f"{newline}{label}<img>"))
+            chunks.append(part)
+            chunks.append(TextPart(type="text", text="</img>"))
+            text_before = ""
+        return chunks
 
     def _wrap_qwen_tool_response_chunks(
         self, chunks: list[ImagePart | TextPart]
@@ -432,7 +470,7 @@ class Nemotron3LowThinkingRenderer(Nemotron3Renderer):
 
 
 class Nemotron3UltraRenderer(Nemotron3Renderer):
-    """Renderer for Nemotron-3 Ultra and Nemotron-3.5 Lightning.
+    """Renderer for Nemotron-3 Ultra and the Nemotron-3.5 models.
 
     Ultra mostly shares Nemotron-3's XML tool format and empty system-message
     behavior, but its HF template differs from Nano/Super in the formatting of
@@ -483,14 +521,16 @@ class Nemotron3UltraPreserveThinkingRenderer(Nemotron3UltraRenderer):
     collapsing it to ``<think></think>``. See that class for when to use it.
     """
 
-    def __init__(self, tokenizer: Tokenizer):
-        super().__init__(tokenizer, strip_thinking_from_history=False)
+    def __init__(self, tokenizer: Tokenizer, image_processor: ImageProcessor | None = None):
+        super().__init__(
+            tokenizer, image_processor=image_processor, strip_thinking_from_history=False
+        )
 
 
 class Nemotron3UltraMediumThinkingRenderer(Nemotron3UltraRenderer):
-    """Renderer for Nemotron-3 Ultra with medium-effort reasoning.
+    """Renderer for Nemotron-3 Ultra and 3.5 Super with medium-effort reasoning.
 
-    Matches Ultra's HF template with ``enable_thinking=True`` and
+    Matches the Ultra-format HF template with ``enable_thinking=True`` and
     ``medium_effort=True`` by appending ``{reasoning effort: efficient}`` to
     the last user message.
     """
@@ -499,11 +539,12 @@ class Nemotron3UltraMediumThinkingRenderer(Nemotron3UltraRenderer):
         """Render message, appending medium-effort suffix to the last user message."""
         if message["role"] == "user" and ctx.idx == ctx.last_user_index:
             content = message.get("content", "")
-            assert isinstance(content, str), (
-                "Nemotron-3 Ultra medium-thinking mode is text-only; list content not supported"
-            )
+            suffix = "\n\n{reasoning effort: efficient}"
             message = message.copy()
-            message["content"] = content + "\n\n{reasoning effort: efficient}"
+            if isinstance(content, str):
+                message["content"] = content + suffix
+            else:
+                message["content"] = [*content, TextPart(type="text", text=suffix)]
         return super().render_message(message, ctx)
 
 

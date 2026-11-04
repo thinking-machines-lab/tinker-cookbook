@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Literal
@@ -8,6 +9,25 @@ from tinker_cookbook.exceptions import ConfigurationError
 logger = logging.getLogger(__name__)
 
 LogdirBehavior = Literal["delete", "resume", "ask", "raise"]
+
+RUNS_DIR_ENV_VAR = "TINKER_COOKBOOK_RUNS_DIR"
+DEFAULT_RUNS_DIR = "~/tinker-runs"
+
+
+def runs_path(*parts: str) -> str:
+    """Return a path under the cookbook runs directory, for default output locations.
+
+    The runs directory is ``$TINKER_COOKBOOK_RUNS_DIR`` if set, otherwise
+    ``~/tinker-runs``. Recipes use it for logs, checkpoints, and generated data
+    when no explicit path is given. Avoid ``/tmp`` for these: many machines clear
+    it on reboot.
+
+    Example::
+
+        runs_path("math_rl", run_name)  # ~/tinker-runs/math_rl/<run_name>
+    """
+    runs_dir = os.environ.get(RUNS_DIR_ENV_VAR) or DEFAULT_RUNS_DIR
+    return str(Path(runs_dir).expanduser().joinpath(*parts))
 
 
 def model_name_from_argv(argv: list[str], default: str) -> str:

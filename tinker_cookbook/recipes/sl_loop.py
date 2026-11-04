@@ -10,12 +10,13 @@ import chz
 import datasets
 import tinker
 
-from tinker_cookbook import checkpoint_utils, model_info, renderers
+from tinker_cookbook import checkpoint_utils, cli_utils, model_info, renderers
 from tinker_cookbook.supervised.common import compute_bpb, compute_mean_nll
 from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -24,7 +25,7 @@ logging.getLogger("httpx").setLevel(logging.WARN)
 @chz.chz
 class Config:
     base_url: str | None = None
-    log_path: str = "/tmp/tinker-examples/sl-loop"
+    log_path: str = cli_utils.runs_path("sl-loop")
     model_name: str = "Qwen/Qwen3.5-9B-Base"
     batch_size: int = 128
     learning_rate: float = 1e-4
@@ -36,6 +37,9 @@ class Config:
     max_steps: int | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set, otherwise a
+    # default name based on the recipe is used.
+    session_name: str | None = None
 
 
 def main(config: Config):
@@ -74,6 +78,8 @@ def main(config: Config):
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata("recipe_sl_loop"),
+        display_name=config.session_name
+        or default_cookbook_session_name("sl-loop", wandb_name=config.wandb_name),
     )
 
     # Check for resuming

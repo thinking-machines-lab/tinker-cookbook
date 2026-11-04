@@ -36,6 +36,7 @@ import chz
 import tinker
 from datasets import Dataset, load_dataset
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.math_rl.math_env import extract_gsm8k_final_answer
 from tinker_cookbook.recipes.math_rl.math_grading import extract_boxed
 from tinker_cookbook.recipes.true_thinking_score.tts import (
@@ -153,7 +154,7 @@ async def cli_main(config: CLIConfig) -> None:
             f"{config.n_problems}problems-"
             f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
         )
-        log_dir = Path(f"/tmp/tinker-examples/tts/{run_name}")
+        log_dir = Path(cli_utils.runs_path("tts", run_name))
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("=== TTS Analysis ===")

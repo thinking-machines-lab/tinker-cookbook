@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
 
 import chz
 
@@ -51,6 +50,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
@@ -111,16 +113,12 @@ async def cli_main(cli_config: CLIConfig) -> None:
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
     else:
-        log_path = f"/tmp/tinker-examples/rl_search/{run_name}"
+        log_path = cli_utils.runs_path("rl_search", run_name)
 
     if cli_config.wandb_name is not None:
         wandb_name = cli_config.wandb_name
     else:
         wandb_name = run_name
-
-    # Validate /tmp exists
-    if not Path("/tmp").exists():
-        raise ValueError("/tmp does not exist")
 
     # Check log directory
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
@@ -137,6 +135,7 @@ async def cli_main(cli_config: CLIConfig) -> None:
         eval_every=cli_config.eval_every,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         lora_rank=cli_config.lora_rank,
         stream_minibatch_config=stream_minibatch_config,
         max_steps=cli_config.max_steps,

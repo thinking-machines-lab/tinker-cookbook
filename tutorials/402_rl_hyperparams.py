@@ -195,7 +195,7 @@ def _(mo):
     | `kl_penalty_coef` | 0.0 | 0.01 to 0.1 | Regularization toward reference |
     | `group_size` | 4 | 2 to 16 | Advantage estimation quality |
     | `num_substeps` | 1 | 1 to 4 | Gradient accumulation |
-    | `loss_fn` | importance_sampling | IS, PPO | Policy gradient estimator |
+    | `loss_fn` | importance_sampling | IS, stable_reinforce, PPO | Policy gradient estimator (async runs: `AsyncConfig.loss_fn`, default stable_reinforce) |
     | `temperature` | 1.0 | 0.7 to 1.0 | Exploration vs exploitation |
     | `remove_constant_reward_groups` | False | True/False | Filter zero-signal groups |
 

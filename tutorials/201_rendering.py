@@ -265,14 +265,18 @@ def _(mo):
     |---|---|---|
     | `qwen3_5` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled (default) |
     | `qwen3_5_disable_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking disabled |
+    | `qwen3_5_preserve_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled, earlier reasoning kept in history (multi-turn RL) |
     | `qwen3_8_xhigh_reasoning` | Qwen3.8 (incl. VL) | Thinking enabled, reasoning effort xhigh (default) |
     | `qwen3_8_disable_thinking` | Qwen3.8 (incl. VL) | Thinking disabled |
-    | `glm5_3_max_reasoning` | GLM-5.3 | Max reasoning effort (default) |
-    | `glm5_3_low_reasoning` | GLM-5.3 | Low reasoning effort (thinking cannot be disabled) |
+    | `glm5_3_max_reasoning` | GLM-5.3 / GLM-5.3-Flash | Max reasoning effort (default) |
+    | `glm5_3_low_reasoning` | GLM-5.3 / GLM-5.3-Flash | Low reasoning effort (thinking cannot be disabled) |
     | `deepseekv3` | DeepSeek V3 | Non-thinking mode (default) |
     | `deepseekv3_thinking` | DeepSeek V3 | Thinking mode |
+    | `deepseekv4_1` | DeepSeek V4.1 | Thinking enabled, reasoning effort high (default) |
+    | `deepseekv4_1_disable_thinking` | DeepSeek V4.1 | Thinking disabled |
+    | `deepseekv4_1_preserve_thinking` | DeepSeek V4.1 | Thinking enabled, earlier reasoning kept in history (multi-turn RL) |
     | `nemotron3` | NVIDIA Nemotron 3 Nano/Super | Thinking enabled |
-    | `nemotron3_ultra` | NVIDIA Nemotron 3 Ultra / 3.5 Lightning | Thinking enabled |
+    | `nemotron3_ultra` | NVIDIA Nemotron 3 Ultra / 3.5 Lightning / 3.5 Super | Thinking enabled |
     | `kimi_k26` | Kimi K2.6 | Thinking enabled (default) |
     | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 

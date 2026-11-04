@@ -41,21 +41,23 @@ record.has("state_path")  # True
 ### Save/load helpers
 
 ```python
-from tinker_cookbook import checkpoint_utils
+from tinker_cookbook import checkpoint_utils, cli_utils
+
+log_path = cli_utils.runs_path("my_run")
 
 # Save (async)
 paths = await checkpoint_utils.save_checkpoint_async(
-    training_client=tc, name="step_100", log_path="/tmp/my_run",
+    training_client=tc, name="step_100", log_path=log_path,
     loop_state={"batch": 100, "epoch": 1},
     kind="both",  # "state", "sampler", or "both"
     ttl_seconds=None,
 )
 
 # Load checkpoint list
-records = checkpoint_utils.load_checkpoints_file("/tmp/my_run")
+records = checkpoint_utils.load_checkpoints_file(log_path)
 
 # Get last checkpoint
-record = checkpoint_utils.get_last_checkpoint("/tmp/my_run", required_key="state_path")
+record = checkpoint_utils.get_last_checkpoint(log_path, required_key="state_path")
 ```
 
 ### Resuming training
@@ -64,7 +66,7 @@ record = checkpoint_utils.get_last_checkpoint("/tmp/my_run", required_key="state
 behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"  # "ask", "delete", "resume"
 
 if config.load_checkpoint_path:
-    tc.load_state_with_optimizer(config.load_checkpoint_path)
+    tc = svc.create_training_client_from_state_with_optimizer(config.load_checkpoint_path)
 ```
 
 ### REST API / CLI management
@@ -101,7 +103,7 @@ tinker checkpoint delete <TINKER_PATH>
 from tinker_cookbook import weights
 
 adapter_dir = weights.download(
-    tinker_path="tinker://run-id/sampler_weights/final",
+    tinker_path="tinker://run-id/external_weights/final",
     output_dir="./adapter",
     base_url=None,
 )
@@ -150,7 +152,7 @@ from tinker_cookbook import weights
 
 # Step 1: Download adapter
 adapter_dir = weights.download(
-    tinker_path="tinker://run-id/sampler_weights/final",
+    tinker_path="tinker://run-id/external_weights/final",
     output_dir="./adapter",
 )
 
@@ -172,7 +174,7 @@ url = weights.publish_to_hf_hub(
 
 ### Pitfalls
 
-- `download()` expects `tinker://` path from `save_weights_for_sampler`, not `save_state`
+- `download()` accepts external weights paths (from `save_weights_external`) or training checkpoints (from `save_state`), not sampler checkpoints (from `save_weights_for_sampler`)
 - `build_hf_model()` requires the base model to be downloadable from HuggingFace
 - Set `HF_TOKEN` for private models and publishing
 - `dtype="bfloat16"` is recommended for most models
@@ -289,8 +291,9 @@ def get_text(node):
 ### Custom logging
 
 ```python
+from tinker_cookbook import cli_utils
 from tinker_cookbook.utils import ml_log
-ml_logger = ml_log.setup_logging(log_path="/tmp/my_run", wandb_project=None, wandb_name=None)
+ml_logger = ml_log.setup_logging(log_path=cli_utils.runs_path("my_run"), wandb_project=None, wandb_name=None)
 ml_logger.log_metrics({"train/loss": 0.5, "eval/accuracy": 0.85}, step=100)
 ```
 

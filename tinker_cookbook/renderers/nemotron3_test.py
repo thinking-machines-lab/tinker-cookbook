@@ -16,6 +16,7 @@ import json
 import pytest
 
 from tinker_cookbook.renderers import Message, ToolCall, ToolSpec, get_renderer
+from tinker_cookbook.renderers.base import TextPart
 from tinker_cookbook.renderers.nemotron3 import (
     Nemotron3DisableThinkingRenderer,
     Nemotron3LowThinkingRenderer,
@@ -542,6 +543,17 @@ def test_disable_thinking_generation_matches_hf(
         [r.to_openai_message(m) for m in messages],
         enable_thinking=False,
     )
+    assert cookbook == hf, (
+        f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
+    )
+
+
+def test_user_list_content_is_not_trimmed_like_hf(nemotron_tokenizer, nemotron_renderer):
+    """The template renders user content as-is, so list content keeps its whitespace."""
+    text = "  What is 2+2? \n"
+    messages = [Message(role="user", content=[TextPart(type="text", text=text)])]
+    cookbook = nemotron_renderer.build_generation_prompt(messages).to_ints()
+    hf = _hf_generation_tokens(nemotron_tokenizer, [{"role": "user", "content": text}])
     assert cookbook == hf, (
         f"Cookbook: {nemotron_tokenizer.decode(cookbook)}\nHF: {nemotron_tokenizer.decode(hf)}"
     )
@@ -1305,6 +1317,9 @@ def test_preserve_thinking_registered_in_model_info():
     assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
         "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
     )
+    assert "nemotron3_ultra_preserve_thinking" in model_info.get_recommended_renderer_names(
+        "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+    )
 
 
 # The preserve-thinking behavior isn't limited to the two named variants above:
@@ -1386,3 +1401,27 @@ def test_ultra_disable_thinking_preserve_matches_hf(nemotron_ultra_tokenizer):
         conversation_fn=get_multiturn_thinking_history_conversation,
         enable_thinking=False,
     )
+
+
+def test_parallel_tool_results_render_without_empty_chunks(nemotron_tokenizer):
+    """Consecutive tool messages share one turn header; none may render as an empty chunk."""
+    import json
+
+    from tinker_cookbook.renderers import get_renderer
+    from tinker_cookbook.renderers.base import ToolCall
+
+    def call(i: int) -> ToolCall:
+        return ToolCall(
+            id=f"c{i}",
+            function=ToolCall.FunctionBody(name="Bash", arguments=json.dumps({"command": "ls"})),
+        )
+
+    convo = [
+        {"role": "user", "content": "list files twice"},
+        {"role": "assistant", "content": "", "tool_calls": [call(1), call(2)]},
+        {"role": "tool", "content": "a.py", "tool_call_id": "c1", "name": "Bash"},
+        {"role": "tool", "content": "b.py", "tool_call_id": "c2", "name": "Bash"},
+    ]
+    for name in ("nemotron3", "nemotron3_preserve_thinking"):
+        prompt = get_renderer(name, nemotron_tokenizer).build_generation_prompt(convo)
+        assert all(getattr(c, "tokens", [0]) for c in prompt.chunks), name

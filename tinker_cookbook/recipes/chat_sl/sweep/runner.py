@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 import chz
 import pandas as pd
 
+from tinker_cookbook import cli_utils
 from tinker_cookbook.recipes.chat_sl.sweep.grid import default_run_name
 from tinker_cookbook.recipes.chat_sl.sweep.grid import grid as make_grid
 from tinker_cookbook.recipes.chat_sl.sweep.results import collect
@@ -20,8 +21,6 @@ from tinker_cookbook.recipes.chat_sl.sweep.results import collect
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-_DEFAULT_SWEEP_ROOT = "/tmp/tinker-sweeps"
 
 
 def _validate_axes(config_type: type, sweep_axes: dict[str, list[Any]]) -> None:
@@ -57,7 +56,7 @@ def _validate_config_has_log_path(config_type: type) -> None:
 def _make_sweep_dir() -> str:
     """Generate a default sweep directory with timestamp."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return os.path.join(_DEFAULT_SWEEP_ROOT, timestamp)
+    return cli_utils.runs_path("sweeps", timestamp)
 
 
 def _run_single(
@@ -120,7 +119,7 @@ def run(
             workers re-import the entry module.
         base_config: A ``@chz.chz`` config with defaults for non-swept params.
             Must have a ``log_path`` field.
-        sweep_dir: Directory for run outputs. Default: ``/tmp/tinker-sweeps/{timestamp}/``.
+        sweep_dir: Directory for run outputs. Default: ``~/tinker-runs/sweeps/{timestamp}/``.
         max_parallel: Number of parallel workers. 1 = sequential (default),
             >1 = ``ProcessPoolExecutor`` managed internally. Ignored if
             ``executor`` is provided.

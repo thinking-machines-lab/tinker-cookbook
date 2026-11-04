@@ -135,6 +135,8 @@ def get_renderer(
             - ``"qwen3_instruct"``: Qwen3 instruct 2507 (no thinking)
             - ``"qwen3_5"``: Qwen3.5 VL with thinking
             - ``"qwen3_5_disable_thinking"``: Qwen3.5 VL with thinking disabled
+            - ``"qwen3_5_preserve_thinking"``: Qwen3.5 VL with thinking, keeping earlier
+              reasoning in history so multi-turn episodes have the sequence extension property
             - ``"qwen3_8_xhigh_reasoning"``: Qwen3.8 with thinking (reasoning effort xhigh, the HF default)
             - ``"qwen3_8_medium_reasoning"``: Qwen3.8 with thinking, reasoning effort medium
             - ``"qwen3_8_low_reasoning"``: Qwen3.8 with thinking, reasoning effort low
@@ -142,9 +144,15 @@ def get_renderer(
             - ``"deepseekv3"``: DeepSeek V3 (defaults to non-thinking mode)
             - ``"deepseekv3_disable_thinking"``: DeepSeek V3 non-thinking (alias)
             - ``"deepseekv3_thinking"``: DeepSeek V3 thinking mode
-            - ``"glm5_3_max_reasoning"``: GLM-5.3 with max reasoning effort (HF default)
-            - ``"glm5_3_low_reasoning"``: GLM-5.3 with low reasoning effort (thinking cannot be disabled)
-            - ``"glm5_3_high_reasoning"``: GLM-5.3 with high reasoning effort
+            - ``"deepseekv4_1"``: DeepSeek V4.1 thinking mode, high reasoning effort (HF default)
+            - ``"deepseekv4_1_low_reasoning"``: DeepSeek V4.1 thinking mode, low reasoning effort
+            - ``"deepseekv4_1_max_reasoning"``: DeepSeek V4.1 thinking mode, max reasoning effort
+            - ``"deepseekv4_1_disable_thinking"``: DeepSeek V4.1 chat mode (no reasoning)
+            - ``"deepseekv4_1_preserve_thinking"``: DeepSeek V4.1 thinking mode, keeping earlier
+              reasoning in history so multi-turn episodes have the sequence extension property
+            - ``"glm5_3_max_reasoning"``: GLM-5.3 / GLM-5.3-Flash with max reasoning effort (HF default)
+            - ``"glm5_3_low_reasoning"``: GLM-5.3 / GLM-5.3-Flash with low reasoning effort (thinking cannot be disabled)
+            - ``"glm5_3_high_reasoning"``: GLM-5.3 / GLM-5.3-Flash with high reasoning effort
             - ``"kimi_k2"``: Kimi K2 Thinking format
             - ``"kimi_k25"``: Kimi K2.5 with thinking enabled
             - ``"kimi_k25_disable_thinking"``: Kimi K2.5 with thinking disabled
@@ -155,10 +163,10 @@ def get_renderer(
             - ``"nemotron3_low_thinking"``: Nemotron-3 with low-effort reasoning (Super only)
             - ``"nemotron3_disable_thinking"``: Nemotron-3 with reasoning off
             - ``"nemotron3_preserve_thinking"``: Nemotron-3 (Nano/Super) with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``); use for multi-turn RL / long-horizon agents
-            - ``"nemotron3_ultra"``: Nemotron-3 Ultra / 3.5 Lightning with full reasoning
-            - ``"nemotron3_ultra_disable_thinking"``: Nemotron-3 Ultra / 3.5 Lightning with reasoning off
-            - ``"nemotron3_ultra_medium_thinking"``: Nemotron-3 Ultra with medium-effort reasoning
-            - ``"nemotron3_ultra_preserve_thinking"``: Nemotron-3 Ultra / 3.5 Lightning with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``)
+            - ``"nemotron3_ultra"``: Nemotron-3 Ultra / 3.5 Lightning / 3.5 Super with full reasoning
+            - ``"nemotron3_ultra_disable_thinking"``: Nemotron-3 Ultra / 3.5 Lightning / 3.5 Super with reasoning off
+            - ``"nemotron3_ultra_medium_thinking"``: Nemotron-3 Ultra / 3.5 Super with medium-effort reasoning
+            - ``"nemotron3_ultra_preserve_thinking"``: Nemotron-3 Ultra / 3.5 Lightning / 3.5 Super with full reasoning and historical ``<think>...</think>`` blocks preserved (HF ``truncate_history_thinking=false``)
             - ``"gpt_oss_no_sysprompt"``: GPT-OSS without system prompt
             - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
             - ``"gpt_oss_medium_reasoning"``: GPT-OSS with medium reasoning
@@ -205,6 +213,12 @@ def get_renderer(
     from tinker_cookbook.renderers.deepseek_v3 import (
         DeepSeekV3DisableThinkingRenderer,
         DeepSeekV3ThinkingRenderer,
+    )
+    from tinker_cookbook.renderers.deepseek_v4_1 import (
+        DeepSeekV4_1DisableThinkingRenderer,
+        DeepSeekV4_1LowReasoningRenderer,
+        DeepSeekV4_1MaxReasoningRenderer,
+        DeepSeekV4_1Renderer,
     )
     from tinker_cookbook.renderers.glm5_3 import (
         Glm5_3HighReasoningRenderer,
@@ -257,6 +271,10 @@ def get_renderer(
         renderer = Qwen3_5Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_5_disable_thinking":
         renderer = Qwen3_5DisableThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "qwen3_5_preserve_thinking":
+        renderer = Qwen3_5Renderer(
+            tokenizer, image_processor=image_processor, strip_thinking_from_history=False
+        )
     elif name == "qwen3_8_xhigh_reasoning":
         renderer = Qwen3_8Renderer(tokenizer, image_processor=image_processor)
     elif name == "qwen3_8_medium_reasoning":
@@ -277,6 +295,16 @@ def get_renderer(
         renderer = DeepSeekV3DisableThinkingRenderer(tokenizer)
     elif name == "deepseekv3_thinking":
         renderer = DeepSeekV3ThinkingRenderer(tokenizer)
+    elif name == "deepseekv4_1":
+        renderer = DeepSeekV4_1Renderer(tokenizer)
+    elif name == "deepseekv4_1_low_reasoning":
+        renderer = DeepSeekV4_1LowReasoningRenderer(tokenizer)
+    elif name == "deepseekv4_1_max_reasoning":
+        renderer = DeepSeekV4_1MaxReasoningRenderer(tokenizer)
+    elif name == "deepseekv4_1_disable_thinking":
+        renderer = DeepSeekV4_1DisableThinkingRenderer(tokenizer)
+    elif name == "deepseekv4_1_preserve_thinking":
+        renderer = DeepSeekV4_1Renderer(tokenizer, strip_thinking_from_history=False)
     elif name == "glm5_3_max_reasoning":
         renderer = Glm5_3Renderer(tokenizer)
     elif name == "glm5_3_low_reasoning":
@@ -304,13 +332,15 @@ def get_renderer(
     elif name == "nemotron3_preserve_thinking":
         renderer = Nemotron3PreserveThinkingRenderer(tokenizer)
     elif name == "nemotron3_ultra":
-        renderer = Nemotron3UltraRenderer(tokenizer)
+        renderer = Nemotron3UltraRenderer(tokenizer, image_processor=image_processor)
     elif name == "nemotron3_ultra_disable_thinking":
-        renderer = Nemotron3UltraDisableThinkingRenderer(tokenizer)
+        renderer = Nemotron3UltraDisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "nemotron3_ultra_medium_thinking":
-        renderer = Nemotron3UltraMediumThinkingRenderer(tokenizer)
+        renderer = Nemotron3UltraMediumThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "nemotron3_ultra_preserve_thinking":
-        renderer = Nemotron3UltraPreserveThinkingRenderer(tokenizer)
+        renderer = Nemotron3UltraPreserveThinkingRenderer(
+            tokenizer, image_processor=image_processor
+        )
     elif name == "gpt_oss_no_sysprompt":
         renderer = GptOssRenderer(tokenizer, use_system_prompt=False)
     elif name == "gpt_oss_low_reasoning":

@@ -633,7 +633,7 @@ def main() -> None:
         default=None,
         help="Load results from local sweep directories instead of W&B. "
         "Pass the root directory containing model subdirectories "
-        "(e.g. /tmp/tinker-sweeps).",
+        "(e.g. ~/tinker-runs/sweeps).",
     )
     args = parser.parse_args()
 

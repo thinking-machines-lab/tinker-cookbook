@@ -48,6 +48,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     eval_every: int = 5
     save_every: int = 5
 
@@ -78,7 +81,7 @@ async def cli_main(
         f"{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     )
 
-    log_path = cli_config.log_path or f"/tmp/tinker-examples/harbor_rl/{run_name}"
+    log_path = cli_config.log_path or cli_utils.runs_path("harbor_rl", run_name)
     wandb_name = cli_config.wandb_name or run_name
     max_generation_tokens = (
         cli_config.max_generation_tokens
@@ -112,6 +115,7 @@ async def cli_main(
         temperature=cli_config.temperature,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         log_path=log_path,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,
