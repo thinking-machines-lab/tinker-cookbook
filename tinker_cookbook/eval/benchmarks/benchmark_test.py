@@ -654,6 +654,10 @@ class TestTagBreakdown:
         assert _compute_tag_breakdown("bench", [1.0, 0.0], [[], []]) == {}
         assert _compute_tag_breakdown("bench", [], []) == {}
 
+    def test_duplicate_tags_count_an_example_once(self):
+        out = _compute_tag_breakdown("b", [1.0, 0.0], [["x", "x"], ["x"]])
+        assert out == {"b/x/accuracy": 0.5}
+
     def test_get_tags_reads_env_attribute(self):
         class Tagged:
             tags = ["x", "y"]

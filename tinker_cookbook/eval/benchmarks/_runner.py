@@ -103,13 +103,13 @@ def _compute_tag_breakdown(
     """Accuracy (fraction with reward > 0) per tag, keyed ``{name}/{tag}/accuracy``.
 
     Uses the same denominator as the headline score: every example carrying
-    the tag counts, including timeouts, errors, and truncations (reward 0).
+    the tag counts once, including timeouts, errors, and truncations (reward 0).
     Merged into ``BenchmarkResult.metrics`` via ``setdefault`` so keys a
     benchmark's own ``aggregate()`` emits take precedence.
     """
     by_tag: dict[str, list[float]] = {}
     for reward, tags in zip(rewards, tags_list, strict=True):
-        for tag in tags:
+        for tag in set(tags):
             by_tag.setdefault(tag, []).append(reward)
     return {
         f"{benchmark_name}/{tag}/accuracy": sum(1 for r in rs if r > 0) / len(rs)
