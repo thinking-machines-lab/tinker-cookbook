@@ -464,7 +464,9 @@ class StoredTrajectory:
     """Wall time for this example."""
     tags: list[str] = field(default_factory=list)
     """Categorical labels for this example (e.g. ``["anatomy"]``), read from
-    ``Env.tags``. The runner reports ``{benchmark}/{tag}/accuracy`` per tag."""
+    ``Env.tags``. The runner reports ``{benchmark}/{tag}/accuracy`` per tag.
+    Rows written before this field existed load as ``[]``; their category is
+    absent, not recovered (see ``regrade_trajectories``)."""
 
     def to_dict(self) -> StoredTrajectoryDict:
         """Serialize to a JSON-compatible dict."""

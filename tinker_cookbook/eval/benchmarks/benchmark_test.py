@@ -778,3 +778,77 @@ class TestMMLUReduxPerSubject:
         assert result.metrics["mmlu_redux/anatomy/accuracy"] == 0.5
         assert result.metrics["mmlu_redux/astronomy/accuracy"] == 0.0
         assert "mmlu_redux/unknown/accuracy" not in result.metrics
+
+    def test_mixed_era_files_resume_and_regrade_disagree_per_subject(self, monkeypatch, tmp_path):
+        """Documents the migration limit: old rows have no tags to recover.
+
+        Resume labels every example from its fresh env, so the old failure stays
+        in its subject. Regrade reads labels from the file, where that row has
+        none, so it counts overall but drops out of the subject.
+        """
+        import tinker
+
+        from tinker_cookbook.completers import TokensWithLogprobs
+        from tinker_cookbook.eval.benchmarks import _runner, mmlu_redux
+        from tinker_cookbook.eval.benchmarks._common import make_example_id
+        from tinker_cookbook.rl.types import Trajectory, Transition
+
+        class _DecodingRenderer(_StubRenderer):
+            class tokenizer:
+                @staticmethod
+                def decode(tokens: list[int]) -> str:
+                    return "A"
+
+        rows = [
+            {"question": q, "choices": ["w", "x", "y", "z"], "answer": 0, "_subject": "anatomy"}
+            for q in ["old_failed", "new_ok"]
+        ]
+        monkeypatch.setattr(mmlu_redux, "_load_mmlu_redux", lambda max_examples: rows)
+
+        ran: list[str] = []
+
+        async def fake_rollout(policy, env):
+            ran.append(env.message_env.prompt.split("\n")[0])
+            transition = Transition(
+                ob=tinker.ModelInput.empty(),
+                ac=TokensWithLogprobs(tokens=[2], maybe_logprobs=None),
+                reward=1.0,
+                episode_done=True,
+                metrics={"correct": 1.0},
+            )
+            return Trajectory(transitions=[transition], final_ob=tinker.ModelInput.empty())
+
+        monkeypatch.setattr(_runner, "do_single_rollout", fake_rollout)
+
+        old_row = dict(
+            StoredTrajectory(
+                idx=0,
+                benchmark="mmlu_redux",
+                example_id=make_example_id("mmlu_redux", "old_failed"),
+                error="timeout (10s)",
+            ).to_dict()
+        )
+        del old_row["tags"]  # What a version without the field wrote.
+        traj_path = tmp_path / "mmlu_redux" / "trajectories.jsonl"
+        traj_path.parent.mkdir()
+        traj_path.write_text(json.dumps(old_row) + "\n")
+
+        resumed = asyncio.run(
+            _runner.run_benchmark(
+                mmlu_redux.MMLUReduxBenchmarkBuilder(),
+                sampling_client=cast(tinker.SamplingClient, None),
+                renderer=cast(Renderer, _DecodingRenderer()),
+                config=BenchmarkConfig(concurrency=1, save_dir=str(tmp_path)),
+            )
+        )
+        assert ran == ["new_ok"]  # The old row was resumed, not re-run.
+        assert resumed.score == 0.5
+        assert resumed.metrics["mmlu_redux/anatomy/accuracy"] == 0.5
+
+        stored = [json.loads(line) for line in traj_path.read_text().splitlines()]
+        assert "tags" not in stored[0]  # Resume does not backfill the old row.
+        assert stored[1]["tags"] == ["anatomy"]
+
+        regraded = regrade_trajectories(str(tmp_path), "mmlu_redux", lambda response, logs: 1.0)
+        assert regraded.score == 0.5
+        assert regraded.metrics["mmlu_redux/anatomy/accuracy"] == 1.0

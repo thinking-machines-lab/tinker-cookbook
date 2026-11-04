@@ -1061,6 +1061,13 @@ def regrade_trajectories(
     re-aggregates the results — **without re-running the model**. This is
     useful for iterating on answer extraction logic after a costly eval run.
 
+    Per-tag breakdowns come only from the stored ``tags``, so files with rows
+    written before that field existed can disagree with a resumed run, which
+    labels every example from its freshly built env. An untagged row still counts
+    in the overall score but in no tag's bucket; its label is not guessed. For
+    example, an old untagged failure plus a new success on the same tag gives
+    resume 0.5 and regrade 1.0 for that tag, with overall accuracy 0.5 for both.
+
     Args:
         save_dir: Directory containing saved benchmark results.
         benchmark_name: Name of the benchmark (e.g. ``"gsm8k"``).
