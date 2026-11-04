@@ -108,6 +108,24 @@ def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -
     assert tokenizer is mock_adapter.return_value
 
 
+def test_encode_without_special_tokens_uses_native_surface() -> None:
+    class NativeTokenizer:
+        def encode_ordinary(self, text: str) -> list[int]:
+            assert text == "hello"
+            return [1, 2, 3]
+
+    assert tokenizer_utils.encode_without_special_tokens(NativeTokenizer(), "hello") == [1, 2, 3]
+
+
+def test_encode_without_special_tokens_disables_hf_specials() -> None:
+    tokenizer = MagicMock()
+    del tokenizer.encode_ordinary
+    tokenizer.encode.return_value = [1, 2, 3]
+
+    assert tokenizer_utils.encode_without_special_tokens(tokenizer, "hello") == [1, 2, 3]
+    tokenizer.encode.assert_called_once_with("hello", add_special_tokens=False)
+
+
 @patch("transformers.models.auto.tokenization_auto.AutoTokenizer")
 def test_nemotron_3_5_super_tokenizer_skips_remote_code(
     mock_auto: MagicMock, monkeypatch: pytest.MonkeyPatch

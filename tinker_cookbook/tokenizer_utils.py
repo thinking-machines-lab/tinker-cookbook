@@ -82,6 +82,20 @@ class TmlTokenizer(Protocol):
 
 
 @runtime_checkable
+class SupportsEncodeOrdinary(Protocol):
+    def encode_ordinary(self, text: str) -> Sequence[int]: ...
+
+
+def encode_without_special_tokens(
+    tokenizer: Tokenizer | SupportsEncodeOrdinary, text: str
+) -> list[int]:
+    """Encode raw text without adding model-level BOS/EOS tokens."""
+    if isinstance(tokenizer, SupportsEncodeOrdinary):
+        return list(tokenizer.encode_ordinary(text))
+    return list(tokenizer.encode(text, add_special_tokens=False))
+
+
+@runtime_checkable
 class SupportsTmlTokenizer(Protocol):
     """Tokenizer facade that exposes an underlying :class:`TmlTokenizer`."""
 
