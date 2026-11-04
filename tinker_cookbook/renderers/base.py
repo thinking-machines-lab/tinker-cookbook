@@ -30,7 +30,7 @@ import torch
 from PIL import Image
 
 from tinker_cookbook.exceptions import RendererError
-from tinker_cookbook.tokenizer_utils import Tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer, encode_without_special_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -1709,7 +1709,7 @@ class Renderer(ABC):
         if prefill:
             chunks.append(
                 tinker.types.EncodedTextChunk(
-                    tokens=self.tokenizer.encode(prefill, add_special_tokens=False)
+                    tokens=encode_without_special_tokens(self.tokenizer, prefill)
                 )
             )
         return tinker.ModelInput(chunks=chunks)
