@@ -199,8 +199,8 @@ async def async_main(cfg: Config) -> None:
     prompt = renderer.build_generation_prompt(messages)
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
-    sampling_client = await service_client.create_sampling_client_async(base_model=cfg.model_name)
-    response = await sampling_client.sample_async(
+    sampling_client = await service_client.create_sampling_client(base_model=cfg.model_name)
+    response = await sampling_client.sample(
         prompt=prompt,
         num_samples=1,
         sampling_params=tinker.SamplingParams(

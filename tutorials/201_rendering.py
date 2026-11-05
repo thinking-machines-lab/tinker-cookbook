@@ -173,7 +173,7 @@ def _(mo):
     from tinker.types import SamplingParams
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B").result()
 
     prompt = renderer.build_generation_prompt(messages[:-1])
     stop_sequences = renderer.get_stop_sequences()

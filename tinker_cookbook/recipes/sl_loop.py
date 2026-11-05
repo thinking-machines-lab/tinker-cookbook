@@ -87,13 +87,13 @@ def main(config: Config):
     if resume_info:
         training_client = service_client.create_training_client_from_state_with_optimizer(
             resume_info.state_path
-        )
+        ).result()
         start_batch = resume_info.batch
         logger.info(f"Resuming from batch {start_batch}")
     else:
         training_client = service_client.create_lora_training_client(
             base_model=config.model_name, rank=config.lora_rank
-        )
+        ).result()
         start_batch = 0
 
     # Training loop (single epoch)

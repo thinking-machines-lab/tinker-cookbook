@@ -30,7 +30,7 @@ async def score_sequences(
 ) -> tuple[list[list[float | None]], TokenUsage]:
     """Prompt logprobs of each sequence under ``sampling_client``, plus what the calls used.
 
-    Each sequence is sent as one ``sample_async`` request with
+    Each sequence is sent as one ``sample`` request with
     ``include_prompt_logprobs=True`` and ``max_tokens=1``: the same request
     ``compute_logprobs`` makes, but keeping the whole ``SampleResponse`` so
     the usage it reports can be counted. Requests run concurrently.
@@ -43,12 +43,12 @@ async def score_sequences(
     """
     responses = await asyncio.gather(
         *[
-            sampling_client.sample_async(
+            sampling_client.sample(
                 prompt=sequence_input,
                 num_samples=1,
                 sampling_params=tinker.SamplingParams(max_tokens=1),
                 include_prompt_logprobs=True,
-            )
+            ).coroutine()
             for sequence_input in sequence_inputs
         ]
     )

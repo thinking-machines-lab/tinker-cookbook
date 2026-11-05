@@ -163,7 +163,7 @@ def make_opponent(
     if opponent_type == "optimal":
         return OptimalOpponent()
     service_client = tinker.ServiceClient(base_url=base_url)
-    sampling_client = service_client.create_sampling_client(base_model=model_name)
+    sampling_client = service_client.create_sampling_client(base_model=model_name).result()
     return TinkerMessageCompleter(
         sampling_client=sampling_client,
         renderer=renderer,

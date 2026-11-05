@@ -190,7 +190,9 @@ async def evaluate_experiment(
         max_image_size=eval_config.max_image_size,
     )
 
-    sampling_client = service_client.create_sampling_client(model_path=checkpoint.sampler_path)
+    sampling_client = service_client.create_sampling_client(
+        model_path=checkpoint.sampler_path
+    ).result()
     metrics = await evaluator_builder()(sampling_client)  # type: ignore[arg-type]
     return {
         "experiment_name": experiment_name,

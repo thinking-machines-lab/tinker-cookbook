@@ -59,7 +59,7 @@ class CustomEvaluator(SamplingClientEvaluator):
                 [renderers.Message(role="user", content=datum["input"])]
             )
             # Generate response
-            r: types.SampleResponse = await sampling_client.sample_async(
+            r: types.SampleResponse = await sampling_client.sample(
                 prompt=model_input, num_samples=1, sampling_params=sampling_params
             )
             tokens: list[int] = r.sequences[0].tokens
@@ -91,7 +91,7 @@ async def main():
         model_name="Qwen/Qwen3.5-9B",
     )
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.5-9B")
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.5-9B").result()
     result = await evaluator(sampling_client)
     print(result)
 

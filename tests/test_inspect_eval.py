@@ -43,7 +43,7 @@ def _create_api(
     model_name: str, renderer_name: str, include_reasoning: bool
 ) -> InspectAPIFromTinkerSampling:
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model=model_name)
+    sampling_client = service_client.create_sampling_client(base_model=model_name).result()
     return InspectAPIFromTinkerSampling(
         renderer_name=renderer_name,
         model_name=model_name,

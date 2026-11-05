@@ -15,6 +15,7 @@ from concurrent.futures import Future
 from typing import Any
 
 import pytest
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook.capture import instrument as instrument_mod
 from tinker_cookbook.capture.exporter import CaptureExporter, CaptureRecord
@@ -50,12 +51,14 @@ class FakeResponse:
 
 
 class FakeSamplingClient:
-    """SamplingClient-shaped: sample returns an unresolved concurrent Future."""
+    """SamplingClient-shaped: sample returns an unresolved SDK APIFuture."""
 
     _sampling_session_id = "sess-1"
 
-    def sample(self, prompt: Any, num_samples: int, sampling_params: Any) -> Future[FakeResponse]:
-        self.future: Future[FakeResponse] = Future()
+    def sample(
+        self, prompt: Any, num_samples: int, sampling_params: Any
+    ) -> AwaitableConcurrentFuture[FakeResponse]:
+        self.future = AwaitableConcurrentFuture[FakeResponse](Future())
         return self.future
 
     async def sample_async(
@@ -74,13 +77,14 @@ class FakeAPIFuture:
 class FakeTrainingClient:
     model_id = "model-1"
 
-    def forward_backward(self, data: list[Any], loss_fn: str) -> FakeAPIFuture:
-        self.future = FakeAPIFuture()
+    def forward_backward(self, data: list[Any], loss_fn: str) -> AwaitableConcurrentFuture[str]:
+        self.future = AwaitableConcurrentFuture[str](Future())
         return self.future
 
-    async def forward_backward_async(self, data: list[Any], loss_fn: str) -> FakeAPIFuture:
-        self.future = FakeAPIFuture()
-        return self.future
+    async def forward_backward_async(
+        self, data: list[Any], loss_fn: str
+    ) -> AwaitableConcurrentFuture[str]:
+        return self.forward_backward(data, loss_fn)
 
 
 class FakePrompt:
@@ -116,7 +120,7 @@ def test_sample_snapshot_at_call_survives_scope_exit(pipeline) -> None:  # type:
     with capture(run_id="r1", iteration=7):
         fut = wrapped(client, FakePrompt(), 2, None)
     # Scope has exited; resolve the future afterwards.
-    fut.set_result(FakeResponse())
+    fut.future().set_result(FakeResponse())
     _wait_records(sink, 1)
     record = sink.records[0]
     assert record["scope"] == {"run_id": "r1", "iteration": 7}
@@ -137,7 +141,7 @@ def test_sample_error_recorded(pipeline) -> None:  # type: ignore[no-untyped-def
     client = FakeSamplingClient()
     wrapped = _make_sample_wrapper(FakeSamplingClient.sample)
     fut = wrapped(client, FakePrompt(), 1, None)
-    fut.set_exception(RuntimeError("nope"))
+    fut.future().set_exception(RuntimeError("nope"))
     _wait_records(sink, 1)
     assert sink.records[0]["status"] == "error"
     assert "nope" in sink.records[0]["error"]
@@ -162,7 +166,7 @@ def test_train_op_api_future_path(pipeline) -> None:  # type: ignore[no-untyped-
     wrapped = _make_train_op_wrapper(FakeTrainingClient.forward_backward, "forward_backward")
     with capture(run_id="r3"):
         fut = wrapped(client, [1, 2, 3], "cross_entropy")
-    fut._future.set_result("done")
+    fut.future().set_result("done")
     _wait_records(sink, 1)
     record = sink.records[0]
     assert record["kind"] == "train_op"
@@ -185,7 +189,7 @@ def test_callback_never_raises(pipeline) -> None:  # type: ignore[no-untyped-def
     wrapped = _make_sample_wrapper(FakeSamplingClient.sample)
     fut = wrapped(client, FakePrompt(), 1, None)
     before = exporter.callback_failures
-    fut.set_result(BadResponse())  # done-callback must swallow the failure
+    fut.future().set_result(BadResponse())  # done-callback must swallow the failure
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline and exporter.callback_failures == before:
         time.sleep(0.01)
@@ -272,7 +276,7 @@ async def test_train_op_async_wrapper(pipeline) -> None:  # type: ignore[no-unty
     with capture(run_id="r-async-train"):
         coro = wrapped(client, [1, 2], "cross_entropy")
     future = await coro
-    future._future.set_result("done")
+    future.future().set_result("done")
     _wait_records(sink, 1)
     record = sink.records[0]
     assert record["op"] == "forward_backward"
@@ -293,7 +297,7 @@ def test_exporter_snapshot_survives_swap() -> None:
         fut = wrapped(client, FakePrompt(), 1, None)
         # Exporter swapped (or cleared) while the future is outstanding.
         instrument_mod._exporter = exporter_b
-        fut.set_result(FakeResponse())
+        fut.future().set_result(FakeResponse())
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline and not sink_a.records:
             time.sleep(0.01)
@@ -313,7 +317,7 @@ def test_pending_tracked_until_future_resolves(pipeline) -> None:  # type: ignor
     wrapped = _make_sample_wrapper(FakeSamplingClient.sample)
     fut = wrapped(client, FakePrompt(), 1, None)
     assert exporter.wait_pending(timeout=0.1) is False  # future outstanding
-    fut.set_result(FakeResponse())
+    fut.future().set_result(FakeResponse())
     assert exporter.wait_pending(timeout=5.0) is True
 
 
@@ -344,7 +348,7 @@ def test_cancelled_future_records_cancelled_status(pipeline) -> None:  # type: i
     wrapped = _make_sample_wrapper(FakeSamplingClient.sample)
     with capture(run_id="r-cancel"):
         fut = wrapped(client, FakePrompt(), 1, None)
-    assert fut.cancel()
+    assert fut.future().cancel()
     _wait_records(sink, 1)
     record = sink.records[0]
     assert record["status"] == "cancelled"
@@ -383,25 +387,25 @@ def test_trace_ordering_integration() -> None:
     try:
         # Order A: instrument, then trace instruments.
         instrument_tinker(exporter)
-        ours = tinker.SamplingClient.sample_async
+        ours = tinker.SamplingClient.sample
         assert getattr(ours, "_scope_instrumented", False) is True
         # The layer underneath ours is trace's scope wrapper (applied by
         # instrument_tinker up front).
         underneath = ours.__dict__["_capture_original"]
         assert getattr(underneath, "_scope_instrumented", False) is True
         _instrument_sdk_clients()  # what trace_init() does
-        assert tinker.SamplingClient.sample_async is ours, "trace re-wrapped our wrapper"
+        assert tinker.SamplingClient.sample is ours, "trace re-wrapped our wrapper"
         uninstrument_tinker()
         # After uninstrument, the trace-scope-wrapped method remains (trace
         # instrumentation is process-wide and idempotent by design).
-        assert tinker.SamplingClient.sample_async is underneath
+        assert tinker.SamplingClient.sample is underneath
 
         # Order B: trace already instrumented (from above), then instrument.
         instrument_tinker(exporter)
-        ours_b = tinker.SamplingClient.sample_async
+        ours_b = tinker.SamplingClient.sample
         assert ours_b.__dict__["_capture_original"] is underneath
         _instrument_sdk_clients()
-        assert tinker.SamplingClient.sample_async is ours_b
+        assert tinker.SamplingClient.sample is ours_b
     finally:
         uninstrument_tinker()
         exporter.shutdown()
@@ -448,9 +452,9 @@ def test_seq_id_minted_per_call_and_stable(pipeline) -> None:  # type: ignore[no
     client = FakeSamplingClient()
     wrapped = _make_sample_wrapper(FakeSamplingClient.sample)
     fut1 = wrapped(client, FakePrompt(), 1, None)
-    fut1.set_result(FakeResponse())
+    fut1.future().set_result(FakeResponse())
     fut2 = wrapped(client, FakePrompt(), 1, None)
-    fut2.set_result(FakeResponse())
+    fut2.future().set_result(FakeResponse())
     _wait_records(sink, 2)
     seq_ids = [r["seq_id"] for r in sink.records]
     assert all(isinstance(sid, int) and 0 <= sid < 2**62 for sid in seq_ids)

@@ -78,3 +78,35 @@ def test_json_logger_writes_summary_rows_without_a_step(tmp_path):
         rows = [json.loads(line) for line in f]
     assert rows == [{"step": 3, "loss": 1.0}, {"tokens/cumulative/sampled": 10}]
     ml_log.MultiplexLogger([logger, ml_log.PrettyPrintLogger()]).log_summary({"a": 1})
+
+
+def test_append_events_keep_late_eval_in_history_and_preserve_json_steps(tmp_path):
+    import json
+    from unittest.mock import MagicMock, call
+
+    from . import ml_log
+
+    fake_wandb = MagicMock()
+    with patch.object(ml_log, "wandb", fake_wandb), patch.object(ml_log, "_wandb_available", True):
+        wandb_logger = ml_log.WandbLogger(project="p")
+        logger = ml_log.MultiplexLogger([wandb_logger, ml_log.JsonLogger(tmp_path)])
+        logger.enable_event_steps()
+        logger.log_metrics({"loss": 0.4}, step=61)
+        fake_wandb.log.assert_called_once_with({"loss": 0.4, "training/step": 61}, commit=True)
+        logger.log_metrics_event(
+            {"grader_eval/reward": 0.8}, step=0, step_metric="eval/snapshot/training_step"
+        )
+        logger.log_metrics({"loss": 0.3}, step=62)
+        logger.close()
+        assert fake_wandb.log.call_args_list == [
+            call({"loss": 0.4, "training/step": 61}, commit=True),
+            call({"grader_eval/reward": 0.8, "eval/snapshot/training_step": 0}, commit=True),
+            call({"loss": 0.3, "training/step": 62}, commit=True),
+        ]
+        fake_wandb.init.return_value.summary.update.assert_not_called()
+        fake_wandb.init.return_value.define_metric.assert_any_call(
+            "grader_eval/reward", step_metric="eval/snapshot/training_step", step_sync=False
+        )
+    rows = [json.loads(line) for line in (tmp_path / "metrics.jsonl").read_text().splitlines()]
+    assert [r["step"] for r in rows] == [61, 0, 62]
+    assert rows[1]["eval/snapshot/training_step"] == 0

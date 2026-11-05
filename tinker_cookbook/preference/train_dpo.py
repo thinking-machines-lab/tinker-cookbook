@@ -186,7 +186,7 @@ def create_dpo_clients(
         )
         training_client = service_client.create_training_client_from_state_with_optimizer(
             resume_info.state_path, user_metadata=user_metadata
-        )
+        ).result()
         logger.info(f"Resumed DPO training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
         # Starting fresh DPO from checkpoint - load weights only (fresh optimizer)
@@ -195,14 +195,14 @@ def create_dpo_clients(
         )
         training_client = service_client.create_training_client_from_state(
             config.load_checkpoint_path, user_metadata=user_metadata
-        )
+        ).result()
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
         training_client = service_client.create_lora_training_client(
             base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
-        )
+        ).result()
     # Create a sampling client for the reference model from the training client
-    reference_client = training_client.save_weights_and_get_sampling_client()
+    reference_client = training_client.save_weights_and_get_sampling_client().result()
     return training_client, reference_client
 
 
@@ -382,7 +382,7 @@ def do_update(
             # Compute reference log probabilities in parallel
             async def compute_all_ref_logprobs():
                 return await asyncio.gather(
-                    *[reference_client.compute_logprobs_async(seq) for seq in full_sequences]
+                    *[reference_client.compute_logprobs(seq).coroutine() for seq in full_sequences]
                 )
 
             all_ref_logprobs = asyncio.run(compute_all_ref_logprobs())

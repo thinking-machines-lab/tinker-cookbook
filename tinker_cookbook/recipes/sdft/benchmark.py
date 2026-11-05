@@ -129,7 +129,7 @@ async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
         base_url=config.base_url,
         user_metadata=recipe_user_metadata("benchmark_sdft"),
     )
-    sampling_client = service_client.create_sampling_client(base_model=config.model_name)
+    sampling_client = service_client.create_sampling_client(base_model=config.model_name).result()
 
     evaluator = _build_evaluator(config, renderer)
     metrics = await evaluator(sampling_client)
@@ -288,7 +288,7 @@ async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
     )
     sampling_client = service_client.create_sampling_client(
         base_model=config.model_name, model_path=config.checkpoint_path
-    )
+    ).result()
 
     evaluator = _build_evaluator(config, renderer)
     metrics = await evaluator(sampling_client)

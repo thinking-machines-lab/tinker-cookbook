@@ -3,11 +3,13 @@ the fields it copies from the SDK's ``SampleResponse``."""
 
 import asyncio
 import inspect
+from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 import tinker
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 from tinker.types import SampledSequence, SampleResponse
 
 from tinker_cookbook.completers import TinkerTokenCompleter, TokenCompleter
@@ -33,14 +35,18 @@ class _RecordingSamplingClient:
     def __init__(self) -> None:
         self.requests: list[tinker.SamplingParams] = []
 
-    async def sample_async(
+    def sample(
         self,
         prompt: tinker.ModelInput,
         num_samples: int,
         sampling_params: tinker.SamplingParams,
-    ) -> _FakeSampleResult:
+    ) -> AwaitableConcurrentFuture[_FakeSampleResult]:
         self.requests.append(sampling_params)
-        return _FakeSampleResult(sequences=[_FakeSequence(tokens=[1, 2], logprobs=[-0.1, -0.2])])
+        future: Future[_FakeSampleResult] = Future()
+        future.set_result(
+            _FakeSampleResult(sequences=[_FakeSequence(tokens=[1, 2], logprobs=[-0.1, -0.2])])
+        )
+        return AwaitableConcurrentFuture(future)
 
 
 def _make_completer(**kwargs: Any) -> tuple[TinkerTokenCompleter, _RecordingSamplingClient]:
@@ -102,13 +108,15 @@ class _FixedResponseSamplingClient:
     def __init__(self, response: SampleResponse) -> None:
         self.response = response
 
-    async def sample_async(
+    def sample(
         self,
         prompt: tinker.ModelInput,
         num_samples: int,
         sampling_params: tinker.SamplingParams,
-    ) -> SampleResponse:
-        return self.response
+    ) -> AwaitableConcurrentFuture[SampleResponse]:
+        future: Future[SampleResponse] = Future()
+        future.set_result(self.response)
+        return AwaitableConcurrentFuture(future)
 
 
 class TestTinkerTokenCompleterSampleResponseFields:

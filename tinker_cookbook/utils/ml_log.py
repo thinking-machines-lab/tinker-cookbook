@@ -118,6 +118,20 @@ class Logger(ABC):
         """
         pass
 
+    def enable_event_steps(self) -> None:
+        """Use arrival-order history with explicit coordinates for concurrent producers."""
+        pass
+
+    def log_metrics_event(
+        self,
+        metrics: dict[str, Any],
+        step: int,
+        step_metric: str,
+        metric_axes: dict[str, str] | None = None,
+    ) -> None:
+        """Append an event referring to model coordinates, possibly an earlier step."""
+        self.log_metrics(metrics | {step_metric: step}, step=step)
+
     def log_summary(self, metrics: dict[str, Any]) -> None:
         """Record the latest value of each metric outside the step history (optional).
 
@@ -335,6 +349,9 @@ class WandbLogger(Logger):
                 "pip install wandb (or uv add wandb)"
             )
 
+        self._event_steps = False
+        self._event_metric_axes: set[tuple[str, str]] = set()
+
         # Initialize wandb run
         assert wandb is not None  # For type checker
         try:
@@ -354,6 +371,34 @@ class WandbLogger(Logger):
                 "  - leave wandb_project unset to disable W&B logging."
             ) from e
 
+    def enable_event_steps(self) -> None:
+        if self.run and not self._event_steps:
+            self.run.define_metric("training/step")
+            self.run.define_metric("*", step_metric="training/step", step_sync=False)
+            self._event_steps = True
+
+    def log_metrics_event(
+        self,
+        metrics: dict[str, Any],
+        step: int,
+        step_metric: str,
+        metric_axes: dict[str, str] | None = None,
+    ) -> None:
+        if self.run and wandb is not None:
+            self.enable_event_steps()
+            axes = metric_axes or {}
+            coordinates = {step_metric, *axes.values()}
+            for coordinate in coordinates:
+                self.run.define_metric(coordinate)
+            for name in metrics:
+                if name in coordinates:
+                    continue
+                key = (name, axes.get(name, step_metric))
+                if key not in self._event_metric_axes:
+                    self.run.define_metric(name, step_metric=key[1], step_sync=False)
+                    self._event_metric_axes.add(key)
+            self.log_metrics(metrics | {step_metric: step})
+
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
         if self.run and wandb is not None:
@@ -362,7 +407,13 @@ class WandbLogger(Logger):
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
         if self.run and wandb is not None:
-            wandb.log(metrics, step=step)
+            if self._event_steps:
+                # Internal W&B steps count arrivals, never model versions. This
+                # commits training immediately and retains late evaluation rows.
+                coordinates = {"training/step": step} if step is not None else {}
+                wandb.log(metrics | coordinates, commit=True)
+            else:
+                wandb.log(metrics, step=step)
             logger.info("Logging to: %s", self.run.url)
 
     def log_summary(self, metrics: dict[str, Any]) -> None:
@@ -529,6 +580,20 @@ class MultiplexLogger(Logger):
         """Forward log_metrics to all child loggers."""
         for logger in self.loggers:
             logger.log_metrics(metrics, step)
+
+    def enable_event_steps(self) -> None:
+        for logger in self.loggers:
+            logger.enable_event_steps()
+
+    def log_metrics_event(
+        self,
+        metrics: dict[str, Any],
+        step: int,
+        step_metric: str,
+        metric_axes: dict[str, str] | None = None,
+    ) -> None:
+        for logger in self.loggers:
+            logger.log_metrics_event(metrics, step, step_metric, metric_axes)
 
     def log_summary(self, metrics: dict[str, Any]) -> None:
         """Forward summary values to all child loggers."""

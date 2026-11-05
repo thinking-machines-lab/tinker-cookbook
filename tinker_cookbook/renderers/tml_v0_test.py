@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 import wave
 from pathlib import Path
 from typing import Any, cast
@@ -8,6 +9,7 @@ import pytest
 import tinker
 from PIL import Image
 
+from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.renderers import (
     AudioPart,
     ImagePart,
@@ -65,10 +67,20 @@ def _messages() -> list[Message]:
     ]
 
 
-def _renderer() -> tml_v0.TmlV0Renderer:
+# The wheel tokenizer class each model must get, so every parametrized test also checks routing.
+_INKLING_TOKENIZERS = {
+    "thinkingmachines/Inkling": "O200kBaseChatTokenizer",
+    "thinkingmachines/Inkling-2-Small": "H200kBaseChatTokenizer",
+}
+_INKLING_MODELS = list(_INKLING_TOKENIZERS)
+
+
+def _renderer(model_name: str = "thinkingmachines/Inkling") -> tml_v0.TmlV0Renderer:
     _require_tml_renderers()
-    tokenizer = get_tokenizer("thinkingmachines/Inkling")
-    return cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
+    tokenizer = get_tokenizer(model_name)
+    renderer = cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
+    assert type(renderer.tokenizer.tml_tokenizer).__name__ == _INKLING_TOKENIZERS[model_name]
+    return renderer
 
 
 def _input_len(model_input) -> int:
@@ -247,8 +259,9 @@ def test_remote_image_url_fails_loudly() -> None:
         )
 
 
-def test_image_path_builds_tinker_chunk() -> None:
-    renderer = _renderer()
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_image_path_builds_tinker_chunk(model_name: str) -> None:
+    renderer = _renderer(model_name)
     image = Image.new("RGB", (64, 48), (30, 200, 120))
     model_input = renderer.build_generation_prompt(
         [
@@ -320,8 +333,9 @@ def test_empty_partial_assistant_message_fails_loudly() -> None:
         renderer.build_generation_prompt(_messages(), prefill="")
 
 
-def test_tool_calls_are_accepted_through_oss_messages() -> None:
-    renderer = _renderer()
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_tool_calls_are_accepted_through_oss_messages(model_name: str) -> None:
+    renderer = _renderer(model_name)
     messages = [
         Message(role="user", content="What's the weather?"),
         Message(
@@ -343,12 +357,13 @@ def test_tool_calls_are_accepted_through_oss_messages() -> None:
     assert _input_len(model_input) > 0
 
 
-def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_parsed_tml_tool_call_returns_cookbook_tool_call_object(model_name: str) -> None:
     _require_tml_renderers()
     chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
     tml_v0_module = cast(Any, tml_v0.import_module("tml_renderers.v0"))
 
-    renderer = _renderer()
+    renderer = _renderer(model_name)
     tml_renderer = tml_v0_module.Renderer(renderer.tokenizer.tml_tokenizer)
     tool_message = chat.Message(
         content=chat.InvokeTool(
@@ -381,8 +396,9 @@ def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
     assert '"San Francisco"' in tool_calls[0].function.arguments
 
 
-def test_tool_declarations_emit_tool_declare_prefix() -> None:
-    renderer = _renderer()
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_tool_declarations_emit_tool_declare_prefix(model_name: str) -> None:
+    renderer = _renderer(model_name)
 
     prefix = renderer.create_conversation_prefix_with_tools(
         [
@@ -522,9 +538,10 @@ def test_selective_sft_modes_require_cookbook_dict_messages_for_masking() -> Non
         renderer.build_supervised_example(openai_messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
 
 
-def test_extension_property_holds_multiturn() -> None:
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_extension_property_holds_multiturn(model_name: str) -> None:
     """Prove the `has_extension_property=True` claim on a real multi-turn conversation."""
-    renderer = _renderer()
+    renderer = _renderer(model_name)
     messages = [
         Message(role="system", content="You are concise."),
         Message(role="user", content="What is 2+2?"),
@@ -540,3 +557,54 @@ def test_extension_property_holds_multiturn() -> None:
         prompt_before_second_assistant[: len(sequence_through_first_assistant)]
         == sequence_through_first_assistant
     )
+
+
+@pytest.mark.parametrize("suffix", ["", ":peft:262144"])
+def test_h200k_renderer_discovery_and_round_trip(suffix: str) -> None:
+    model_name = "thinkingmachines/Inkling-2-Small" + suffix
+    renderer = get_renderer(get_recommended_renderer_name(model_name), get_tokenizer(model_name))
+    assert isinstance(renderer, tml_v0.TmlV0Renderer)
+    tokenizers = tml_v0.import_module("tml_renderers.tokenizers")
+    text = "Hello Inkling! The quick brown fox jumps over the lazy dog. 東京"
+    assert renderer.tokenizer.encode(text) == tokenizers.H200kBaseChatTokenizer().encode_ordinary(
+        text
+    )
+    assert renderer.tokenizer.encode(text) != get_tokenizer("thinkingmachines/Inkling").encode(text)
+    prompt = renderer.build_generation_prompt(_messages()[:-1]).to_ints()
+    renderer = pickle.loads(pickle.dumps(renderer))
+    assert renderer.build_generation_prompt(_messages()[:-1]).to_ints() == prompt
+    model_input, weights = renderer.build_supervised_example(_messages())
+    tokens = model_input.to_ints()
+    assert tokens[: len(prompt)] == prompt
+    assert not weights[: len(prompt)].any()
+    assert weights[len(prompt) :].sum() > 0
+    message, termination = renderer.parse_response(tokens[len(prompt) :])
+    assert termination.is_clean
+    assert message["content"] == "Hello."
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "thinkingmachines/Inkling-Small",
+        "thinkingmachines/Inkling-2-Small",
+    ],
+)
+@pytest.mark.parametrize("effort", [0.7, 0.2])
+def test_explicit_effort_preserves_sampling_sft_and_pickle_parity(
+    model_name: str, effort: float
+) -> None:
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("tml_v0", tokenizer)
+    assert isinstance(renderer, tml_v0.TmlV0Renderer)
+    prompt = renderer.build_generation_prompt(_messages()[:-1], effort=effort).to_ints()
+    assert f"Thinking effort level: {effort}" in tokenizer.decode(prompt)
+    model_input, weights = renderer.build_supervised_example(_messages(), effort=effort)
+    assert model_input.to_ints()[: len(prompt)] == prompt
+    assert not weights[: len(prompt)].any()
+    assert weights[len(prompt) :].sum() > 0
+    restored = pickle.loads(pickle.dumps(renderer))
+    assert restored.build_generation_prompt(_messages()[:-1], effort=effort).to_ints() == prompt
+    default_prompt = renderer.build_generation_prompt(_messages()[:-1]).to_ints()
+    assert "Thinking effort level: 0.9" in tokenizer.decode(default_prompt)
+    assert default_prompt != prompt

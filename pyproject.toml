@@ -24,8 +24,8 @@ dependencies = [
     "safetensors>=0.4.0",
     "termcolor>=2.0.0",
     "tiktoken>=0.12.0", # Required for Kimi tokenizer
-    "tinker>=0.35.0",
-    "tml-renderers>=0.0.1",
+    "tinker>=0.38.0",
+    "tml-renderers>=0.4.0",
     "torch>=2.10", # tml_renderers uses libtorch's stable C ABI, added in 2.10
     "tqdm>=4.60.0",
     # Known-bad releases are excluded rather than capping the upper bound:
@@ -169,9 +169,9 @@ exclude = ["*_test.py", "**/results/"]
 
 [tool.uv]
 exclude-newer = "7 days"
-# tinker is our own SDK, and the cookbook often requires a release that is only days old.
-# Its dependencies still go through the cooldown.
-exclude-newer-package = { tinker = false }
+# tinker and tml-renderers are our own packages, and the cookbook often requires a release that
+# is only days old. Their dependencies still go through the cooldown.
+exclude-newer-package = { tinker = false, tml-renderers = false }
 
 [tool.pytest.ini_options]
 testpaths = ["tinker_cookbook", "tests"]

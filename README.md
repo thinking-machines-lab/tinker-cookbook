@@ -30,26 +30,27 @@ We provide two libraries for the broader community to customize their language m
    uv pip install 'tinker-cookbook @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
    ```
 
-## Using Inkling and Inkling-Small
+## Using Inkling models
 
-Inkling is Thinking Machines Lab's model tailored for Tinker. It is a
-general-purpose model that can code, reason, call tools, and process image and
-audio inputs. Inkling-Small is a smaller, lower-cost model in the same family
-that shares Inkling's rendering path and reasoning-effort interface. Tinker
-Cookbook supports sampling and post-training both through the standalone
-`tml-renderers` library, included in the default installation together with the
-required `torch>=2.10`.
+Inkling is Thinking Machines Lab's model family tailored for Tinker:
+general-purpose models that can code, reason, and call tools. Inkling is also
+natively multimodal. Every Inkling model shares the same rendering path and
+reasoning-effort interface. Tinker Cookbook supports sampling and post-training
+every Inkling model through the standalone `tml-renderers` library, included in
+the default installation together with the required `torch>=2.10`.
 
-Pass `model_name="thinkingmachines/Inkling"` or
+Pass `model_name="thinkingmachines/Inkling-2-Small"`,
+`model_name="thinkingmachines/Inkling"`, or
 `model_name="thinkingmachines/Inkling-Small"` anywhere the cookbook accepts a
 model name. The appropriate renderer and tokenizer are selected automatically for
-any `thinkingmachines/Inkling*` model, including the `:peft:` long-context
-variants.
+each of these models, including the `:peft:` long-context variants. The tokenizer
+depends on the model, so always get it from the model name.
 
-Both models support [controllable reasoning effort](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/thinking-effort/)
-as well as multimodal [audio](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/audio/)
-and [image](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/images/)
-inputs. See the [Inkling documentation](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/)
+All Inkling models support [controllable reasoning effort](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/thinking-effort/)
+and multimodal [image](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/images/)
+inputs. Inkling and Inkling-Small also accept
+[audio](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/audio/) inputs.
+See the [Inkling documentation](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/)
 for setup and usage details, and
 [Models & Pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/) for
 per-model context lengths and pricing.
@@ -63,13 +64,13 @@ import tinker
 service_client = tinker.ServiceClient()
 training_client = service_client.create_lora_training_client(
   base_model="meta-llama/Llama-3.2-1B", rank=32,
-)
+).result()
 training_client.forward_backward(...)
 training_client.optim_step(...)
 training_client.save_state(...)
-resumed_client = service_client.create_training_client_from_state(...)
+resumed_client = service_client.create_training_client_from_state(...).result()
 
-sampling_client = training_client.save_weights_and_get_sampling_client()
+sampling_client = training_client.save_weights_and_get_sampling_client().result()
 sampling_client.sample(...)
 ```
 
@@ -79,12 +80,12 @@ See [tinker_cookbook/recipes/sl_loop.py](tinker_cookbook/recipes/sl_loop.py) and
 
 New to Tinker? The [`tutorials/`](tutorials/) directory contains 20+ progressive [marimo](https://marimo.io/) notebooks that walk through core concepts — rendering, loss functions, completers, weight management — and advanced topics such as custom RL environments, DPO, RLHF, and weight export. Run any tutorial with `marimo edit tutorials/101_hello_tinker.py`. See the [tutorials README](tutorials/README.md) for the full list, or browse rendered versions on the [Tinker docs site](https://tinker-docs.thinkingmachines.ai/tutorials).
 
-To download the weights of any model:
+To export and download trained weights:
 ```python
-rest_client = service_client.create_rest_client()
-future = rest_client.get_checkpoint_archive_url_from_tinker_path(sampling_client.model_path)
-with open(f"model-checkpoint.tar.gz", "wb") as f:
-    f.write(future.result())
+from tinker_cookbook import weights
+
+export = training_client.save_weights_external(name="export").result()
+weights.download(tinker_path=export.path, output_dir="model-checkpoint")
 ```
 
 ### Tinker Cookbook
@@ -143,13 +144,14 @@ Tinker Cookbook ships with [Claude Code skills](https://docs.anthropic.com/en/do
 /plugin marketplace add thinking-machines-lab/tinker-cookbook
 ```
 
-Then install the **tinker** plugin from the Discover tab (`/plugin` → Discover). Once installed, three skills are available:
+Then install the **tinker** plugin from the Discover tab (`/plugin` → Discover). Once installed, four skills are available:
 
 | Command | What it does |
 |---|---|
 | `/tinker:research` | Plan and run post-training experiments — SFT, RL, DPO, distillation, evaluation, hyperparameters, model selection, and more |
 | `/tinker:debug` | Diagnose slow training, hangs, output mismatches, renderer issues, and errors |
-| `/tinker:inkling` | Work with Inkling and Inkling-Small — thinking effort, rendering, post-training, evaluation, and multimodal input |
+| `/tinker:rollout-ui` | Build rollout viewers with messages, tool calls, provenance, aligned comparisons, and accessible diffs; link to W&B for metrics |
+| `/tinker:inkling` | Work with Inkling models, including Inkling 2 Small — thinking effort, rendering, post-training, evaluation, and multimodal input |
 
 Skills also trigger automatically based on context — ask Claude to "set up SFT training" and it will load the right skill without a slash command. Skills update automatically when the repo is updated.
 

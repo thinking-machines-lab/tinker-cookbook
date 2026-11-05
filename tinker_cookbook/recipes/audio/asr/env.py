@@ -152,7 +152,7 @@ class WEREvaluator(SamplingClientEvaluator):
 
         async def transcribe(prompt: tinker.ModelInput) -> tuple[str, ParseTermination]:
             async with semaphore:
-                resp = await sampling_client.sample_async(
+                resp = await sampling_client.sample(
                     prompt=prompt, num_samples=1, sampling_params=params
                 )
             return parse_response_text(self.renderer, list(resp.sequences[0].tokens))

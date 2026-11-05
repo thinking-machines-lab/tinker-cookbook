@@ -245,7 +245,7 @@ async def run_evals(
     measures the weights produced after step ``step-1`` (or the initial weights for
     step 0).  Training-client evaluators run against the mutable training client,
     while sampling evaluators request a fresh ``SamplingClient`` snapshot via
-    ``save_weights_and_get_sampling_client_async`` to ensure their work uses a fixed
+    ``save_weights_and_get_sampling_client`` to ensure their work uses a fixed
     checkpoint.
 
     Args:
@@ -278,7 +278,7 @@ async def run_evals(
             nonlocal sampling_client
             if sampling_client is None:
                 # Snapshot the current pre-step weights and create a new sampling client.
-                sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+                sampling_client = await training_client.save_weights_and_get_sampling_client()
             return await evaluator(sampling_client)
         else:
             raise ConfigurationError(f"Unknown evaluator type: {type(evaluator)}")
@@ -365,10 +365,8 @@ async def main(config: Config):
             await checkpoint_utils.check_renderer_name_for_checkpoint_async(
                 service_client, resume_info.state_path, config.renderer_name
             )
-            training_client = (
-                await service_client.create_training_client_from_state_with_optimizer_async(
-                    resume_info.state_path, user_metadata=user_metadata
-                )
+            training_client = await service_client.create_training_client_from_state_with_optimizer(
+                resume_info.state_path, user_metadata=user_metadata
             )
             logger.info(f"Resumed training from {resume_info.state_path}")
         elif config.load_checkpoint_path:
@@ -376,12 +374,12 @@ async def main(config: Config):
             await checkpoint_utils.check_renderer_name_for_checkpoint_async(
                 service_client, config.load_checkpoint_path, config.renderer_name
             )
-            training_client = await service_client.create_training_client_from_state_async(
+            training_client = await service_client.create_training_client_from_state(
                 config.load_checkpoint_path, user_metadata=user_metadata
             )
             logger.info(f"Loaded weights from {config.load_checkpoint_path}")
         else:
-            training_client = await service_client.create_lora_training_client_async(
+            training_client = await service_client.create_lora_training_client(
                 base_model=config.model_name,
                 rank=config.lora_rank,
                 user_metadata=user_metadata,
@@ -478,10 +476,8 @@ async def main(config: Config):
                         infrequent_evaluators, training_client, step
                     )
 
-            fwd_bwd_future = await training_client.forward_backward_async(
-                data, loss_fn="cross_entropy"
-            )
-            optim_step_future = await training_client.optim_step_async(adam_params)
+            fwd_bwd_future = training_client.forward_backward(data, loss_fn="cross_entropy")
+            optim_step_future = training_client.optim_step(adam_params)
 
             return SubmittedBatch(
                 fwd_bwd_future=fwd_bwd_future,
@@ -516,8 +512,8 @@ async def main(config: Config):
             )
 
             async with trace.scope_span("step"):
-                fwd_bwd_result = await submitted.fwd_bwd_future.result_async()
-                optim_step_result = await submitted.optim_step_future.result_async()
+                fwd_bwd_result = await submitted.fwd_bwd_future
+                optim_step_result = await submitted.optim_step_future
 
             if optim_step_result.metrics:
                 metrics.update(optim_step_result.metrics)

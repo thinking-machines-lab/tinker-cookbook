@@ -79,8 +79,8 @@ async def evaluate(
 
     # If model_path is provided, get the base model from the training run
     if model_path is not None:
-        rest_client = service.create_rest_client()
-        training_run = await rest_client.get_training_run_by_tinker_path_async(model_path)
+        rest_client = tinker.RestClient()
+        training_run = await rest_client.get_training_run_by_tinker_path(model_path)
         if model_name:
             if model_name != training_run.base_model:
                 raise ValueError(
@@ -106,9 +106,11 @@ async def evaluate(
 
     # Create sampling client from checkpoint path or base model
     if model_path:
-        sampling = service.create_sampling_client(model_path=model_path, base_model=model_name)
+        sampling = service.create_sampling_client(
+            model_path=model_path, base_model=model_name
+        ).result()
     else:
-        sampling = service.create_sampling_client(base_model=model_name)
+        sampling = service.create_sampling_client(base_model=model_name).result()
 
     client = TinkerAsyncOpenAIClient(sampling, renderer, tokenizer)
     start_time = time.time()

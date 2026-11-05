@@ -119,7 +119,7 @@ class ExpressoEvaluator(SamplingClientEvaluator):
 
         async def sample_one(prompt: tinker.ModelInput) -> str:
             async with semaphore:
-                resp = await sampling_client.sample_async(
+                resp = await sampling_client.sample(
                     prompt=prompt, num_samples=1, sampling_params=params
                 )
             response, _termination = parse_response_text(
@@ -199,9 +199,9 @@ class Config:
 async def async_main(cfg: Config) -> dict[str, float]:
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
     if cfg.model_path is not None:
-        sampling_client = service_client.create_sampling_client(model_path=cfg.model_path)
+        sampling_client = service_client.create_sampling_client(model_path=cfg.model_path).result()
     else:
-        sampling_client = service_client.create_sampling_client(base_model=cfg.model_name)
+        sampling_client = service_client.create_sampling_client(base_model=cfg.model_name).result()
 
     evaluator = ExpressoEvaluatorBuilder(
         model_name=cfg.model_name,

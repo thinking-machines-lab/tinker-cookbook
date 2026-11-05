@@ -4,6 +4,7 @@ import datetime
 import shutil
 import tempfile
 import urllib.error
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
@@ -23,13 +24,16 @@ def _future(*, result: object = None, error: Exception | None = None) -> MagicMo
     return future
 
 
+@contextmanager
 def _patch_sdk(rest_client: MagicMock, service_client: MagicMock | None = None):
-    service_client = service_client or MagicMock()
-    service_client.create_rest_client.return_value = rest_client
-    return patch(
-        "tinker_cookbook.weights._download.tinker.ServiceClient",
-        return_value=service_client,
-    )
+    with (
+        patch("tinker_cookbook.weights._download.tinker.RestClient", return_value=rest_client),
+        patch(
+            "tinker_cookbook.weights._download.tinker.ServiceClient",
+            return_value=service_client or MagicMock(),
+        ),
+    ):
+        yield
 
 
 def _urls_response(
@@ -72,7 +76,9 @@ def _training_round_trip_clients(
     training_client = MagicMock()
     training_client.save_weights_external.side_effect = save_weights_external
     service_client = MagicMock()
-    service_client.create_training_client_from_state.return_value = training_client
+    service_client.create_training_client_from_state.return_value.result.return_value = (
+        training_client
+    )
     rest_client = MagicMock()
     rest_client.get_external_weights_urls.return_value = _future(
         result=_urls_response(_export_urls(export_dir, files))

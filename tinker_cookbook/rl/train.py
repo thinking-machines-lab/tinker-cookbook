@@ -360,27 +360,27 @@ async def train_step(
     optim_result: tinker.OptimStepResponse | None = None
 
     # Enqueue first batch
-    fwd_bwd_future = await training_client.forward_backward_async(
+    fwd_bwd_future = training_client.forward_backward(
         [_remove_mask(d) for d in batches[0]], loss_fn=loss_fn, loss_fn_config=loss_fn_config
     )
-    optim_future = await training_client.optim_step_async(adam_params)
+    optim_future = training_client.optim_step(adam_params)
 
     for i in range(len(batches)):
         # Enqueue next batch before consuming current results (to stay on same clock cycle)
         if i + 1 < len(batches):
-            next_fwd_bwd_future = await training_client.forward_backward_async(
+            next_fwd_bwd_future = training_client.forward_backward(
                 [_remove_mask(d) for d in batches[i + 1]],
                 loss_fn=loss_fn,
                 loss_fn_config=loss_fn_config,
             )
-            next_optim_future = await training_client.optim_step_async(adam_params)
+            next_optim_future = training_client.optim_step(adam_params)
         else:
             next_fwd_bwd_future = None
             next_optim_future = None
         # Consume current results
-        fwd_bwd_result = await fwd_bwd_future.result_async()
+        fwd_bwd_result = await fwd_bwd_future
         training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
-        optim_result = await optim_future.result_async()
+        optim_result = await optim_future
         # Move to next iteration
         if next_fwd_bwd_future is not None and next_optim_future is not None:
             fwd_bwd_future = next_fwd_bwd_future
@@ -909,21 +909,34 @@ async def run_evaluations_parallel(
     return metrics
 
 
+def _should_run_evals(
+    evaluators: list[SamplingClientEvaluator],
+    config: Config,
+    step: int,
+    *,
+    end_step: int | None,
+) -> bool:
+    return (
+        bool(evaluators)
+        and config.eval_every > 0
+        and (step == end_step or step % config.eval_every == 0)
+    )
+
+
 async def _maybe_run_evals(
     evaluators: list[SamplingClientEvaluator],
     sampling_client: tinker.SamplingClient,
     config: Config,
     step: int,
     ml_logger: ml_log.Logger,
-    force: bool = False,
+    *,
+    end_step: int | None,
 ) -> dict[str, Any]:
-    """Run evaluations at ``step`` if it is on the ``eval_every`` cadence, or if ``force``.
+    """Run evaluations at ``step`` on the ``eval_every`` cadence or at the known ``end_step``.
 
     Evaluation is disabled entirely when ``eval_every == 0`` or there are no evaluators.
     """
-    if config.eval_every == 0 or len(evaluators) == 0:
-        return {}
-    if not force and step % config.eval_every != 0:
+    if not _should_run_evals(evaluators, config, step, end_step=end_step):
         return {}
     async with trace.scope_span("run_evals"):
         return await run_evaluations_parallel(
@@ -1002,7 +1015,9 @@ async def do_sync_training_with_stream_minibatch(
         with trace.trace_iteration(step=i_batch) as window:
             # Run evaluations
             metrics.update(
-                await _maybe_run_evals(evaluators, sampling_client, config, i_batch, ml_logger)
+                await _maybe_run_evals(
+                    evaluators, sampling_client, config, i_batch, ml_logger, end_step=end_batch
+                )
             )
 
             iter_dir = iteration_dir(config.log_path, i_batch)
@@ -1131,7 +1146,7 @@ async def do_sync_training_with_stream_minibatch(
     if start_batch < end_batch:
         # Evals run before each iteration's train step, so the final weights need one more.
         final_metrics = await _maybe_run_evals(
-            evaluators, sampling_client, config, end_batch, ml_logger, force=True
+            evaluators, sampling_client, config, end_batch, ml_logger, end_step=end_batch
         )
         if final_metrics:
             ml_logger.log_metrics(final_metrics, step=end_batch)
@@ -1249,6 +1264,17 @@ async def do_async_training(
             :meth:`CostTracker.record_step`); its totals are checkpointed for resume.
     """
     assert config.async_config is not None
+    training_started_at = time.monotonic()
+    ml_logger.enable_event_steps()
+
+    def snapshot_coordinates(step: int, cost_metrics: dict[str, float]) -> dict[str, float]:
+        coordinates = {
+            "eval/snapshot/training_step": float(step),
+            "eval/snapshot/elapsed_seconds": time.monotonic() - training_started_at,
+        }
+        if "cost/cumulative_usd" in cost_metrics:
+            coordinates["eval/snapshot/cumulative_cost_usd"] = cost_metrics["cost/cumulative_usd"]
+        return coordinates
 
     # Buffer up to groups_per_batch builders ahead of the rollout workers.
     env_group_builders_queue = asyncio.Queue[EnvGroupBuilder | _Shutdown](
@@ -1278,6 +1304,7 @@ async def do_async_training(
     # 4. Eval loop sees evaluation_loop_should_shutdown_event → evaluates the final
     #    weights if it hasn't already, then exits.
     evaluation_loop_should_shutdown_event = asyncio.Event()
+    evaluation_end_step: int | None = end_batch if end_batch > start_batch else None
     # A worker takes a slot before starting a rollout; the training loop frees it
     # once the group has been trained (a worker frees it right away if its group
     # is filtered out). This caps how far sampling can run ahead of training.
@@ -1292,12 +1319,16 @@ async def do_async_training(
     # than max_steps_off_policy would cap how far sampling runs ahead.
     num_rollout_workers = num_rollout_slots
     worker_alive_counter = _AsyncCounter(num_rollout_workers)
+    rollout_workers_finished = asyncio.Event()
 
     # This will be updated by the training loop
     sampling_client = training_client.create_sampling_client(
         path_dict["sampler_path"], record_stability_info=config.records_stability_info()
-    )
+    ).result()
     sampling_client_step = start_batch
+    sampling_client_coordinates = snapshot_coordinates(
+        start_batch, cost_tracker.cumulative_metrics() if cost_tracker is not None else {}
+    )
     sampling_client_updated_event = asyncio.Event()
     sampling_client_updated_event.set()
 
@@ -1368,6 +1399,7 @@ async def do_async_training(
         # When this is the last worker to exit, signal the training loop to shut down
         num_alive = await worker_alive_counter.decrement_and_get()
         if num_alive == 0:
+            rollout_workers_finished.set()
             logger.info(
                 "[trajectory_group_worker_loop] Last worker exited, shutting down training loop"
             )
@@ -1410,15 +1442,20 @@ async def do_async_training(
             return batch
 
         i_batch = start_batch
+        train_step_metrics: dict[str, Any] = {}
+        nonlocal evaluation_end_step
         while i_batch < end_batch:
+            completed_step = i_batch + 1
             metrics: dict[str, Any] = {
                 "training_client/step": i_batch,
                 "optim/lr": config.learning_rate,
-                "progress/done_frac": (i_batch + 1) / num_batches,
+                "progress/done_frac": completed_step / num_batches,
             }
 
             nonlocal sampling_client
             nonlocal sampling_client_step
+            nonlocal sampling_client_coordinates
+            reused_sampling_client = False
             if config.stream_minibatch_config is not None:
                 # Streaming minibatch: delegate queue consumption to the streaming function,
                 # which returns None once it reaches the shutdown sentinel (a step that
@@ -1480,6 +1517,13 @@ async def do_async_training(
                 # Compute sampling client metrics, as samples may have been generated with
                 # different sampler versions
                 metrics.update(compute_sampling_client_metrics(wrapped_trajectory_groups))
+                sampling_client_reuse = None
+                if not _should_run_evals(
+                    evaluators, config, completed_step, end_step=evaluation_end_step
+                ):
+                    sampling_client_reuse = SamplingClientReuse(
+                        sampling_client, rollout_workers_finished
+                    )
 
                 with trace.trace_iteration(step=i_batch) as window:
                     # TODO: For proper checkpointing, we also need to save dataloader state and
@@ -1497,7 +1541,11 @@ async def do_async_training(
                         [g.env_group_builder for g in wrapped_trajectory_groups],
                         [g.trajectory_group for g in wrapped_trajectory_groups],
                         cost_tracker=cost_tracker,
+                        sampling_client_reuse=sampling_client_reuse,
                     )
+                reused_sampling_client = (
+                    sampling_client_reuse is not None and sampling_client_reuse.reused
+                )
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
@@ -1519,8 +1567,14 @@ async def do_async_training(
             metrics["async/staleness_max"] = max(staleness)
             metrics["async/staleness_min"] = min(staleness)
             metrics["async/staleness_mean"] = sum(staleness) / len(staleness)
-            sampling_client_step = i_batch + 1
-            sampling_client_updated_event.set()
+            if not reused_sampling_client:
+                sampling_client_step = completed_step
+                # Publish coordinates with their weights, before any await. A late
+                # evaluation must not read the cost of a newer optimizer update.
+                sampling_client_coordinates = snapshot_coordinates(
+                    sampling_client_step, train_step_metrics
+                )
+                sampling_client_updated_event.set()
             # Free the trained groups' slots only now that the new sampling client
             # is in place (no await since the train step returned), so rollouts
             # started on these slots use the new weights.
@@ -1530,7 +1584,7 @@ async def do_async_training(
             # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
             if checkpoint_mgr is not None:
                 await checkpoint_mgr.maybe_save_rolling_async(
-                    step=i_batch + 1, loop_state=_loop_state(i_batch + 1, cost_tracker)
+                    step=completed_step, loop_state=_loop_state(completed_step, cost_tracker)
                 )
 
             # Log metrics
@@ -1558,6 +1612,18 @@ async def do_async_training(
                 "raise max_steps (and num_epochs, if it caps the run)."
             )
 
+        # Collection may reveal an earlier endpoint, but no update means no final eval.
+        evaluation_end_step = i_batch if i_batch > start_batch else None
+        if sampling_client_step < i_batch and _should_run_evals(
+            evaluators, config, i_batch, end_step=evaluation_end_step
+        ):
+            # Early data exhaustion can make an off-cadence drain step the final step.
+            sampling_client = await training_client.save_weights_and_get_sampling_client(
+                record_stability_info=config.records_stability_info()
+            )
+            sampling_client_step = i_batch
+            sampling_client_coordinates = snapshot_coordinates(i_batch, train_step_metrics)
+
         # Signal evaluation loop to shut down
         evaluation_loop_should_shutdown_event.set()
         sampling_client_updated_event.set()
@@ -1566,7 +1632,7 @@ async def do_async_training(
     @trace.scope
     async def evaluation_loop():
         """Runs evals periodically, matching the sync training eval pipeline."""
-        if len(evaluators) == 0 or config.eval_every == 0:
+        if not evaluators or config.eval_every <= 0:
             return
 
         last_eval_step: int | None = None
@@ -1582,13 +1648,12 @@ async def do_async_training(
             # while we're running the evals
             sampling_client_eval_step = sampling_client_step
             sampling_client_eval = sampling_client
+            coordinates = sampling_client_coordinates
             # Always evaluate the final weights, even off the eval_every cadence
             # or if an earlier eval was still running when training finished.
-            is_final = shutting_down and sampling_client_eval_step > start_batch
-            on_cadence = (
-                config.eval_every > 0 and sampling_client_eval_step % config.eval_every == 0
-            )
-            if sampling_client_eval_step != last_eval_step and (on_cadence or is_final):
+            if sampling_client_eval_step != last_eval_step and _should_run_evals(
+                evaluators, config, sampling_client_eval_step, end_step=evaluation_end_step
+            ):
                 last_eval_step = sampling_client_eval_step
                 metrics: dict[str, Any] = {}
                 with trace.trace_iteration(step=sampling_client_eval_step) as window:
@@ -1600,8 +1665,31 @@ async def do_async_training(
                         store=ml_logger.store,
                     )
                     metrics.update(eval_metrics)
-                metrics.update(window.get_timing_metrics())
-                ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
+                metrics.update(coordinates)
+                metrics["eval/completed_elapsed_seconds"] = time.monotonic() - training_started_at
+                metric_axes: dict[str, str] = {}
+                for axis, coordinate in (
+                    ("step", "eval/snapshot/training_step"),
+                    ("cost", "eval/snapshot/cumulative_cost_usd"),
+                    ("time", "eval/snapshot/elapsed_seconds"),
+                ):
+                    if coordinate in coordinates:
+                        for name, value in eval_metrics.items():
+                            alias = f"eval/by_{axis}/{name}"
+                            metrics[alias] = value
+                            metric_axes[alias] = coordinate
+                metrics.update(
+                    {
+                        f"eval/timing/{key}": value
+                        for key, value in window.get_timing_metrics().items()
+                    }
+                )
+                ml_logger.log_metrics_event(
+                    metrics,
+                    step=sampling_client_eval_step,
+                    step_metric="eval/snapshot/training_step",
+                    metric_axes=metric_axes,
+                )
             if shutting_down:
                 break
         logger.info("[evaluation_loop] Terminated")
@@ -1685,11 +1773,11 @@ async def save_checkpoint_and_get_sampling_client(
         )
         sampling_client = training_client.create_sampling_client(
             path_dict["sampler_path"], record_stability_info=record_stability_info
-        )
+        ).result()
         return sampling_client, metrics
     else:
         async with trace.scope_span("save_checkpoint"):
-            sampling_client = await training_client.save_weights_and_get_sampling_client_async(
+            sampling_client = await training_client.save_weights_and_get_sampling_client(
                 record_stability_info=record_stability_info
             )
             return sampling_client, metrics
@@ -1766,6 +1854,13 @@ async def prepare_minibatch(
     return data_D, metrics, usage
 
 
+@dataclass
+class SamplingClientReuse:
+    sampling_client: tinker.SamplingClient
+    rollout_workers_finished: asyncio.Event
+    reused: bool = False
+
+
 @trace.scope
 async def compute_full_batch_metrics_and_get_sampling_client(
     training_client: tinker.TrainingClient,
@@ -1777,8 +1872,9 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     record_stability_info: bool = False,
     usage: TokenUsage = TokenUsage(),
     cost_tracker: CostTracker | None = None,
+    sampling_client_reuse: SamplingClientReuse | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
-    """Compute end-of-iteration metrics and return a fresh sampling client.
+    """Compute end-of-iteration metrics and export weights unless reuse is allowed.
 
     Calculates KL divergence between the sampling and training log-probs,
     saves a checkpoint (if due), and optionally computes post-update KL
@@ -1809,11 +1905,15 @@ async def compute_full_batch_metrics_and_get_sampling_client(
             is recorded once they return (:meth:`CostTracker.extend_step`):
             it is in this step's metrics and in every later checkpoint, but
             not in the one saved by this call.
+        sampling_client_reuse: Optional previous client and worker-finished event.
+            Checked after training; marks ``reused`` when returning old weights.
+            Periodic checkpoints and post-update KL always export.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
         loaded with post-update weights, and a dict of KL / checkpoint /
-        cost metrics.
+        cost metrics. When ``sampling_client_reuse.reused`` is set, its weights
+        are unchanged and must not be published as this iteration's snapshot.
     """
     metrics: dict[str, Any] = {}
 
@@ -1824,6 +1924,15 @@ async def compute_full_batch_metrics_and_get_sampling_client(
 
     if cost_tracker is not None:
         metrics.update(cost_tracker.record_step(usage + training_usage(data_D)))
+
+    if (
+        sampling_client_reuse is not None
+        and sampling_client_reuse.rollout_workers_finished.is_set()
+        and not do_compute_post_kl
+        and not (i_batch > 0 and checkpoint_mgr.should_save_periodic(i_batch))
+    ):
+        sampling_client_reuse.reused = True
+        return sampling_client_reuse.sampling_client, metrics
 
     # Get a sampling client using the new weights
     sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
@@ -1967,7 +2076,7 @@ async def do_train_step_streaming_and_get_sampling_client(
             ):
                 _check_provenance(data_D, config.training_loss_fn())
                 forward_backward_futures.append(
-                    await training_client.forward_backward_async(
+                    training_client.forward_backward(
                         [_remove_mask(d) for d in data_D],
                         loss_fn=config.training_loss_fn(),
                         loss_fn_config=config.loss_fn_config,
@@ -1989,16 +2098,16 @@ async def do_train_step_streaming_and_get_sampling_client(
             learning_rate=config.learning_rate, beta1=0.9, beta2=0.95, eps=1e-8
         )
         async with trace.scope_span(f"train/optim_substep_{i_substep}_enqueue"):
-            optim_future = await training_client.optim_step_async(adam_params)
+            optim_future = training_client.optim_step(adam_params)
 
         # Now consume all forward-backward results
         for i_mb, fwd_bwd_future in enumerate(forward_backward_futures):
             async with trace.scope_span(f"train/fwd_bwd_substep_{i_substep}_mb_{i_mb}_consume"):
-                fwd_bwd_result = await fwd_bwd_future.result_async()
+                fwd_bwd_result = await fwd_bwd_future
                 all_training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
 
         async with trace.scope_span(f"train/optim_substep_{i_substep}_consume"):
-            optim_result = await optim_future.result_async()
+            optim_result = await optim_future
 
         if optim_result.metrics:
             metrics.update(optim_result.metrics)
@@ -2055,6 +2164,7 @@ async def do_train_step_and_get_sampling_client(
     env_group_builders_P: Sequence[EnvGroupBuilder],
     trajectory_groups_P: list[TrajectoryGroup],
     cost_tracker: CostTracker | None = None,
+    sampling_client_reuse: SamplingClientReuse | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Prepare a minibatch, run one training step, and return updated weights.
 
@@ -2074,11 +2184,15 @@ async def do_train_step_and_get_sampling_client(
             produced each trajectory group.
         trajectory_groups_P (list[TrajectoryGroup]): Collected trajectory
             groups for this iteration.
+        sampling_client_reuse: Passed to
+            :func:`compute_full_batch_metrics_and_get_sampling_client`; allows
+            reusing old weights when there are no remaining sampler consumers.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
         loaded with post-update weights, and a dict of all metrics from
-        minibatch preparation, training, and checkpointing.
+        minibatch preparation, training, and checkpointing. If
+        ``sampling_client_reuse.reused`` is set, its weights are unchanged.
     """
     trace.update_scope_context({"step": i_batch})
 
@@ -2114,6 +2228,7 @@ async def do_train_step_and_get_sampling_client(
         record_stability_info=config.records_stability_info(),
         usage=usage,
         cost_tracker=cost_tracker,
+        sampling_client_reuse=sampling_client_reuse,
     )
     metrics.update(full_batch_metrics)
 
@@ -2191,7 +2306,9 @@ async def do_sync_training(
         with trace.trace_iteration(step=i_batch) as window:
             # Run evaluations
             metrics.update(
-                await _maybe_run_evals(evaluators, sampling_client, config, i_batch, ml_logger)
+                await _maybe_run_evals(
+                    evaluators, sampling_client, config, i_batch, ml_logger, end_step=end_batch
+                )
             )
 
             # Get batch and sample trajectories
@@ -2310,7 +2427,7 @@ async def do_sync_training(
     if start_batch < end_batch:
         # Evals run before each iteration's train step, so the final weights need one more.
         final_metrics = await _maybe_run_evals(
-            evaluators, sampling_client, config, end_batch, ml_logger, force=True
+            evaluators, sampling_client, config, end_batch, ml_logger, end_step=end_batch
         )
         if final_metrics:
             ml_logger.log_metrics(final_metrics, step=end_batch)
@@ -2461,10 +2578,8 @@ async def main(
             await checkpoint_utils.check_renderer_name_for_checkpoint_async(
                 service_client, resume_info.state_path, config.renderer_name
             )
-            training_client = (
-                await service_client.create_training_client_from_state_with_optimizer_async(
-                    resume_info.state_path, user_metadata=user_metadata
-                )
+            training_client = await service_client.create_training_client_from_state_with_optimizer(
+                resume_info.state_path, user_metadata=user_metadata
             )
             logger.info(f"Resumed training from {resume_info.state_path}")
         elif config.load_checkpoint_path:
@@ -2472,12 +2587,12 @@ async def main(
             await checkpoint_utils.check_renderer_name_for_checkpoint_async(
                 service_client, config.load_checkpoint_path, config.renderer_name
             )
-            training_client = await service_client.create_training_client_from_state_async(
+            training_client = await service_client.create_training_client_from_state(
                 config.load_checkpoint_path, user_metadata=user_metadata
             )
             logger.info(f"Loaded weights from {config.load_checkpoint_path}")
         else:
-            training_client = await service_client.create_lora_training_client_async(
+            training_client = await service_client.create_lora_training_client(
                 config.model_name, rank=config.lora_rank, user_metadata=user_metadata
             )
 
@@ -2513,7 +2628,7 @@ async def main(
             kl_reference_client = service_client.create_sampling_client(
                 base_model=config.kl_reference_config.base_model,
                 model_path=config.kl_reference_config.load_checkpoint_path,
-            )
+            ).result()
         else:
             kl_reference_client = None
 

@@ -3,7 +3,7 @@
 Uses a fake sampling client (canned token sequences) and a fake renderer
 implementing the same protocol; real renderers require HF tokenizer downloads
 so they are not exercised here. The capture funnel is tested for real: the
-fake client's ``sample_async`` is wrapped with the actual instrumentation
+fake client's ``sample`` is wrapped with the actual instrumentation
 wrapper and records are asserted on the exporter's sink.
 """
 
@@ -12,16 +12,18 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Sequence
+from concurrent.futures import Future
 from typing import Any
 
 import pytest
 import pytest_asyncio
 import tinker
 from aiohttp.test_utils import TestClient, TestServer
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook.capture import instrument as instrument_mod
 from tinker_cookbook.capture.exporter import CaptureExporter, CaptureRecord
-from tinker_cookbook.capture.instrument import _make_sample_async_wrapper
+from tinker_cookbook.capture.instrument import _make_sample_wrapper
 from tinker_cookbook.capture.proxy.address import parse_address
 from tinker_cookbook.capture.proxy.app import ProxyDeps, make_app
 from tinker_cookbook.renderers import Message, ParseTermination
@@ -49,13 +51,15 @@ class FakeSamplingClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
-    async def sample_async(
+    def sample(
         self, prompt: Any, num_samples: int, sampling_params: Any
-    ) -> FakeResponse:
+    ) -> AwaitableConcurrentFuture[FakeResponse]:
         self.calls.append(
             {"prompt": prompt, "num_samples": num_samples, "sampling_params": sampling_params}
         )
-        return FakeResponse()
+        future: Future[FakeResponse] = Future()
+        future.set_result(FakeResponse())
+        return AwaitableConcurrentFuture(future)
 
 
 class FakeRenderer:
@@ -106,10 +110,10 @@ async def client(sink: ImmediateSink):  # type: ignore[no-untyped-def]
     exporter = CaptureExporter(sink, max_batch_size=1, flush_interval_sec=0.02)
     instrument_mod._exporter = exporter
     sampling_client = FakeSamplingClient()
-    # Wrap the fake's sample_async with the real instrumentation wrapper, exactly
-    # what instrument_tinker() does to tinker.SamplingClient.sample_async.
-    sampling_client.sample_async = _make_sample_async_wrapper(  # type: ignore[method-assign]
-        FakeSamplingClient.sample_async
+    # Wrap the fake's sample with the real instrumentation wrapper, exactly
+    # what instrument_tinker() does to tinker.SamplingClient.sample.
+    sampling_client.sample = _make_sample_wrapper(  # type: ignore[method-assign]
+        FakeSamplingClient.sample
     ).__get__(sampling_client)
     deps = ProxyDeps(
         renderer=FakeRenderer(), sampling_client=sampling_client, model_label="fake-model"
@@ -1259,13 +1263,17 @@ def _bad_request_error(message: str) -> tinker.BadRequestError:
 
 
 class FailingSamplingClient:
-    """SamplingClient-shaped; raises a canned error from sample_async."""
+    """SamplingClient-shaped; raises a canned error from sample."""
 
     def __init__(self, error: Exception) -> None:
         self.error = error
 
-    async def sample_async(self, prompt: Any, num_samples: int, sampling_params: Any) -> Any:
-        raise self.error
+    def sample(
+        self, prompt: Any, num_samples: int, sampling_params: Any
+    ) -> AwaitableConcurrentFuture[FakeResponse]:
+        future: Future[FakeResponse] = Future()
+        future.set_exception(self.error)
+        return AwaitableConcurrentFuture(future)
 
 
 async def _failing_client(error: Exception) -> TestClient:

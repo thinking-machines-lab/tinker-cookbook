@@ -6,6 +6,7 @@ Full listing of available models with types, architecture, and sizes.
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `thinkingmachines/Inkling-2-Small` | Hybrid + Vision | MoE | Large |
 | `thinkingmachines/Inkling` | Hybrid + Audio + Vision | MoE | Large |
 | `thinkingmachines/Inkling-Small` | Hybrid + Audio + Vision | MoE | Medium |
 

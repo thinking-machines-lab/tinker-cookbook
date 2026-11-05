@@ -55,7 +55,7 @@ renderer_name = model_info.get_recommended_renderer_name(model_name)
 
 For the full model lineup, read `references/models.md`. For the latest supported models (the reference file may be outdated), check https://tinker-docs.thinkingmachines.ai/tinker/models/.
 
-**Inkling models** (`thinkingmachines/Inkling`, `thinkingmachines/Inkling-Small`) have their own requirements — mandatory thinking-effort conditioning, the `tml_v0` renderer, and sweep across thinking effort and learning rates. Use the `inkling` skill before writing code against them.
+**Inkling models** (`thinkingmachines/Inkling-2-Small`, `thinkingmachines/Inkling`, `thinkingmachines/Inkling-Small`) have their own requirements — mandatory thinking-effort conditioning, the `tml_v0` renderer, and sweep across thinking effort and learning rates. Use the `inkling` skill before writing code against them.
 
 ### 3. Set up evaluation FIRST
 
@@ -81,7 +81,7 @@ from tinker_cookbook import cli_utils
 from tinker_cookbook.eval.benchmarks import run_benchmarks, BenchmarkConfig
 
 # Run baseline eval BEFORE any training
-# sampling_client from tc.save_weights_and_get_sampling_client()
+# sampling_client from tc.save_weights_and_get_sampling_client().result()
 results = await run_benchmarks(
     ["gsm8k", "mmlu_pro", "ifeval"],
     sampling_client, renderer,
@@ -279,7 +279,7 @@ cd tinker-cookbook && pip install -e .                 # Cookbook
 ```python
 import tinker
 svc = tinker.ServiceClient()
-tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32)
+tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32).result()
 print(tc.get_info())
 ```
 
@@ -471,15 +471,15 @@ The single most important performance pattern — **submit async calls back-to-b
 
 ```python
 # CORRECT: overlap GPU work with CPU data prep
-fb_future = tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
-optim_future = tc.optim_step_async(adam_params=adam_params)
+fb_future = tc.forward_backward(data=batch, loss_fn="cross_entropy")
+optim_future = tc.optim_step(adam_params=adam_params)
 next_batch = dataset.get_batch(i + 1)  # Prepare while GPU works
 fb_result = fb_future.result()
 optim_result = optim_future.result()
 
 # WRONG: sequential = GPU idle between calls
-result = tc.forward_backward(data=batch, loss_fn="cross_entropy")
-tc.optim_step(adam_params=adam_params)
+result = tc.forward_backward(data=batch, loss_fn="cross_entropy").result()
+tc.optim_step(adam_params=adam_params).result()
 ```
 
 Same for evaluation — always concurrent:
@@ -537,7 +537,7 @@ paths = await checkpoint_utils.save_checkpoint_async(
 
 # Resume
 record = checkpoint_utils.get_last_checkpoint(log_path, required_key="state_path")
-tc = svc.create_training_client_from_state_with_optimizer(path=record.state_path)
+tc = svc.create_training_client_from_state_with_optimizer(path=record.state_path).result()
 ```
 
 ### Weight export
@@ -567,7 +567,7 @@ For the CLI reference, read `references/cli.md`.
 
 ## Common pitfalls
 
-- **Sequential API calls**: The #1 performance mistake. Always use `_async` variants and submit back-to-back before awaiting.
+- **Sequential API calls**: The #1 performance mistake. Submit calls back-to-back, then await their `APIFuture`s. Use `.coroutine()` when passing SDK futures to `asyncio.gather` or `asyncio.create_task`.
 - **Sampler desync**: After saving weights, create a **new** SamplingClient. A stale client silently samples from old weights.
 - **Renderer mismatch**: Always use `model_info.get_recommended_renderer_name()` — never hardcode.
 - **LoRA LR**: LoRA needs ~10x higher LR than full fine-tuning — use `get_lr()`.

@@ -80,7 +80,7 @@ async def incorporate_kl_penalty(
     # Each datum uses its corresponding teacher sampling client
     teacher_logprobs_D = await asyncio.gather(
         *[
-            teacher_client.compute_logprobs_async(sequence_input)
+            teacher_client.compute_logprobs(sequence_input).coroutine()
             for teacher_client, sequence_input in zip(teacher_clients_D, full_sequence_inputs_D)
         ]
     )
@@ -427,10 +427,8 @@ async def main(
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, resume_info.state_path, config.renderer_name
         )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
-            )
+        training_client = await service_client.create_training_client_from_state_with_optimizer(
+            resume_info.state_path, user_metadata=user_metadata
         )
         logger.info(f"Resumed training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
@@ -438,12 +436,12 @@ async def main(
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, config.load_checkpoint_path, config.renderer_name
         )
-        training_client = await service_client.create_training_client_from_state_async(
+        training_client = await service_client.create_training_client_from_state(
             config.load_checkpoint_path, user_metadata=user_metadata
         )
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
-        training_client = await service_client.create_lora_training_client_async(
+        training_client = await service_client.create_lora_training_client(
             config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
 
@@ -467,13 +465,15 @@ async def main(
 
         # Create teacher sampling client
         teacher_config = dataset_config.teacher_config
-        teacher_client = service_client.create_sampling_client(base_model=teacher_config.base_model)
+        teacher_client = service_client.create_sampling_client(
+            base_model=teacher_config.base_model
+        ).result()
         # Load teacher checkpoint if specified
         if teacher_config.load_checkpoint_path is not None:
             teacher_client = service_client.create_sampling_client(
                 base_model=teacher_config.base_model,
                 model_path=teacher_config.load_checkpoint_path,
-            )
+            ).result()
         teacher_clients.append(teacher_client)
         logger.info(
             f"Created teacher sampling client for {teacher_config.base_model} "

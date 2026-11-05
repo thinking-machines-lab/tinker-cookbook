@@ -23,8 +23,8 @@ Understanding the SDK's threading model is key to diagnosing most issues. The SD
 │     Main Thread      │     │      SDK Background Thread    │
 │  (user code)         │     │  (asyncio event loop)         │
 │                      │     │                               │
-│  fb = tc.fwd_bwd_   │────>│  HTTP POST /forward_backward  │
-│       async(data)    │     │  → returns request_id         │
+│  fb = tc.forward_   │────>│  HTTP POST /forward_backward  │
+│    backward(data)    │     │  → returns request_id         │
 │                      │     │                               │
 │  # prepare next      │     │  Long-poll /retrieve_future   │
 │  # batch here...     │     │  (HTTP 408 = not ready yet)   │
@@ -35,7 +35,7 @@ Understanding the SDK's threading model is key to diagnosing most issues. The SD
 └─────────────────────┘     └──────────────────────────────┘
 ```
 
-When you call `forward_backward_async()`, the SDK:
+When you call `forward_backward()`, the SDK:
 1. Submits the request coroutine to the background thread
 2. Returns a future immediately (main thread continues)
 3. Background thread sends HTTP request, starts long-polling for result
@@ -89,16 +89,16 @@ The single most common performance mistake. If the user's code awaits each API c
 
 ```python
 # BAD: sequential — GPU idle while client prepares next call
-result = tc.forward_backward(data=batch, loss_fn="cross_entropy")  # blocks
-tc.optim_step(adam_params=params)  # blocks
+result = tc.forward_backward(data=batch, loss_fn="cross_entropy").result()  # blocks
+tc.optim_step(adam_params=params).result()  # blocks
 
 # BAD: async but still sequential
-result = await tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
-await tc.optim_step_async(adam_params=params)
+result = await tc.forward_backward(data=batch, loss_fn="cross_entropy")
+await tc.optim_step(adam_params=params)
 
 # GOOD: pipelined — submit both before awaiting
-fb_future = tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
-optim_future = tc.optim_step_async(adam_params=params)
+fb_future = tc.forward_backward(data=batch, loss_fn="cross_entropy")
+optim_future = tc.optim_step(adam_params=params)
 # ... prepare next batch while GPU works ...
 fb_result = fb_future.result()
 optim_result = optim_future.result()
@@ -138,7 +138,7 @@ If the user has a custom script without cookbook tracing, suggest wrapping key s
 import time
 
 t0 = time.perf_counter()
-fb_future = tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
+fb_future = tc.forward_backward(data=batch, loss_fn="cross_entropy")
 t_submit = time.perf_counter() - t0
 
 t0 = time.perf_counter()
@@ -201,7 +201,7 @@ The `--async-mode=enabled` flag is critical — without it, time spent in `await
 When a session is actively slow or hung, use the async task dump + thread stack watchdog to see what both threads are doing in real-time. Read `references/async-task-dump.md` for ready-to-paste diagnostic code.
 
 **Interpreting the output:**
-- SDK thread has pending `_forward_backward_async` tasks → Work submitted, waiting for server
+- SDK thread has pending `_run_async` tasks → Work submitted, waiting for server
 - SDK thread has pending `_result_async` → Normal long-polling behavior
 - SDK thread stopped logging entirely → **GIL contention** — the background thread can't wake up
 - Main thread stuck in numpy/torch/data code while SDK thread is stalled → GIL is the bottleneck
@@ -211,7 +211,7 @@ When a session is actively slow or hung, use the async task dump + thread stack 
 This is the most subtle and most common cause of "mysterious" slowdowns. Because the SDK's background thread shares Python's GIL with the main thread, CPU-heavy work in the user's code blocks the SDK from:
 - **Sending heartbeats** → Session may expire (warning: "Session heartbeat failed")
 - **Polling for results** → Futures appear to hang for minutes
-- **Submitting new requests** → Pipelining breaks even when using `_async` variants
+- **Submitting new requests** → Pipelining breaks even when submitting calls before awaiting
 
 **Symptoms of GIL contention:**
 - Steps are slow but server-side traces show the GPU finished quickly
@@ -261,9 +261,9 @@ If GIL is not the issue and the client submits quickly, check whether the wait i
 
 ```python
 import time, tinker
-svc = tinker.ServiceClient()
+rest = tinker.RestClient()
 t0 = time.perf_counter()
-caps = svc.get_server_capabilities()
+caps = rest.get_server_capabilities().result()
 print(f"API round-trip: {time.perf_counter() - t0:.2f}s")
 # >2s suggests network issues; <1s rules out network
 ```
@@ -391,14 +391,14 @@ svc = tinker.ServiceClient()
 # Step 1: API reachable?
 t0 = time.perf_counter()
 try:
-    caps = svc.get_server_capabilities()
-    print(f"API reachable ({time.perf_counter() - t0:.2f}s), {len(caps.models)} models available")
+    caps = tinker.RestClient().get_server_capabilities().result()
+    print(f"API reachable ({time.perf_counter() - t0:.2f}s), {len(caps.supported_models)} models available")
 except Exception as e:
     print(f"API unreachable: {type(e).__name__}: {e}")
 
 # Step 2: Can we create a training session? (small model for speed)
 try:
-    tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32)
+    tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32).result()
     print(f"Training client created: {tc.get_info()}")
 except Exception as e:
     print(f"Training client failed: {type(e).__name__}: {e}")
@@ -618,7 +618,7 @@ Training quality is poor (high KL, bad outputs)
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Every step takes 5-10min | Missing async pipelining | Use `_async` variants, submit before await |
+| Every step takes 5-10min | Missing async pipelining | Submit calls before awaiting their `APIFuture`s |
 | First step slow, rest normal | Model warm-up / JIT | Expected behavior, no fix needed |
 | Steps hang indefinitely | Dependency bug or network | Check pydantic version; try different machine |
 | Slow with large batch_size | Payload serialization | Check pydantic version; reduce batch_size |

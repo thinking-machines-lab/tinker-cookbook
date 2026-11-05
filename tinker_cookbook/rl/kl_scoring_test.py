@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future
 from typing import Any, cast
 
 import pytest
 import tinker
 import torch
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 from tinker.types import SampledSequence, SampleResponse
 
 from tinker_cookbook.rl import metrics as rl_metrics
@@ -25,14 +27,14 @@ class _ScoringClient:
         self.returned_tokens = [7] if returned_tokens is None else returned_tokens
         self.requests: list[dict[str, Any]] = []
 
-    async def sample_async(
+    def sample(
         self,
         prompt: tinker.ModelInput,
         num_samples: int,
         sampling_params: tinker.SamplingParams,
         include_prompt_logprobs: bool = False,
         **kwargs: Any,
-    ) -> SampleResponse:
+    ) -> AwaitableConcurrentFuture[SampleResponse]:
         self.requests.append(
             {
                 "length": prompt.length,
@@ -43,22 +45,30 @@ class _ScoringClient:
         )
         # The first prompt position has no logprob, as from compute_logprobs.
         logprobs: list[float | None] = [None] + [self.logprob_at] * (prompt.length - 1)
-        return SampleResponse(
-            sequences=[
-                SampledSequence(
-                    stop_reason="length",
-                    sequence_id="seq",
-                    _tokens_list=list(self.returned_tokens),
-                    _logprobs_list=[-1.0] * len(self.returned_tokens),
-                )
-            ],
-            prompt_cache_hit_tokens=self.cache_hits,
-            _prompt_logprobs_list=logprobs,
+        future: Future[SampleResponse] = Future()
+        future.set_result(
+            SampleResponse(
+                sequences=[
+                    SampledSequence(
+                        stop_reason="length",
+                        sequence_id="seq",
+                        _tokens_list=list(self.returned_tokens),
+                        _logprobs_list=[-1.0] * len(self.returned_tokens),
+                    )
+                ],
+                prompt_cache_hit_tokens=self.cache_hits,
+                _prompt_logprobs_list=logprobs,
+            )
         )
+        return AwaitableConcurrentFuture(future)
 
-    async def compute_logprobs_async(self, prompt: tinker.ModelInput) -> list[float | None]:
+    def compute_logprobs(
+        self, prompt: tinker.ModelInput
+    ) -> AwaitableConcurrentFuture[list[float | None]]:
         """What the SDK's wrapper would have returned for the same request."""
-        return [None] + [self.logprob_at] * (prompt.length - 1)
+        future: Future[list[float | None]] = Future()
+        future.set_result([None] + [self.logprob_at] * (prompt.length - 1))
+        return AwaitableConcurrentFuture(future)
 
 
 def _datum(n_tokens: int, sampled_logprob: float) -> tinker.Datum:
@@ -101,7 +111,7 @@ def test_compute_post_kl_matches_compute_logprobs_and_reports_usage():
     # Same arithmetic as before over compute_logprobs' output: diff = -1.0 - (-1.5)
     expected = []
     for datum in data_D:
-        new = asyncio.run(client.compute_logprobs_async(datum.model_input.append_int(0)))
+        new = asyncio.run(client.compute_logprobs(datum.model_input.append_int(0)).coroutine())
         expected.append(datum.loss_fn_inputs["logprobs"].to_torch() - torch.tensor(new[1:]))
     diffs = torch.cat(expected)
     assert out["kl_pre_post_v1"] == pytest.approx(diffs.mean().item())

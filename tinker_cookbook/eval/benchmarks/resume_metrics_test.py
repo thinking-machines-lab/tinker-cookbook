@@ -2,12 +2,14 @@
 
 import asyncio
 from collections.abc import Sequence
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Literal, cast
 
 import numpy as np
 import pytest
 import tinker
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook.completers import StopCondition
 from tinker_cookbook.eval.benchmarks._runner import load_trajectories, run_benchmark
@@ -38,26 +40,30 @@ class _Sampler:
         self.mode = mode
         self.calls = 0
 
-    async def sample_async(
+    def sample(
         self,
         prompt: tinker.ModelInput,
         num_samples: int = 1,
         sampling_params: tinker.SamplingParams | None = None,
-    ) -> tinker.types.SampleResponse:
+    ) -> AwaitableConcurrentFuture[tinker.types.SampleResponse]:
         self.calls += 1
         if self.mode == "error" and prompt.to_ints()[-1] == 1:
             raise ValueError("Synthetic sampling failure")
-        return tinker.types.SampleResponse(
-            sequences=[
-                tinker.types.SampledSequence(
-                    tokens_np=np.array([20, 21], dtype=np.int32),
-                    logprobs_np=np.array([-1.0, -1.0], dtype=np.float32),
-                    stop_reason="stop",
-                    sequence_id=f"synthetic-{self.calls}-{index}",
-                )
-                for index in range(num_samples)
-            ]
+        future: Future[tinker.types.SampleResponse] = Future()
+        future.set_result(
+            tinker.types.SampleResponse(
+                sequences=[
+                    tinker.types.SampledSequence(
+                        tokens_np=np.array([20, 21], dtype=np.int32),
+                        logprobs_np=np.array([-1.0, -1.0], dtype=np.float32),
+                        stop_reason="stop",
+                        sequence_id=f"synthetic-{self.calls}-{index}",
+                    )
+                    for index in range(num_samples)
+                ]
+            )
         )
+        return AwaitableConcurrentFuture(future)
 
 
 class _CounterEnv(Env):

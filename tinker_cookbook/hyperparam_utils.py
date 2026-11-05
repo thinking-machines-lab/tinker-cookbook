@@ -149,6 +149,7 @@ def _get_hidden_size(model_name: str) -> int:
         # Thinking Machines Lab Inkling
         "thinkingmachines/Inkling": 6144,
         "thinkingmachines/Inkling-Small": 4096,
+        "thinkingmachines/Inkling-2-Small": 4608,
     }
 
     if model_name in _KNOWN_HIDDEN_SIZES:
@@ -250,6 +251,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
     "thinkingmachines/Inkling": {"mlp": 154_705_920, "attn": 3_424_256, "unembed": 207_168},
     "thinkingmachines/Inkling-Small": {"mlp": 64_503_808, "attn": 1_311_744, "unembed": 205_120},
+    "thinkingmachines/Inkling-2-Small": {"mlp": 128_065_536, "attn": 2_347_008, "unembed": 205_632},
     "zai-org/GLM-5.3": {"mlp": 121_356_288, "attn": 2_920_320, "unembed": 161_024},
     "zai-org/GLM-5.3-Flash": {"mlp": 75_755_520, "attn": 2_009_088, "unembed": 158_976},
 }

@@ -13,7 +13,6 @@ In this script, datums_D has size P*G (one datum per rollout).
 
 import logging
 import time
-from concurrent.futures import Future
 from typing import Literal
 
 import chz
@@ -137,13 +136,13 @@ def main(config: Config):
     if resume_info:
         training_client = service_client.create_training_client_from_state_with_optimizer(
             resume_info.state_path
-        )
+        ).result()
         start_batch = resume_info.batch
         logger.info(f"Resuming from batch {start_batch}")
     else:
         training_client = service_client.create_lora_training_client(
             base_model=config.model_name, rank=config.lora_rank
-        )
+        ).result()
         start_batch = 0
 
     sampling_params = tinker.types.SamplingParams(
@@ -190,11 +189,11 @@ def main(config: Config):
 
         sampling_client = training_client.save_weights_and_get_sampling_client(
             record_stability_info=config.loss_fn == "stable_reinforce"
-        )
+        ).result()
 
         datums_D: list[types.Datum] = []
         rewards_P: list[float] = []
-        futures_P: list[Future[types.SampleResponse]] = []
+        futures_P: list[tinker.APIFuture[types.SampleResponse]] = []
         prompts_P: list[types.ModelInput] = []
         for question in batch_rows["question"]:
             convo = [

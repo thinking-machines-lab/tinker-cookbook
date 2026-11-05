@@ -1,11 +1,13 @@
 """Tests for provenance and stable_reinforce support in the RL training loop."""
 
 import asyncio
+from concurrent.futures import Future
 from typing import Any, cast
 
 import chz
 import pytest
 import tinker
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 from tinker.types import LossFnType
 
 from tinker_cookbook.completers import TokensWithLogprobs
@@ -44,11 +46,13 @@ class _RecordingTrainingClient:
     def __init__(self) -> None:
         self.requests: list[list[tinker.Datum]] = []
 
-    async def forward_backward_async(
+    def forward_backward(
         self, data: list[tinker.Datum], loss_fn: LossFnType, loss_fn_config: dict[str, Any] | None
-    ) -> int:
+    ) -> AwaitableConcurrentFuture[int]:
         self.requests.append(data)
-        return len(self.requests)
+        future: Future[int] = Future()
+        future.set_result(len(self.requests))
+        return AwaitableConcurrentFuture(future)
 
 
 def test_missing_provenance_is_caught_before_any_request_is_sent():

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future
 from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 import tinker
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.rl import train
@@ -122,10 +124,11 @@ def test_full_batch_metrics_add_the_trained_tokens(monkeypatch):
     monkeypatch.setattr(train, "save_checkpoint_and_get_sampling_client", save_checkpoint)
     monkeypatch.setattr(train, "compute_kl_sample_train", lambda data_D, logprobs_D: {})
     tracker = CostTracker(RATES)
+    checkpoint_mgr = SimpleNamespace(should_save_periodic=lambda step: False)
     _, metrics = asyncio.run(
         train.compute_full_batch_metrics_and_get_sampling_client(
             cast(Any, None),
-            cast(Any, None),
+            cast(Any, checkpoint_mgr),
             1,
             DATA_D,
             [],
@@ -140,7 +143,7 @@ def test_full_batch_metrics_add_the_trained_tokens(monkeypatch):
 
     _, metrics = asyncio.run(
         train.compute_full_batch_metrics_and_get_sampling_client(
-            cast(Any, None), cast(Any, None), 1, DATA_D, [], do_compute_post_kl=False
+            cast(Any, None), cast(Any, checkpoint_mgr), 1, DATA_D, [], do_compute_post_kl=False
         )
     )
     assert not any(key.startswith(("tokens/", "cost/")) for key in metrics)
@@ -165,8 +168,12 @@ class _RecordingCheckpointManager:
 
 def test_full_batch_metrics_record_cost_before_the_checkpoint(monkeypatch):
     class _TrainingClient:
-        def create_sampling_client(self, path: str, **kwargs: Any) -> str:
-            return path
+        def create_sampling_client(
+            self, path: str, **kwargs: Any
+        ) -> AwaitableConcurrentFuture[str]:
+            future: Future[str] = Future()
+            future.set_result(path)
+            return AwaitableConcurrentFuture(future)
 
     monkeypatch.setattr(train, "compute_kl_sample_train", lambda data_D, logprobs_D: {})
     checkpoint_mgr = _RecordingCheckpointManager()
@@ -207,9 +214,13 @@ def test_post_kl_usage_is_recorded_after_the_checkpoint_it_follows(monkeypatch):
     events: list[str] = []
 
     class _TrainingClient:
-        def create_sampling_client(self, path: str, **kwargs: Any) -> str:
+        def create_sampling_client(
+            self, path: str, **kwargs: Any
+        ) -> AwaitableConcurrentFuture[str]:
             events.append("create_sampling_client")
-            return path
+            future: Future[str] = Future()
+            future.set_result(path)
+            return AwaitableConcurrentFuture(future)
 
     class _EventCheckpointManager(_RecordingCheckpointManager):
         async def save_periodic_async(self, step: int, loop_state: dict[str, Any]):
@@ -279,14 +290,17 @@ def test_streaming_step_sums_the_usage_of_its_minibatches(monkeypatch):
         def __init__(self, result: Any) -> None:
             self._result = result
 
-        async def result_async(self) -> Any:
+        def __await__(self):
+            return self.coroutine().__await__()
+
+        async def coroutine(self) -> Any:
             return self._result
 
     class _TrainingClient:
-        async def forward_backward_async(self, data, loss_fn, loss_fn_config=None):
+        def forward_backward(self, data, loss_fn, loss_fn_config=None):
             return _Future(SimpleNamespace(loss_fn_outputs=[]))
 
-        async def optim_step_async(self, adam_params):
+        def optim_step(self, adam_params):
             return _Future(SimpleNamespace(metrics={}))
 
     async def prepare_minibatch(env_group_builders, trajectory_groups, tokenizer, kl_client, **kw):

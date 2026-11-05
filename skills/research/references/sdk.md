@@ -9,7 +9,7 @@ Complete reference for the Tinker SDK clients and all SDK types.
 ### ServiceClient (entry point)
 
 ```python
-from tinker import ServiceClient
+from tinker import RestClient, ServiceClient
 
 svc = ServiceClient(user_metadata={"experiment": "v1"}, project_id="my-project")
 
@@ -17,35 +17,35 @@ svc = ServiceClient(user_metadata={"experiment": "v1"}, project_id="my-project")
 tc = svc.create_lora_training_client(
     base_model="Qwen/Qwen3-8B", rank=32,
     seed=None, train_mlp=True, train_attn=True, train_unembed=True,
-)
+).result()
 
 # Resume from a training checkpoint
-tc = svc.create_training_client_from_state(path="tinker://...")
-tc = svc.create_training_client_from_state_with_optimizer(path="tinker://...")
+tc = svc.create_training_client_from_state(path="tinker://...").result()
+tc = svc.create_training_client_from_state_with_optimizer(path="tinker://...").result()
 
 # Create a sampling client
-sc = svc.create_sampling_client(model_path="tinker://...", base_model=None, retry_config=None)
+sc = svc.create_sampling_client(model_path="tinker://...", base_model=None, retry_config=None).result()
 
 # Create a REST client
-rest = svc.create_rest_client()
+rest = RestClient()
 
 # Query available models
-caps = svc.get_server_capabilities()
+caps = rest.get_server_capabilities().result()
 ```
 
-All creation methods have `_async` variants.
+Client factories return `APIFuture`s: use `await` in async code or `.result()` in synchronous code.
 
 ### TrainingClient
 
 ```python
 # Forward/backward pass (compute loss + gradients)
-result = tc.forward_backward(data=[datum1, datum2], loss_fn="cross_entropy")
+future = tc.forward_backward(data=[datum1, datum2], loss_fn="cross_entropy")
 
 # Forward-only pass (compute loss, no gradients — useful for eval)
-result = tc.forward(data=[datum1, datum2], loss_fn="cross_entropy")
+future = tc.forward(data=[datum1, datum2], loss_fn="cross_entropy")
 
 # Custom loss function
-result = tc.forward_backward_custom(data=[datum1, datum2], loss_fn=my_custom_loss_fn)
+future = tc.forward_backward_custom(data=[datum1, datum2], loss_fn=my_custom_loss_fn)
 
 # Optimizer step
 tc.optim_step(adam_params=AdamParams(learning_rate=2e-4))
@@ -53,7 +53,7 @@ tc.optim_step(adam_params=AdamParams(learning_rate=2e-4))
 # Checkpointing
 tc.save_state(name="step_100", ttl_seconds=None)
 tc.save_weights_for_sampler(name="step_100_sampler", ttl_seconds=None)
-sc = tc.save_weights_and_get_sampling_client()  # Ephemeral, not persistently saved
+sc = tc.save_weights_and_get_sampling_client().result()  # Ephemeral, not persistently saved
 
 # Metadata
 info = tc.get_info()
@@ -71,17 +71,17 @@ tokenizer = tc.get_tokenizer()
 
 See the loss function source or the [Tinker cookbook repo](https://github.com/thinking-machines-lab/tinker-cookbook) for details and `loss_fn_config` parameters.
 
-### Async variants
+### Futures and pipelining
 
-All methods have `_async` variants returning `APIFuture`:
+Network operations return `APIFuture`s. Submit training operations before waiting:
 ```python
-fb_future = tc.forward_backward_async(data=data, loss_fn="cross_entropy")
-optim_future = tc.optim_step_async(adam_params=adam_params)
+fb_future = tc.forward_backward(data=data, loss_fn="cross_entropy")
+optim_future = tc.optim_step(adam_params=adam_params)
 fb_result = fb_future.result()
 optim_result = optim_future.result()
 ```
 
-Submit `forward_backward_async` and `optim_step_async` back-to-back before awaiting to overlap GPU computation with data preparation.
+Submit `forward_backward` and `optim_step` back-to-back before waiting to overlap GPU computation with data preparation. In async code, await each future directly; pass `.coroutine()` to `asyncio.gather` or `asyncio.create_task`.
 
 ### SamplingClient
 
@@ -92,13 +92,13 @@ response = sc.sample(
     prompt=model_input, num_samples=4,
     sampling_params=SamplingParams(max_tokens=256, temperature=1.0),
     include_prompt_logprobs=False, topk_prompt_logprobs=0,
-)
+).result()
 
 for seq in response.sequences:
     print(seq.tokens, seq.logprobs, seq.stop_reason)
 
 # Get logprobs for existing tokens (no generation)
-logprobs_response = sc.compute_logprobs(prompt=model_input)
+logprobs_response = sc.compute_logprobs(prompt=model_input).result()
 
 # Metadata
 base_model = sc.get_base_model()
@@ -110,29 +110,30 @@ SamplingClient is picklable for multiprocessing. Always create a new SamplingCli
 ### RestClient
 
 ```python
-rest = svc.create_rest_client()
+rest = RestClient()
 
 # Training runs
-runs = rest.list_training_runs(limit=20, offset=0, access_scope="owned")
-run = rest.get_training_run(training_run_id="...")
-run = rest.get_training_run_by_tinker_path(tinker_path="tinker://...")
+runs = rest.list_training_runs(limit=20, offset=0, access_scope="owned").result()
+run = rest.get_training_run(training_run_id="...").result()
+run = rest.get_training_run_by_tinker_path(tinker_path="tinker://...").result()
 
 # Checkpoints
-checkpoints = rest.list_checkpoints(training_run_id="...")
-all_checkpoints = rest.list_user_checkpoints(limit=100, offset=0)
-rest.delete_checkpoint_from_tinker_path(tinker_path="tinker://...")
+checkpoints = rest.list_checkpoints(training_run_id="...").result()
+all_checkpoints = rest.list_user_checkpoints(limit=100, offset=0).result()
+rest.delete_checkpoint_from_tinker_path(tinker_path="tinker://...").result()
 
 # Visibility & TTL
-rest.publish_checkpoint_from_tinker_path(tinker_path="tinker://...")
-rest.unpublish_checkpoint_from_tinker_path(tinker_path="tinker://...")
-rest.set_checkpoint_ttl_from_tinker_path(tinker_path="tinker://...", ttl_seconds=86400)
+rest.publish_checkpoint_from_tinker_path(tinker_path="tinker://...").result()
+rest.unpublish_checkpoint_from_tinker_path(tinker_path="tinker://...").result()
+rest.set_checkpoint_ttl_from_tinker_path(tinker_path="tinker://...", ttl_seconds=86400).result()
 
 # Download URL & metadata
-url_resp = rest.get_checkpoint_archive_url_from_tinker_path(tinker_path="tinker://...")
-info = rest.get_weights_info_by_tinker_path(tinker_path="tinker://...")
+export = tc.save_weights_external(name="export").result()
+url_resp = rest.get_external_weights_urls(tinker_path=export.path).result()
+info = rest.get_weights_info_by_tinker_path(tinker_path="tinker://...").result()
 ```
 
-All RestClient methods have `_async` variants.
+RestClient methods return `APIFuture`s: await them in async code or call `.result()` in synchronous code.
 
 ### Retry behavior
 
@@ -226,7 +227,7 @@ config = LoraConfig(rank=32, seed=None, train_mlp=True, train_attn=True, train_u
 #### ForwardBackwardOutput
 
 ```python
-result = tc.forward_backward(data=batch, loss_fn="cross_entropy")
+result = tc.forward_backward(data=batch, loss_fn="cross_entropy").result()
 result.metrics              # dict[str, float]
 result.loss_fn_outputs      # list[LossFnOutput]
 result.loss_fn_output_type  # str
@@ -235,7 +236,7 @@ result.loss_fn_output_type  # str
 #### SampleResponse / SampledSequence
 
 ```python
-response = sc.sample(prompt=mi, num_samples=4, sampling_params=params)
+response = sc.sample(prompt=mi, num_samples=4, sampling_params=params).result()
 response.sequences                # list[SampledSequence]
 response.prompt_logprobs          # Optional[list[Optional[float]]]
 response.topk_prompt_logprobs     # Optional[list[Optional[list[tuple[int, float]]]]]

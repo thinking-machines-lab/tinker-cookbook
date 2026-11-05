@@ -36,11 +36,11 @@ async def get_row(
         tstart = time.time()
         print(f"========== Testing {model_name} ==========")
         if saved_path_for_trainer is not None:
-            training_client = await service_client.create_training_client_from_state_async(
+            training_client = await service_client.create_training_client_from_state(
                 saved_path_for_trainer, base_model=model_name
             )
         else:
-            training_client = await service_client.create_lora_training_client_async(
+            training_client = await service_client.create_lora_training_client(
                 base_model=model_name
             )
         # First sample something
@@ -51,31 +51,29 @@ async def get_row(
         weights[0] = 0.0
         datum = datum_from_model_input_weights(model_input, weights)
         for _ in range(3 if saved_path_for_trainer is None else 0):
-            fwd_bwd_future = await training_client.forward_backward_async(
-                [datum], loss_fn="cross_entropy"
-            )
-            optim_step_future = await training_client.optim_step_async(
+            fwd_bwd_future = training_client.forward_backward([datum], loss_fn="cross_entropy")
+            optim_step_future = training_client.optim_step(
                 adam_params=AdamParams(learning_rate=1e-3)
             )
-            _fwd_bwd_result = await fwd_bwd_future.result_async()
-            _optim_step_result = await optim_step_future.result_async()
-        fwd_future = await training_client.forward_async([datum], loss_fn="cross_entropy")
-        fwd_result = await fwd_future.result_async()
+            _fwd_bwd_result = await fwd_bwd_future
+            _optim_step_result = await optim_step_future
+        fwd_future = training_client.forward([datum], loss_fn="cross_entropy")
+        fwd_result = await fwd_future
         training_logprobs = fwd_result.loss_fn_outputs[0]["logprobs"].to_torch()
         if saved_path_for_sampler is None:
-            state_for_trainer_future = await training_client.save_state_async(
+            state_for_trainer_future = training_client.save_state(
                 name="tmp-checkpoint", ttl_seconds=ttl_seconds
             )
-            state_for_trainer = await state_for_trainer_future.result_async()
+            state_for_trainer = await state_for_trainer_future
             print(f"Saved state for trainer: {state_for_trainer.path}")
-            sampling_client = await training_client.save_weights_and_get_sampling_client_async(
+            sampling_client = await training_client.save_weights_and_get_sampling_client(
                 name="tmp-checkpoint"
             )
         else:
             sampling_client = training_client.create_sampling_client(
                 model_path=saved_path_for_sampler
-            )
-        logprobs_response = await sampling_client.compute_logprobs_async(model_input)
+            ).result()
+        logprobs_response = await sampling_client.compute_logprobs(model_input)
         sampling_logprobs = torch.tensor(logprobs_response[1:])
         mse = ((sampling_logprobs - training_logprobs) ** 2).mean()
 
@@ -112,7 +110,9 @@ async def main(config: Config):
     service_client = tinker.ServiceClient(base_url=config.base_url)
 
     if config.model_names is None:
-        server_capabilities = await service_client.get_server_capabilities_async()
+        server_capabilities = await tinker.RestClient(
+            base_url=config.base_url
+        ).get_server_capabilities()
         model_names = [
             model_info.model_name
             for model_info in server_capabilities.supported_models

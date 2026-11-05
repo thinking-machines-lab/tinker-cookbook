@@ -104,9 +104,13 @@ async def _evaluate_final_checkpoint(
         max_tokens=train_config.max_tokens,
         strategy=train_config.effective_rollout_strategy(),
     )
-    sampling_client = tinker.ServiceClient(base_url=train_config.base_url).create_sampling_client(
-        base_model=train_config.model_name,
-        model_path=checkpoint.sampler_path,
+    sampling_client = (
+        tinker.ServiceClient(base_url=train_config.base_url)
+        .create_sampling_client(
+            base_model=train_config.model_name,
+            model_path=checkpoint.sampler_path,
+        )
+        .result()
     )
     metrics = await train.run_evaluations_parallel(
         [evaluator],

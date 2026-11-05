@@ -179,9 +179,9 @@ class SciKnowEvalEvaluator(SamplingClientEvaluator):
             else:
                 model_input = self.renderer.build_generation_prompt(prompt_messages)  # type: ignore[arg-type]
             tasks.append(
-                sampling_client.sample_async(
+                sampling_client.sample(
                     prompt=model_input, num_samples=1, sampling_params=sampling_params
-                )
+                ).coroutine()
             )
 
         results = await asyncio.gather(*tasks)
@@ -230,9 +230,9 @@ class ToolUseEvaluator(SamplingClientEvaluator):
             msg: renderers.Message = {"role": "user", "content": prompt}  # type: ignore[typeddict-item]
             model_input = self.renderer.build_generation_prompt([msg])
             tasks.append(
-                sampling_client.sample_async(
+                sampling_client.sample(
                     prompt=model_input, num_samples=1, sampling_params=sampling_params
-                )
+                ).coroutine()
             )
 
         results = await asyncio.gather(*tasks)

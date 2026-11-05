@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook.rl import train
 from tinker_cookbook.rl.types import RLDataset, RLDatasetBuilder
@@ -68,11 +70,11 @@ def _run(tmp_path, monkeypatch: pytest.MonkeyPatch, num_batches: int, groups_per
             groups_per_batch=groups_per_batch, num_minibatches=1
         ),
     )
-    future = MagicMock()
-    future.result_async = AsyncMock(return_value=MagicMock(metrics={}))
+    future: Future[MagicMock] = Future()
+    future.set_result(MagicMock(metrics={}))
     training_client = MagicMock()
-    training_client.forward_backward_async = AsyncMock(return_value=future)
-    training_client.optim_step_async = AsyncMock(return_value=future)
+    training_client.forward_backward = MagicMock(return_value=AwaitableConcurrentFuture(future))
+    training_client.optim_step = MagicMock(return_value=AwaitableConcurrentFuture(future))
 
     asyncio.run(
         train.do_async_training(

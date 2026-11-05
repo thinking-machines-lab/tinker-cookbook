@@ -141,7 +141,7 @@ class TinkerTokenCompleter(TokenCompleter):
                 )
 
         # Sample from the model
-        sample_result = await self.sampling_client.sample_async(
+        sample_result = await self.sampling_client.sample(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
@@ -208,7 +208,7 @@ class TinkerMessageCompleter(MessageCompleter):
         model_input = self.renderer.build_generation_prompt(messages)
 
         # Sample from the model
-        response = await self.sampling_client.sample_async(
+        response = await self.sampling_client.sample(
             model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(

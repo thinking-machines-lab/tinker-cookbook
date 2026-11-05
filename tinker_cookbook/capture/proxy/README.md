@@ -10,7 +10,7 @@ The capture pipeline (see `../README.md`) tags SDK calls with an ambient
 scope and exports them to a local store. This proxy extends that to tools
 you cannot modify: they speak a chat API to the proxy, the proxy renders the
 chat messages to tokens with a cookbook renderer, samples through
-`SamplingClient.sample_async`, and decodes the sampled tokens back into a
+`SamplingClient.sample`, and decodes the sampled tokens back into a
 chat response. Because the sampling goes through the instrumented SDK,
 **everything funnels through the one in-process capture path**: this module
 has no export logic of its own; it only enters a per-request `capture(...)`

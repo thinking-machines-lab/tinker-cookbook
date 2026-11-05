@@ -72,7 +72,7 @@ class _Harness:
 
     # (problem_id, sampled_version, trained_step) per trained datum
     trained_records: list[tuple[int, int, int]] = field(default_factory=list)
-    # number of sample_async calls per problem_id
+    # number of sample calls per problem_id
     sample_counts: dict[int, int] = field(default_factory=dict)
     # every sampler version that served at least one sample call
     sampled_versions: set[int] = field(default_factory=set)
@@ -116,7 +116,13 @@ class _FakeFuture:
     value: Any
     delay_s: float = 0.0
 
-    async def result_async(self) -> Any:
+    def result(self) -> Any:
+        return self.value
+
+    def __await__(self):
+        return self.coroutine().__await__()
+
+    async def coroutine(self) -> Any:
         if self.delay_s > 0:
             await asyncio.sleep(self.delay_s)
         return self.value
@@ -158,9 +164,9 @@ class _FakeSamplingClient:
         self.version = version
         self.harness = harness
 
-    async def sample_async(
+    def sample(
         self, prompt: tinker.ModelInput, num_samples: int, sampling_params: tinker.SamplingParams
-    ) -> _FakeSampleResult:
+    ) -> _FakeFuture:
         problem_id = prompt.to_ints()[0]
         h = self.harness
         h.sample_counts[problem_id] = h.sample_counts.get(problem_id, 0) + 1
@@ -169,15 +175,17 @@ class _FakeSamplingClient:
             h.started_problems.add(problem_id)
             done = h.trained_problems | (h.filtered_problems & h.finished_at.keys())
             h.max_outstanding = max(h.max_outstanding, len(h.started_problems - done))
-        return _FakeSampleResult(
-            sequences=[
-                _FakeSequence(
-                    tokens=[VERSION_BASE + self.version],
-                    logprobs=[-0.5],
-                    sequence_id=f"seq-{problem_id}-{h.sample_counts[problem_id]}-{i}",
-                )
-                for i in range(num_samples)
-            ]
+        return _FakeFuture(
+            _FakeSampleResult(
+                sequences=[
+                    _FakeSequence(
+                        tokens=[VERSION_BASE + self.version],
+                        logprobs=[-0.5],
+                        sequence_id=f"seq-{problem_id}-{h.sample_counts[problem_id]}-{i}",
+                    )
+                    for i in range(num_samples)
+                ]
+            )
         )
 
 
@@ -194,12 +202,10 @@ class _FakeTrainingClient:
         self.train_time_s = train_time_s
         self.version = 0
 
-    async def save_state_async(self, name: str, ttl_seconds: int | None = None) -> _FakeFuture:
+    def save_state(self, name: str, ttl_seconds: int | None = None) -> _FakeFuture:
         return _FakeFuture(_FakePath(path=f"mock://state/{name}"))
 
-    async def save_weights_for_sampler_async(
-        self, name: str, ttl_seconds: int | None = None
-    ) -> _FakeFuture:
+    def save_weights_for_sampler(self, name: str, ttl_seconds: int | None = None) -> _FakeFuture:
         return _FakeFuture(_FakePath(path=f"mock://sampler/{name}"))
 
     def _publish(self, version: int, record_stability_info: bool) -> _FakeSamplingClient:
@@ -210,21 +216,19 @@ class _FakeTrainingClient:
         self.harness.in_training_step.clear()
         return _FakeSamplingClient(self.version, self.harness)
 
-    async def save_weights_and_get_sampling_client_async(
+    def save_weights_and_get_sampling_client(
         self, record_stability_info: bool = False
-    ) -> _FakeSamplingClient:
-        return self._publish(self.version + 1, record_stability_info)
+    ) -> _FakeFuture:
+        return _FakeFuture(self._publish(self.version + 1, record_stability_info))
 
-    def create_sampling_client(
-        self, path: str, record_stability_info: bool = False
-    ) -> _FakeSamplingClient:
+    def create_sampling_client(self, path: str, record_stability_info: bool = False) -> _FakeFuture:
         # Checkpoints are named by step (f"{step:06d}"), so the sampler path
         # identifies the weight version. Periodic checkpoints (save_every > 0)
         # publish new weights through this path instead of
-        # save_weights_and_get_sampling_client_async.
-        return self._publish(int(path.rsplit("/", 1)[-1]), record_stability_info)
+        # save_weights_and_get_sampling_client.
+        return _FakeFuture(self._publish(int(path.rsplit("/", 1)[-1]), record_stability_info))
 
-    async def forward_backward_async(
+    def forward_backward(
         self,
         data: list[tinker.Datum],
         loss_fn: LossFnType,
@@ -251,7 +255,7 @@ class _FakeTrainingClient:
         ]
         return _FakeFuture(_FakeFwdBwdResult(loss_fn_outputs=outputs), delay_s=self.train_time_s)
 
-    async def optim_step_async(self, adam_params: tinker.AdamParams) -> _FakeFuture:
+    def optim_step(self, adam_params: tinker.AdamParams) -> _FakeFuture:
         h = self.harness
         h.optim_steps += 1
         h.applied_problems |= h.pending_gradients
@@ -1093,6 +1097,8 @@ class TestAsyncIntegrationPaths:
                 groups_per_batch=2,
                 max_steps_off_policy=1,
                 constant_reward_problem_ids={1},
+                eval_every=1,
+                evaluators=[_RecordingEvaluator()],
             )
         )
         _assert_every_update_applied_and_published(result, [0, 2, 3])
@@ -1100,8 +1106,8 @@ class TestAsyncIntegrationPaths:
         assert [r["training_client/step"] for r in _metric_rows(result)] == [0, 1]
 
     def test_requested_steps_match_applied_and_published_updates(self, tmp_path):
-        """With no filtering, N requested steps over N batches give exactly N
-        optimizer updates, N publications and N logged steps."""
+        """With an evaluator consuming every step, N requested steps over N batches
+        give exactly N optimizer updates, N publications and N logged steps."""
         n_steps, groups_per_batch, num_substeps = 5, 2, 2
         result = asyncio.run(
             _run_async_training(
@@ -1110,6 +1116,8 @@ class TestAsyncIntegrationPaths:
                 groups_per_batch=groups_per_batch,
                 max_steps_off_policy=1,
                 num_substeps=num_substeps,
+                eval_every=1,
+                evaluators=[_RecordingEvaluator()],
             )
         )
         _assert_every_update_applied_and_published(result, range(n_steps * groups_per_batch))

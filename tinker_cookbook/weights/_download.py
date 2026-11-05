@@ -91,7 +91,7 @@ def download(*, tinker_path: str, output_dir: str, base_url: str | None = None) 
         kwargs["base_url"] = base_url
     try:
         sc = tinker.ServiceClient(**kwargs)
-        rc = sc.create_rest_client()
+        rc = tinker.RestClient(**kwargs)
     except Exception as e:
         raise WeightsDownloadError(
             "Failed to connect to Tinker service. "
@@ -126,7 +126,7 @@ def _download_training_weights(
     try:
         training_client = sc.create_training_client_from_state(
             tinker_path, user_metadata={"created_by": "tinker_cookbook.weights.download"}
-        )
+        ).result()
         export_path = (
             training_client.save_weights_external(
                 "download",

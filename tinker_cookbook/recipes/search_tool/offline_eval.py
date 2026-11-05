@@ -123,7 +123,9 @@ async def evaluate_one_dataset(data: list[SearchR1Datum], config: CLIConfig):
     service_client = tinker.ServiceClient(
         user_metadata=recipe_user_metadata("eval_search_tool_offline"),
     )
-    sampling_client = service_client.create_sampling_client(model_path=config.tinker_checkpoint_url)
+    sampling_client = service_client.create_sampling_client(
+        model_path=config.tinker_checkpoint_url
+    ).result()
     policy = TinkerTokenCompleter(sampling_client, max_tokens=config.max_tokens)
 
     tokenizer = tokenizer_utils.get_tokenizer(config.base_model)

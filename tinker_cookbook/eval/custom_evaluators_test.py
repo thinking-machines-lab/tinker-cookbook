@@ -4,11 +4,13 @@ import asyncio
 import importlib
 import sys
 from collections.abc import Callable
+from concurrent.futures import Future
 from types import ModuleType, SimpleNamespace
 
 import pytest
 import tinker
 from tinker import types
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook import renderers, tokenizer_utils
 from tinker_cookbook.renderers.base import Message
@@ -32,7 +34,7 @@ def external_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(
         tinker.ServiceClient, "create_sampling_client", deny("create_sampling_client")
     )
-    monkeypatch.setattr(tinker.SamplingClient, "sample_async", deny("sample_async"))
+    monkeypatch.setattr(tinker.SamplingClient, "sample", deny("sample"))
     return calls
 
 
@@ -102,20 +104,26 @@ def test_explicit_main_preserves_demo_flow(
             }, renderers.ParseTermination.STOP_SEQUENCE
 
     class FakeSamplingClient:
-        async def sample_async(
+        def sample(
             self,
             *,
             prompt: types.ModelInput,
             num_samples: int,
             sampling_params: types.SamplingParams,
-        ) -> SimpleNamespace:
+        ) -> AwaitableConcurrentFuture[SimpleNamespace]:
             samples.append((prompt, num_samples, sampling_params))
-            return SimpleNamespace(sequences=[SimpleNamespace(tokens=[len(samples)])])
+            future: Future[SimpleNamespace] = Future()
+            future.set_result(SimpleNamespace(sequences=[SimpleNamespace(tokens=[len(samples)])]))
+            return AwaitableConcurrentFuture(future)
 
     class FakeServiceClient:
-        def create_sampling_client(self, *, base_model: str) -> FakeSamplingClient:
+        def create_sampling_client(
+            self, *, base_model: str
+        ) -> AwaitableConcurrentFuture[FakeSamplingClient]:
             events.append(("sampling_client", base_model))
-            return FakeSamplingClient()
+            future: Future[FakeSamplingClient] = Future()
+            future.set_result(FakeSamplingClient())
+            return AwaitableConcurrentFuture(future)
 
     def get_tokenizer(model_name: str) -> object:
         events.append(("tokenizer", model_name))

@@ -237,7 +237,7 @@ async def compute_sdft_advantages(
     # Compute teacher logprobs in parallel
     teacher_logprobs_D = await asyncio.gather(
         *[
-            teacher_client.compute_logprobs_async(teacher_full)
+            teacher_client.compute_logprobs(teacher_full).coroutine()
             for teacher_full in teacher_full_sequences_D
         ]
     )
@@ -378,13 +378,13 @@ async def build_topk_distillation_datums(
     # Step 2: Get top-K logprobs from teacher in parallel
     topk_responses_D = await asyncio.gather(
         *[
-            teacher_client.sample_async(
+            teacher_client.sample(
                 prompt=teacher_forced,
                 num_samples=1,
                 sampling_params=tinker.SamplingParams(max_tokens=1),
                 include_prompt_logprobs=True,
                 topk_prompt_logprobs=topk,
-            )
+            ).coroutine()
             for teacher_forced in teacher_forced_sequences_D
         ]
     )
@@ -537,13 +537,13 @@ async def build_reverse_kl_datums(
 
     topk_responses_D = await asyncio.gather(
         *[
-            teacher_client.sample_async(
+            teacher_client.sample(
                 prompt=teacher_forced,
                 num_samples=1,
                 sampling_params=tinker.SamplingParams(max_tokens=1),
                 include_prompt_logprobs=True,
                 topk_prompt_logprobs=topk,
-            )
+            ).coroutine()
             for teacher_forced in teacher_forced_sequences_D
         ]
     )
@@ -701,7 +701,7 @@ async def _train_step_reverse_kl(
     """Substep-pipelined custom forward/backward for the reverse-KL loss.
 
     Mirrors :func:`tinker_cookbook.rl.train.train_step` but uses
-    ``forward_backward_custom_async`` with :func:`reverse_kl_custom_loss`.
+    ``forward_backward_custom`` with :func:`reverse_kl_custom_loss`.
     The datums produced by :func:`build_reverse_kl_datums` carry only
     ``target_tokens`` and ``weights`` (with ``0`` in ``weights`` acting as
     the mask sentinel), so no ``mask`` stripping is needed.
@@ -711,27 +711,25 @@ async def _train_step_reverse_kl(
         return
 
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
-    fwd_bwd_future = await training_client.forward_backward_custom_async(
-        batches[0], reverse_kl_custom_loss
-    )
-    optim_future = await training_client.optim_step_async(adam_params)
+    fwd_bwd_future = training_client.forward_backward_custom(batches[0], reverse_kl_custom_loss)
+    optim_future = training_client.optim_step(adam_params)
     loss_metrics: dict[str, float] = {}
     optim_result: tinker.OptimStepResponse | None = None
 
     for i in range(len(batches)):
         if i + 1 < len(batches):
-            next_fwd_bwd_future = await training_client.forward_backward_custom_async(
+            next_fwd_bwd_future = training_client.forward_backward_custom(
                 batches[i + 1], reverse_kl_custom_loss
             )
-            next_optim_future = await training_client.optim_step_async(adam_params)
+            next_optim_future = training_client.optim_step(adam_params)
         else:
             next_fwd_bwd_future = None
             next_optim_future = None
 
-        fwd_bwd_result = await fwd_bwd_future.result_async()
+        fwd_bwd_result = await fwd_bwd_future
         if fwd_bwd_result.metrics:
             loss_metrics.update(fwd_bwd_result.metrics)
-        optim_result = await optim_future.result_async()
+        optim_result = await optim_future
 
         if next_fwd_bwd_future is not None and next_optim_future is not None:
             fwd_bwd_future = next_fwd_bwd_future
@@ -877,22 +875,20 @@ async def main(
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, resume_info.state_path, cfg.renderer_name
         )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
-            )
+        training_client = await service_client.create_training_client_from_state_with_optimizer(
+            resume_info.state_path, user_metadata=user_metadata
         )
         logger.info(f"Resumed training from {resume_info.state_path}")
     elif cfg.load_checkpoint_path:
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, cfg.load_checkpoint_path, cfg.renderer_name
         )
-        training_client = await service_client.create_training_client_from_state_async(
+        training_client = await service_client.create_training_client_from_state(
             cfg.load_checkpoint_path, user_metadata=user_metadata
         )
         logger.info(f"Loaded weights from {cfg.load_checkpoint_path}")
     else:
-        training_client = await service_client.create_lora_training_client_async(
+        training_client = await service_client.create_lora_training_client(
             cfg.model_name, rank=cfg.lora_rank, user_metadata=user_metadata
         )
 
@@ -911,7 +907,7 @@ async def main(
         evaluators.append(RLTestSetEvaluator(test_dataset, max_tokens=cfg.max_tokens))
 
     # Teacher sampling client (same base model, static weights by default)
-    teacher_client = service_client.create_sampling_client(base_model=cfg.model_name)
+    teacher_client = service_client.create_sampling_client(base_model=cfg.model_name).result()
     logger.info(f"Created static teacher sampling client for {cfg.model_name}")
 
     checkpoint_mgr = checkpoint_utils.CheckpointManager(
@@ -951,7 +947,7 @@ async def main(
             # Uses the RL rollout infrastructure (do_group_rollout) rather than
             # raw sampling so that group_size > 1 and multi-turn environments
             # work out of the box. With the default group_size=1, this is
-            # equivalent to a single sample_async call per problem.
+            # equivalent to a single sample call per problem.
             async with trace.scope_span("sample"):
                 trajectory_groups_raw = await asyncio.gather(
                     *[
@@ -1078,11 +1074,11 @@ async def main(
             # Optional teacher hard-sync
             if cfg.teacher_sync_every and (i_batch + 1) % cfg.teacher_sync_every == 0:
                 sync_name = f"teacher_sync_{i_batch + 1}"
-                sync_future = await training_client.save_weights_for_sampler_async(sync_name)
-                sync_result = await sync_future.result_async()
+                sync_future = training_client.save_weights_for_sampler(sync_name)
+                sync_result = await sync_future
                 teacher_client = service_client.create_sampling_client(
                     base_model=cfg.model_name, model_path=sync_result.path
-                )
+                ).result()
                 logger.info(f"Synced teacher weights at step {i_batch + 1}")
 
         # Log timing

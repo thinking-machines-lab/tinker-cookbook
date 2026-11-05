@@ -44,12 +44,12 @@ async def main(datapoint: RubricBasedDatapoint):
 
     service_client = tinker.ServiceClient()
     policy = TinkerTokenCompleter(
-        sampling_client=service_client.create_sampling_client(base_model=policy_name),
+        sampling_client=service_client.create_sampling_client(base_model=policy_name).result(),
         max_tokens=policy_max_tokens,
     )
     policy_renderer = get_renderer(policy_renderer_name, get_tokenizer(policy_name))
     grader = TinkerMessageCompleter(
-        sampling_client=service_client.create_sampling_client(base_model=grader_name),
+        sampling_client=service_client.create_sampling_client(base_model=grader_name).result(),
         renderer=get_renderer(grader_renderer_name, get_tokenizer(grader_name)),
         max_tokens=grader_max_tokens,
     )

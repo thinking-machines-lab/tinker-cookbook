@@ -46,7 +46,7 @@ async def main(config: Config) -> None:
     service_client = tinker.ServiceClient(
         user_metadata=recipe_user_metadata("recipe_decisions_demo")
     )
-    sampling_client = await service_client.create_sampling_client_async(
+    sampling_client = await service_client.create_sampling_client(
         model_path=config.model_path, base_model=config.model_name
     )
     renderer = renderers.get_renderer(

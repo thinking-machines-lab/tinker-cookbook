@@ -71,7 +71,7 @@ async def _(api_key, mo):
     BASE_MODEL = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
-    training_client = await service_client.create_lora_training_client_async(
+    training_client = await service_client.create_lora_training_client(
         base_model=BASE_MODEL, rank=16
     )
 
@@ -85,10 +85,10 @@ async def _(api_key, mo):
     _datum = conversation_to_datum(_messages, _renderer, max_length=512)
 
     # One training step + save
-    _fwd = await training_client.forward_backward_async([_datum], loss_fn="cross_entropy")
-    _opt = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
-    await _fwd.result_async()
-    await _opt.result_async()
+    _fwd = training_client.forward_backward([_datum], loss_fn="cross_entropy")
+    _opt = training_client.optim_step(tinker.AdamParams(learning_rate=1e-4))
+    await _fwd
+    await _opt
 
     _save_result = training_client.save_weights_external("export-tutorial")
     export_path = _save_result.result().path

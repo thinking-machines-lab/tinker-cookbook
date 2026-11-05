@@ -258,6 +258,7 @@ def get_thinkingmachines_info() -> dict[str, ModelAttributes]:
         "Inkling-Small": ModelAttributes(
             org, "1", "276B-A12B", True, _TML_V0, is_vl=True, is_audio_in=True
         ),
+        "Inkling-2-Small": ModelAttributes(org, "2", "594B-A17B", True, _TML_V0, is_vl=True),
     }
 
 

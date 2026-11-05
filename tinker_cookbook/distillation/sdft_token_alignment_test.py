@@ -1,10 +1,12 @@
 import asyncio
+from concurrent.futures import Future
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Literal, cast
 
 import pytest
 import tinker
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook.completers import TokensWithLogprobs
 from tinker_cookbook.distillation import sdft
@@ -79,22 +81,26 @@ class RecordingTeacher:
         self.calls: list[list[int]] = []
         self.widths: list[int] = []
 
-    async def compute_logprobs_async(self, prompt: tinker.ModelInput) -> list[float | None]:
+    def compute_logprobs(
+        self, prompt: tinker.ModelInput
+    ) -> AwaitableConcurrentFuture[list[float | None]]:
         tokens = prompt.to_ints()
         self.calls.append(tokens)
         rows: list[float | None] = [None, *[-float(token) for token in tokens[1:]]]
         if self.missing_row is not None:
             rows[self.missing_row] = None
-        return rows if self.response_limit is None else rows[: self.response_limit]
+        future: Future[list[float | None]] = Future()
+        future.set_result(rows if self.response_limit is None else rows[: self.response_limit])
+        return AwaitableConcurrentFuture(future)
 
-    async def sample_async(
+    def sample(
         self,
         prompt: tinker.ModelInput,
         num_samples: int,
         sampling_params: tinker.SamplingParams,
         include_prompt_logprobs: bool,
         topk_prompt_logprobs: int,
-    ) -> SimpleNamespace:
+    ) -> AwaitableConcurrentFuture[SimpleNamespace]:
         tokens = prompt.to_ints()
         self.calls.append(tokens)
         self.widths.append(topk_prompt_logprobs)
@@ -105,11 +111,15 @@ class RecordingTeacher:
         ]
         if self.missing_row is not None:
             rows[self.missing_row] = None
-        return SimpleNamespace(
-            topk_prompt_logprobs=rows
-            if self.response_limit is None
-            else rows[: self.response_limit]
+        future: Future[SimpleNamespace] = Future()
+        future.set_result(
+            SimpleNamespace(
+                topk_prompt_logprobs=rows
+                if self.response_limit is None
+                else rows[: self.response_limit]
+            )
         )
+        return AwaitableConcurrentFuture(future)
 
 
 def _score(

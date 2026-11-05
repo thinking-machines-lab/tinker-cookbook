@@ -177,7 +177,7 @@ async def _(
     renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
     service_client = tinker.ServiceClient()
-    sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
+    sampling_client = await service_client.create_sampling_client(base_model=MODEL_NAME)
 
     # Generate teacher labels with the full classification prompt
     teacher_labels = []
@@ -187,7 +187,7 @@ async def _(
             {"role": "user", "content": _text},
         ]
         _prompt = renderer.build_generation_prompt(_teacher_messages)
-        _result = await sampling_client.sample_async(
+        _result = await sampling_client.sample(
             prompt=_prompt,
             sampling_params=types.SamplingParams(max_tokens=50, temperature=0.0),
             num_samples=1,
@@ -250,20 +250,18 @@ def _(mo):
 
 @app.cell
 async def _(MODEL_NAME, service_client, student_data, tinker):
-    training_client = await service_client.create_lora_training_client_async(
+    training_client = await service_client.create_lora_training_client(
         base_model=MODEL_NAME,
         rank=32,
     )
 
     adam_params = tinker.AdamParams(learning_rate=2e-4)
     for _step in range(10):
-        _fwd_bwd_future = await training_client.forward_backward_async(
-            student_data, loss_fn="cross_entropy"
-        )
-        _optim_future = await training_client.optim_step_async(adam_params)
-        _fwd_bwd_result = await _fwd_bwd_future.result_async()
+        _fwd_bwd_future = training_client.forward_backward(student_data, loss_fn="cross_entropy")
+        _optim_future = training_client.optim_step(adam_params)
+        _fwd_bwd_result = await _fwd_bwd_future
         _loss = _fwd_bwd_result.metrics["loss:sum"]
-        await _optim_future.result_async()
+        await _optim_future
         print(f"Step {_step:2d}: loss = {_loss:.4f}")
     return (training_client,)
 
@@ -295,7 +293,7 @@ async def _(re, renderer, tokenizer, training_client, types):
         ("کل میں بازار جا کر کچھ پھل خریدوں گا۔", "ur"),
     ]
 
-    student_client = await training_client.save_weights_and_get_sampling_client_async()
+    student_client = await training_client.save_weights_and_get_sampling_client()
 
     # Text goes last: its display width varies (CJK double-width, RTL Arabic/Urdu,
     # Hindi combining marks), so a fixed-width text column never aligns.
@@ -306,7 +304,7 @@ async def _(re, renderer, tokenizer, training_client, types):
     for _text, _expected in TEST_SENTENCES:
         _student_messages = [{"role": "user", "content": _text}]
         _prompt = renderer.build_generation_prompt(_student_messages)
-        _result = await student_client.sample_async(
+        _result = await student_client.sample(
             prompt=_prompt,
             sampling_params=types.SamplingParams(max_tokens=20, temperature=0.0),
             num_samples=1,

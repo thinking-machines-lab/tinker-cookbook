@@ -152,18 +152,18 @@ def train_one_step(
 
     async def _run() -> str:
         sc = tinker.ServiceClient()
-        tc = await sc.create_lora_training_client_async(
+        tc = await sc.create_lora_training_client(
             base_model=model_name,
             rank=LORA_RANK,
             train_unembed=train_unembed,
         )
         batch = sft_dataset.get_batch(0)
-        fwd_bwd = await tc.forward_backward_async(batch, loss_fn="cross_entropy")
-        await fwd_bwd.result_async()
-        optim = await tc.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
-        await optim.result_async()
-        export_resp = await tc.save_weights_external_async(checkpoint_name)
-        result = await export_resp.result_async()
+        fwd_bwd = tc.forward_backward(batch, loss_fn="cross_entropy")
+        await fwd_bwd
+        optim = tc.optim_step(tinker.AdamParams(learning_rate=1e-4))
+        await optim
+        export_resp = tc.save_weights_external(checkpoint_name)
+        result = await export_resp
         return result.path
 
     return asyncio.run(_run())
