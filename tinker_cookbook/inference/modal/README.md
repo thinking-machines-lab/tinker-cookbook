@@ -12,6 +12,7 @@ pip install "tinker-cookbook[modal]"
 modal setup
 export TINKER_API_KEY=tml-...   # required, used to download the checkpoint
 export HF_TOKEN=hf-...          # optional, only for gated base models
+export HF_TRUST_REMOTE_CODE=1   # required for Inkling and other custom HF architectures
 ```
 
 `prepare`/`serve` read these from your local environment at deploy time; no
@@ -71,6 +72,7 @@ Merge + serve verified end to end against the Tinker sampling client:
 | nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16 | Mamba hybrid |
 | nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 | Mamba hybrid |
 | Qwen/Qwen3-235B-A22B-Instruct-2507 | MoE |
+| thinkingmachines/Inkling-Small | MoE + audio + vision (requires `transformers>=5.14`) |
 
 ## Adding a model
 
