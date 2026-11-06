@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tinker_cookbook.renderers.base import ParseTermination, ToolCall
+from tinker_cookbook.renderers.base import ParseTermination, TextPart, ThinkingPart, ToolCall
 from tinker_cookbook.third_party.litellm.provider import (
+    _build_model_response,
     _extract_sampling_params,
     _prepare_messages_with_tools,
     _sample_chat_completion,
@@ -209,6 +210,46 @@ class TestSamplingResultToDict:
         ]
         d = _sampling_result_to_chat_completion_dict(result)
         assert d["choices"][0]["message"]["content"] == "Hello \nworld!"
+
+    def test_structured_reasoning_content_is_separate(self) -> None:
+        result = _make_sampling_result()
+        result.parsed_message["content"] = [
+            ThinkingPart(type="thinking", thinking="reasoning"),
+            TextPart(type="text", text="answer"),
+        ]
+
+        d = _sampling_result_to_chat_completion_dict(result)
+
+        message = d["choices"][0]["message"]
+        assert message["content"] == "answer"
+        assert message["reasoning_content"] == "reasoning"
+        assert "<think>" not in message["content"]
+
+    def test_structured_reasoning_content_preserves_text_part_boundaries(self) -> None:
+        result = _make_sampling_result()
+        result.parsed_message["content"] = [
+            TextPart(type="text", text="partial"),
+            ThinkingPart(type="thinking", thinking="reasoning"),
+            TextPart(type="text", text=" answer"),
+        ]
+
+        d = _sampling_result_to_chat_completion_dict(result)
+
+        assert d["choices"][0]["message"]["content"] == "partial answer"
+
+    def test_build_model_response_preserves_reasoning_content(self) -> None:
+        result = _make_sampling_result()
+        result.parsed_message["content"] = [
+            ThinkingPart(type="thinking", thinking="reasoning"),
+            TextPart(type="text", text="answer"),
+        ]
+        model_response = MagicMock()
+
+        response = _build_model_response(result, model_response)
+
+        message = response.choices[0].message
+        assert message.content == "answer"
+        assert message.reasoning_content == "reasoning"
 
 
 # ---------------------------------------------------------------------------
