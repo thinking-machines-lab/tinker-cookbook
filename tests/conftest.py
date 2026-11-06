@@ -8,7 +8,7 @@ Recipes NOT yet covered by integration tests:
   - rubric: needs generated JSONL data (has generate_data.py script)
   - rl_basic, sl_basic, rl_loop, sl_loop: standalone tutorial scripts (not full recipes)
   - prompt_distillation: needs a local JSONL data file
-  - harbor_rl: needs Modal + downloaded Harbor tasks
+  - harbor_rl: needs Modal or Sail + downloaded Harbor tasks
 """
 
 import os

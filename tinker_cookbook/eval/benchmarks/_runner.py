@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 import tinker
 
 from tinker_cookbook.completers import TinkerTokenCompleter
+from tinker_cookbook.eval.benchmarks._common import get_sandbox_factory
 from tinker_cookbook.eval.benchmarks._types import (
     METRIC_CONTEXT_OVERFLOW,
     METRIC_MAX_TOKENS_REACHED,
@@ -346,15 +347,8 @@ def _validate_requirements(benchmark: BenchmarkBuilder, config: BenchmarkConfig)
             f"Benchmark '{benchmark.name}' requires an LLM judge. "
             f"Set config.judge_sampling_client to a Tinker SamplingClient for the judge model."
         )
-    if benchmark.requires_sandbox and config.sandbox_factory is None:
-        try:
-            from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox  # noqa: F401
-        except ImportError:
-            raise ValueError(
-                f"Benchmark '{benchmark.name}' requires a sandbox for code execution. "
-                f"Either install Modal (`pip install 'tinker-cookbook[modal]'`) "
-                f"or provide a custom sandbox_factory in BenchmarkConfig."
-            ) from None
+    if benchmark.requires_sandbox:
+        get_sandbox_factory(config)
 
 
 # ---------------------------------------------------------------------------
