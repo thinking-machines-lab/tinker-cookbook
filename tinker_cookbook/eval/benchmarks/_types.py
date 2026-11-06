@@ -65,6 +65,7 @@ class StoredTrajectoryDict(TypedDict):
     idx: int
     benchmark: str
     example_id: str
+    tags: list[str]
     turns: list[StoredTurnDict]
     reward: float
     metrics: Metrics
@@ -492,6 +493,11 @@ class StoredTrajectory:
     """Error message if this example failed."""
     time_seconds: float = 0.0
     """Wall time for this example."""
+    tags: list[str] = field(default_factory=list)
+    """Categorical labels for this example (e.g. ``["anatomy"]``), read from
+    ``Env.tags``. The runner reports ``{benchmark}/{tag}/accuracy`` per tag.
+    Rows written before this field existed load as ``[]``; their category is
+    absent, not recovered (see ``regrade_trajectories``)."""
 
     def to_dict(self) -> StoredTrajectoryDict:
         """Serialize to a JSON-compatible dict."""
@@ -513,6 +519,7 @@ class StoredTrajectory:
             logs=self.logs,
             error=self.error,
             time_seconds=self.time_seconds,
+            tags=self.tags,
         )
 
     @classmethod
@@ -540,6 +547,7 @@ class StoredTrajectory:
             logs=d.get("logs", {}),
             error=d.get("error"),
             time_seconds=d.get("time_seconds", 0.0),
+            tags=list(d.get("tags", [])),
         )
 
 
@@ -632,6 +640,13 @@ class BenchmarkBuilder(ABC):
     The same Env implementation can be used for both evaluation and RL
     training — no separate eval code needed.
 
+    Envs may expose ``tags: list[str]`` (categorical labels such as a subject
+    or difficulty). The runner reads them off the env, not from ``step()``
+    output, and adds ``{name}/{tag}/accuracy`` to the result metrics using
+    the same denominator as the headline score, so timeouts, errors, and
+    truncated examples count against their bucket. ``EnvFromMessageEnv``
+    forwards ``tags`` from the inner ``MessageEnv``, like ``example_id``.
+
     Example::
 
         class MyBenchmark(BenchmarkBuilder):
@@ -698,8 +713,9 @@ class BenchmarkBuilder(ABC):
     ) -> BenchmarkResult:
         """Aggregate per-example rewards into a BenchmarkResult.
 
-        Override for custom aggregation (e.g., per-category breakdowns).
-        Default: accuracy = fraction with reward > 0.
+        Override for custom aggregation. Default: accuracy = fraction with
+        reward > 0. Per-tag breakdowns need no override: set ``tags`` on the
+        env and the runner adds ``{name}/{tag}/accuracy``.
 
         Args:
             rewards: Total reward per example.
