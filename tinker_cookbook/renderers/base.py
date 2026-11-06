@@ -10,6 +10,7 @@ import json
 import logging
 import pickle
 import re
+import tempfile
 import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
@@ -2121,6 +2122,8 @@ def image_to_chunk(
     to RGB, encoding as JPEG, and computing the expected token count via the
     image processor.
 
+    JPEG encoding requires a writable temporary directory, selected by tempfile.
+
     Args:
         image_or_str (Image.Image | str): A PIL Image object, a URL string,
             or a data URI string pointing to an image.
@@ -2153,9 +2156,12 @@ def image_to_chunk(
     if pil_image.mode in ("RGBA", "LA", "P"):
         pil_image = pil_image.convert("RGB")
 
-    img_byte_arr = io.BytesIO()
-    pil_image.save(img_byte_arr, format="JPEG")
-    image_data = img_byte_arr.getvalue()
+    # Pillow's file-descriptor encoder releases the GIL during compression,
+    # allowing independent images to be encoded in parallel by caller threads.
+    with tempfile.TemporaryFile() as image_file:
+        pil_image.save(image_file, format="JPEG")
+        image_file.seek(0)
+        image_data = image_file.read()
 
     # Get the number of expected tokens for the image. The way to do this is not consistent between
     # image processors (qwen3vl supports get_number_of_image_patches, kimi2.5 doesn't but has get_resize_config)
