@@ -162,7 +162,7 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
         elif iid == "detectable_format:number_bullet_lists":
             bullets = re.findall(r"^\s*[\*\-\•]\s", response, re.MULTILINE)
             num_bullets = kwargs.get("num_bullets", 1)
-            return len(bullets) >= num_bullets
+            return len(bullets) == num_bullets
 
         elif iid == "detectable_format:number_highlighted_sections":
             highlights = re.findall(r"\*[^*]+\*", response)
