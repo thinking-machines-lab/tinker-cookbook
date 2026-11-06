@@ -223,6 +223,59 @@ def test_deepseek_unterminated_tool_block(dangling_text: str):
     assert "tool_calls" not in message
 
 
+def _deepseek_call(name: str) -> str:
+    return f'<｜tool▁call▁begin｜>{name}<｜tool▁sep｜>{{"q": "a"}}<｜tool▁call▁end｜>'
+
+
+@skip_deepseek_tokenizer_bug
+def test_deepseek_parses_every_tool_calls_section():
+    """Every section is stripped from the content, so every section must be parsed."""
+    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    response_text = (
+        f"I'll search.<｜tool▁calls▁begin｜>{_deepseek_call('search')}<｜tool▁calls▁end｜>"
+        f"<｜tool▁calls▁begin｜>{_deepseek_call('fetch')}<｜tool▁calls▁end｜><｜end▁of▁sentence｜>"
+    )
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, termination = renderer.parse_response(response_tokens)
+
+    assert [tc.function.name for tc in message.get("tool_calls", [])] == ["search", "fetch"]
+    assert "unparsed_tool_calls" not in message
+    assert classify_parse_failure(message, termination) is None
+
+
+@pytest.mark.parametrize(
+    ("calls", "expected_calls"),
+    [
+        ([_deepseek_call("get-weather")], []),
+        ([_deepseek_call("search"), _deepseek_call("get-weather")], ["search"]),
+    ],
+    ids=["alone", "next-to-valid-call"],
+)
+@skip_deepseek_tokenizer_bug
+def test_deepseek_reports_call_with_unsupported_name(calls: list[str], expected_calls: list[str]):
+    """A call whose name fails the parser's pattern must surface as a CONTENT failure,
+    not be stripped with its section or left behind as raw markup."""
+    tokenizer = get_tokenizer("deepseek-ai/DeepSeek-V3.1")
+    renderer = get_renderer("deepseekv3", tokenizer)
+
+    response_text = (
+        f"I'll check.<｜tool▁calls▁begin｜>{''.join(calls)}<｜tool▁calls▁end｜>"
+        "<｜end▁of▁sentence｜>"
+    )
+    response_tokens = tokenizer.encode(response_text, add_special_tokens=False)
+    message, termination = renderer.parse_response(response_tokens)
+
+    assert [tc.function.name for tc in message.get("tool_calls", [])] == expected_calls
+    unparsed = message.get("unparsed_tool_calls", [])
+    assert len(unparsed) == 1
+    assert "get-weather" in unparsed[0].raw_text
+    assert "tool▁calls▁begin" not in str(message["content"])
+    result = classify_parse_failure(message, termination)
+    assert result is not None and result[0] == ParseFailureKind.CONTENT
+
+
 @pytest.mark.parametrize(
     "dangling_text",
     [
