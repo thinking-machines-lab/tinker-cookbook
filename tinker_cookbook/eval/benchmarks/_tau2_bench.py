@@ -192,8 +192,15 @@ class ToolBackend:
 
     def execute(self, tool_name: str, arguments: dict) -> str:
         """Execute a tool call and return the result as a string."""
-        self.call_log.append({"name": tool_name, "arguments": arguments})
+        result_str = self._execute_and_serialize(tool_name, arguments)
+        # Logged with the result, not just name/arguments -- action-matching
+        # grading (_check_actions) only needs the call, but anything scoring
+        # whether the agent's later claims are *grounded* needs to know what
+        # the tool actually returned.
+        self.call_log.append({"name": tool_name, "arguments": arguments, "result": result_str})
+        return result_str
 
+    def _execute_and_serialize(self, tool_name: str, arguments: dict) -> str:
         if tool_name not in self._tools_by_name:
             logger.warning(
                 "Tool %r not found in schema. Available: %s",
@@ -683,8 +690,12 @@ class Tau2MessageEnv(MessageEnv):
 
         logs["example_id"] = self.example_id
         logs["num_turns"] = self._turn_count
-        logs["predicted_actions"] = json.dumps(all_predicted_calls)[:500]
+        logs["predicted_actions"] = json.dumps(all_predicted_calls)[:2000]
         logs["expected_actions"] = json.dumps(self.expected_actions)[:500]
+        # The agent's final turn to the customer -- what a grounding check
+        # (e.g. does this message actually match what the tools returned,
+        # not just whether the right tools were called) would score.
+        logs["agent_final_message"] = get_text_content(last_message)[:2000]
 
         return MessageStepResult(
             reward=score,
