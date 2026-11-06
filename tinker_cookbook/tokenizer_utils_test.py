@@ -100,12 +100,17 @@ def test_tml_renderers_source_dir_rolls_back_failed_sys_path_insert(
     assert sys.path == original_sys_path
 
 
-@patch("tinker_cookbook.tokenizer_utils.TmlRenderersTokenizerAdapter")
-def test_inkling_uses_tml_renderers_tokenizer_adapter(mock_adapter: MagicMock) -> None:
-    tokenizer = tokenizer_utils.get_tokenizer("thinkingmachines/Inkling")
-
-    mock_adapter.assert_called_once_with("thinkingmachines/Inkling")
-    assert tokenizer is mock_adapter.return_value
+@pytest.mark.parametrize(
+    ("model_name", "expected"),
+    [
+        ("thinkingmachines/Inkling", True),
+        ("thinkingmachines/Inkling-2-Small", True),
+        ("moonshotai/Kimi-K3.1-Pro:peft:262144", True),
+        ("moonshotai/Kimi-K2.6", False),
+    ],
+)
+def test_is_tml_renderers_model(model_name: str, expected: bool) -> None:
+    assert tokenizer_utils.is_tml_renderers_model(model_name) is expected
 
 
 def test_encode_without_special_tokens_uses_native_surface() -> None:

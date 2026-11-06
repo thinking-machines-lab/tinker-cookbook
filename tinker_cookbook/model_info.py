@@ -40,6 +40,13 @@ _GPT_OSS = ("gpt_oss_no_sysprompt", "gpt_oss_medium_reasoning")
 _KIMI_K2 = ("kimi_k2",)
 _KIMI_K25 = ("kimi_k25", "kimi_k25_disable_thinking")
 _KIMI_K26 = ("kimi_k26", "kimi_k26_disable_thinking", "kimi_k26_preserve_thinking")
+_KIMI_K31_PRO = (
+    "kimi_k31_pro_max_reasoning",
+    "kimi_k31_pro_high_reasoning",
+    "kimi_k31_pro_low_reasoning",
+    "kimi_k31_pro_disable_thinking",
+    "kimi_k31_pro_no_reasoning_effort",
+)
 _GLM5_3 = ("glm5_3_max_reasoning", "glm5_3_low_reasoning", "glm5_3_high_reasoning")
 _NEMOTRON3 = ("nemotron3", "nemotron3_disable_thinking", "nemotron3_preserve_thinking")
 _NEMOTRON3_SUPER = _NEMOTRON3 + ("nemotron3_low_thinking",)
@@ -195,6 +202,9 @@ def get_moonshot_info() -> dict[str, ModelAttributes]:
         "Kimi-K2-Thinking": ModelAttributes(org, "K2", "1T-A32B", True, _KIMI_K2),
         "Kimi-K2.5": ModelAttributes(org, "K2.5", "1T-A32B", True, _KIMI_K25, is_vl=True),
         "Kimi-K2.6": ModelAttributes(org, "K2.6", "1T-A32B", True, _KIMI_K26, is_vl=True),
+        "Kimi-K3.1-Pro": ModelAttributes(
+            org, "K3.1", "2.8T-A104B", True, _KIMI_K31_PRO, is_vl=True
+        ),
     }
 
 

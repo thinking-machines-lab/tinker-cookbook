@@ -14,7 +14,7 @@ import sys
 from collections.abc import Callable, Sequence
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
 # ---------------------------------------------------------------------------
 # ``tml_renderers`` import shim.
@@ -102,21 +102,48 @@ class SupportsTmlTokenizer(Protocol):
     tml_tokenizer: TmlTokenizer
 
 
+TmlTokenizerFamily: TypeAlias = Literal["o200k_base_chat", "h200k_base_chat", "kimi_k3"]
+
+
+def _tml_tokenizer_family(model_name: str) -> TmlTokenizerFamily | None:
+    """Return the tml-renderers tokenizer for a model, or None for a HuggingFace tokenizer."""
+    base_model_name = model_name.split(":", 1)[0]
+    if base_model_name == "thinkingmachines/Inkling-2-Small":
+        return "h200k_base_chat"
+    if base_model_name.startswith("thinkingmachines/Inkling"):
+        return "o200k_base_chat"
+    # Kimi K3.1-Pro uses the tokenizer of the K3 renderer family.
+    if base_model_name.startswith("moonshotai/Kimi-K3.1-Pro"):
+        return "kimi_k3"
+    return None
+
+
+def is_tml_renderers_model(model_name: str) -> bool:
+    """Return whether tml-renderers tokenizes ``model_name``."""
+    return _tml_tokenizer_family(model_name) is not None
+
+
+def _load_tml_tokenizer(family: TmlTokenizerFamily) -> TmlTokenizer:
+    ensure_tml_renderers_importable()
+    tokenizers = importlib.import_module("tml_renderers.tokenizers")
+    match family:
+        case "o200k_base_chat":
+            return tokenizers.O200kBaseChatTokenizer()
+        case "h200k_base_chat":
+            return tokenizers.H200kBaseChatTokenizer()
+        case "kimi_k3":
+            return tokenizers.KimiK3Tokenizer()
+
+
 class TmlRenderersTokenizerAdapter:
     """Small tokenizer facade for ``tml_renderers`` models used through cookbook."""
 
     eos_token_id: int | None = None
     tml_tokenizer: TmlTokenizer
 
-    def __init__(self, name_or_path: str):
-        ensure_tml_renderers_importable()
-        tokenizers = importlib.import_module("tml_renderers.tokenizers")
-
+    def __init__(self, name_or_path: str, tml_tokenizer: TmlTokenizer):
         self.name_or_path = name_or_path
-        if name_or_path.split(":", 1)[0] == "thinkingmachines/Inkling-2-Small":
-            self.tml_tokenizer = tokenizers.H200kBaseChatTokenizer()
-        else:
-            self.tml_tokenizer = tokenizers.O200kBaseChatTokenizer()
+        self.tml_tokenizer = tml_tokenizer
         self.bos_token = self.tml_tokenizer.bos_token
         self.eos_token = self.tml_tokenizer.eos_token
         try:
@@ -222,10 +249,10 @@ def get_tokenizer(model_name: str) -> Tokenizer:
     if (tokenizer := _CUSTOM_TOKENIZER_REGISTRY.get(model_name)) is not None:
         return tokenizer()
 
-    base_model_name = model_name.split(":", 1)[0]
-    if base_model_name.startswith("thinkingmachines/Inkling"):
+    if (family := _tml_tokenizer_family(model_name)) is not None:
         # Duck-typed facade (encode/decode/eos_token_id); not a PreTrainedTokenizer.
-        return cast(Tokenizer, TmlRenderersTokenizerAdapter(model_name))
+        adapter = TmlRenderersTokenizerAdapter(model_name, _load_tml_tokenizer(family))
+        return cast(Tokenizer, adapter)
 
     return _get_hf_tokenizer(model_name)
 

@@ -101,7 +101,7 @@ for i, messages in enumerate(test_cases):
 
 ## Thinking mode
 
-Models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Nemotron3) have two renderer variants:
+Models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Kimi K3.1-Pro, Nemotron3) have two renderer variants:
 - **With thinking** (`qwen3`, `qwen3_5`, `deepseekv3_thinking`): Model produces `<think>...</think>` blocks before responding
 - **Without thinking** (`qwen3_disable_thinking`, `qwen3_5_disable_thinking`, `deepseekv3`): Thinking is suppressed
 
@@ -159,6 +159,7 @@ Use `get_recommended_renderer_name()` — never hardcode:
 - **Qwen3.5**: `qwen3_5`, `qwen3_5_disable_thinking`
 - **DeepSeek V3**: `deepseekv3` (no thinking), `deepseekv3_thinking`
 - **Kimi K2.6**: `kimi_k26`, `kimi_k26_disable_thinking`
+- **Kimi K3.1-Pro**: `kimi_k31_pro_max_reasoning`, `kimi_k31_pro_high_reasoning`, `kimi_k31_pro_low_reasoning`, `kimi_k31_pro_disable_thinking`, `kimi_k31_pro_no_reasoning_effort`
 - **Nemotron3**: `nemotron3`, `nemotron3_disable_thinking`
 - **GPT-OSS**: `gpt_oss_no_sysprompt`, `gpt_oss_low_reasoning`, `gpt_oss_medium_reasoning`, `gpt_oss_high_reasoning`
 - **Generic fallback**: `role_colon`

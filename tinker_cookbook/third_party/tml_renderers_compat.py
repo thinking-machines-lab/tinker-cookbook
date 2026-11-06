@@ -249,11 +249,16 @@ def _trained_assistant_indices(messages: Sequence[Message], train_on_what: Train
         return assistant_indices
     if train_on_what == TrainOnWhat.LAST_ASSISTANT_MESSAGE:
         return {max(assistant_indices)} if assistant_indices else set()
+    if train_on_what == TrainOnWhat.LAST_ASSISTANT_TURN:
+        # Same turn boundary as Renderer._last_assistant_turn_start_index.
+        turn_start = max((i for i, m in enumerate(messages) if m["role"] == "user"), default=-1) + 1
+        return {i for i in assistant_indices if i >= turn_start}
     if train_on_what == TrainOnWhat.CUSTOMIZED:
         return {i for i in assistant_indices if messages[i].get("trainable", True)}
     raise NotImplementedError(
         f"tml-renderers SFT supports {TrainOnWhat.ALL_ASSISTANT_MESSAGES.value}, "
-        f"{TrainOnWhat.LAST_ASSISTANT_MESSAGE.value}, and {TrainOnWhat.CUSTOMIZED.value}; "
+        f"{TrainOnWhat.LAST_ASSISTANT_MESSAGE.value}, {TrainOnWhat.LAST_ASSISTANT_TURN.value}, "
+        f"and {TrainOnWhat.CUSTOMIZED.value}; "
         f"got {train_on_what.value!r}"
     )
 

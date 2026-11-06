@@ -453,6 +453,7 @@ Never hardcode renderer names. Each model family has specific token formats, and
 | DeepSeek V3 | `deepseekv3_thinking` | `deepseekv3` | Default is non-thinking. Thinking adds `<think>` prefill. |
 | DeepSeek V4.1 | `deepseekv4_1` | `deepseekv4_1_disable_thinking` | Default is thinking, reasoning effort high; `deepseekv4_1_low_reasoning`/`deepseekv4_1_max_reasoning` select other efforts. |
 | Kimi K2.6 | `kimi_k26` | `kimi_k26_disable_thinking` | Vision-capable. |
+| Kimi K3.1-Pro | `kimi_k31_pro_max_reasoning` | `kimi_k31_pro_disable_thinking` | Default reasoning effort is max; `kimi_k31_pro_high_reasoning`/`_low_reasoning` select lower efforts. Renders through `tml-renderers`. |
 | GLM-5.3 / GLM-5.3-Flash | `glm5_3_max_reasoning` | — | Thinking cannot be disabled; `glm5_3_low_reasoning`/`glm5_3_high_reasoning` select lower efforts. |
 | Nemotron3 | `nemotron3` | `nemotron3_disable_thinking` | |
 
@@ -504,6 +505,18 @@ else:
     print(f"  Cookbook length: {len(cookbook_tokens)}, HF length: {len(hf_tokens)}")
 ```
 
+**Models rendered by `tml-renderers`** (Inkling and Kimi K3.1-Pro; `tokenizer_utils.is_tml_renderers_model` returns `True`): `get_tokenizer` returns a `TmlRenderersTokenizerAdapter`, which has no `apply_chat_template`. Compare against the `tml-renderers` wheel instead:
+
+```python
+from importlib import import_module
+
+from tinker_cookbook.third_party.tml_renderers_compat import tinker_messages_to_message_list
+
+wheel = import_module("tml_renderers.renderers").KimiK31Pro()  # same as kimi_k31_pro_max_reasoning
+spans, _ = wheel.render_for_completion(tinker_messages_to_message_list(messages))
+wheel_tokens = import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans).to_ints()
+```
+
 **If tokens match:** The renderer is correct. The issue is elsewhere (training config, data quality, etc.).
 
 **If tokens don't match:** Check these common causes:
@@ -513,7 +526,7 @@ else:
 
 ### Step 3: Check thinking mode handling
 
-For models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Nemotron3):
+For models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Kimi K3.1-Pro, Nemotron3):
 
 - Use the `_disable_thinking` renderer variant if you don't want `<think>` blocks
 - Historical assistant messages may have thinking stripped by default (depends on renderer)

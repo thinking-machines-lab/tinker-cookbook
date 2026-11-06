@@ -346,6 +346,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 1_940_288,
         (False, False, True): 171_008,
     },
+    "moonshotai/Kimi-K3.1-Pro": {
+        (True, True, True): 774_669_824,
+        (True, True, False): 774_498_816,
+        (True, False, True): 766_628_864,
+        (True, False, False): 766_457_856,
+        (False, True, True): 8_211_968,
+        (False, True, False): 8_040_960,
+        (False, False, True): 171_008,
+    },
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
         (True, True, True): 12_064_768,
         (True, True, False): 11_931_008,

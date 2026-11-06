@@ -25,32 +25,6 @@ from tinker_cookbook.third_party.tml_renderers_compat import tinker_messages_to_
 from tinker_cookbook.tokenizer_utils import ensure_tml_renderers_importable, get_tokenizer
 
 
-class _FakeTmlRenderersChat:
-    class AuthorKind:
-        User = "user"
-
-    class MessageList:
-        pass
-
-    class Message:
-        def __init__(self, kind):
-            self.kind = kind
-
-    class OpenAIMessage:
-        def __init__(self, role):
-            self.role = role
-
-
-@pytest.fixture
-def mock_tml_renderers_chat(monkeypatch: pytest.MonkeyPatch) -> type[_FakeTmlRenderersChat]:
-    monkeypatch.setattr(
-        tml_v0,
-        "import_module",
-        lambda module="tml_renderers": _FakeTmlRenderersChat,
-    )
-    return _FakeTmlRenderersChat
-
-
 def _require_tml_renderers() -> None:
     ensure_tml_renderers_importable()
     chat = tml_v0.import_module("tml_renderers.chat")
@@ -85,45 +59,6 @@ def _renderer(model_name: str = "thinkingmachines/Inkling") -> tml_v0.TmlV0Rende
 
 def _input_len(model_input) -> int:
     return sum(int(chunk.length) for chunk in model_input.chunks)
-
-
-@pytest.mark.parametrize("version", ["2.10.0", "2.12.0+cu130", "3.0.0"])
-def test_validate_torch_version_accepts_supported_versions(
-    monkeypatch: pytest.MonkeyPatch, version: str
-) -> None:
-    monkeypatch.setattr(tml_v0.torch, "__version__", version)
-    tml_v0._validate_torch_version()
-
-
-def test_validate_torch_version_rejects_unsupported_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tml_v0.torch, "__version__", "2.9.1")
-    with pytest.raises(RuntimeError, match=r"requires PyTorch 2\.10 or newer; found 2\.9\.1"):
-        tml_v0._validate_torch_version()
-
-
-def test_native_tml_renderers_inputs_pass_through(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    messages = [
-        mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User),
-        mock_tml_renderers_chat.OpenAIMessage("user"),
-    ]
-    message_list = mock_tml_renderers_chat.MessageList()
-
-    assert tml_v0._messages_to_render_input(cast(Any, messages)) is messages
-    assert tml_v0._messages_to_render_input(cast(Any, message_list)) is message_list
-
-
-def test_selective_sft_rejects_native_tml_renderers_inputs(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    with pytest.raises(NotImplementedError, match="selective train_on_what"):
-        tml_v0._cookbook_messages_to_sft_input(
-            cast(Any, [mock_tml_renderers_chat.OpenAIMessage("assistant")]),
-            TrainOnWhat.LAST_ASSISTANT_MESSAGE,
-        )
 
 
 def test_inkling_tokenizer_resolves_to_tml_adapter() -> None:

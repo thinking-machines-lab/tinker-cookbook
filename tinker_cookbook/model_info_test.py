@@ -214,6 +214,28 @@ class TestGlm5_3:
         ]
 
 
+class TestKimiK31Pro:
+    def test_peft_suffix_uses_kimi_k31_pro_renderer(self):
+        assert get_recommended_renderer_name(
+            "moonshotai/Kimi-K3.1-Pro:peft:262144"
+        ) == get_recommended_renderer_name("moonshotai/Kimi-K3.1-Pro")
+
+    def test_attributes(self):
+        attrs = get_model_attributes("moonshotai/Kimi-K3.1-Pro")
+        assert attrs.organization == "moonshotai"
+        assert attrs.version_str == "K3.1"
+        assert attrs.size_str == "2.8T-A104B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert get_recommended_renderer_names("moonshotai/Kimi-K3.1-Pro") == [
+            "kimi_k31_pro_max_reasoning",
+            "kimi_k31_pro_high_reasoning",
+            "kimi_k31_pro_low_reasoning",
+            "kimi_k31_pro_disable_thinking",
+            "kimi_k31_pro_no_reasoning_effort",
+        ]
+
+
 class TestInkling:
     """Inkling models are rendered by the standalone tml-renderers package rather
     than a cookbook renderer, and are the only lineup members taking audio input."""

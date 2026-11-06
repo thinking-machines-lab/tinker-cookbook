@@ -109,6 +109,7 @@ def _get_hidden_size(model_name: str) -> int:
         "moonshotai/Kimi-K2-Thinking": 7168,
         "moonshotai/Kimi-K2.5": 7168,
         "moonshotai/Kimi-K2.6": 7168,
+        "moonshotai/Kimi-K3.1-Pro": 7168,
         # Qwen3 (text-only)
         "Qwen/Qwen3-235B-A22B-Instruct-2507": 4096,
         "Qwen/Qwen3-30B-A3B-Instruct-2507": 2048,
@@ -222,6 +223,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "moonshotai/Kimi-K2-Thinking": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "moonshotai/Kimi-K2.5": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "moonshotai/Kimi-K2.6": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
+    "moonshotai/Kimi-K3.1-Pro": {"mlp": 766_457_856, "attn": 8_040_960, "unembed": 171_008},
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
         "mlp": 11_346_176,
         "attn": 584_832,
@@ -330,6 +332,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
         "moonshotai/Kimi-K2.6",
+        "moonshotai/Kimi-K3.1-Pro",
         "zai-org/GLM-5.3",
         "zai-org/GLM-5.3-Flash",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",

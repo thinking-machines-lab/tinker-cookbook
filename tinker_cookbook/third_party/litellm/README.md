@@ -138,7 +138,7 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 
 ## Tool calling
 
-Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, DeepSeek V3, Kimi K2/K2.6, GPT-OSS):
+Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, DeepSeek V3, Kimi K2/K2.6/K3.1-Pro, GPT-OSS):
 
 ```python
 response = await litellm.acompletion(

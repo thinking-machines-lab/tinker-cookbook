@@ -355,6 +355,21 @@ def test_sft_message_list_weights_the_selected_turns(
     assert _weights(message_list) == weights
 
 
+def test_sft_message_list_last_assistant_turn_starts_after_the_last_user_message() -> None:
+    messages: list[Message] = [
+        {"role": "user", "content": "Q1."},
+        {"role": "assistant", "content": "A1."},
+        {"role": "user", "content": "Q2."},
+        {"role": "assistant", "content": "A2a."},
+        {"role": "assistant", "content": "A2b."},
+    ]
+
+    message_list = tinker_messages_to_sft_message_list(messages, TrainOnWhat.LAST_ASSISTANT_TURN)
+
+    # user; "A1." and its end of turn; user; "A2a." and its end; "A2b." and its end
+    assert _weights(message_list) == [None, 0.0, 0.0, None, None, None, None, None]
+
+
 def test_sft_message_list_rejects_modes_tml_renderers_cannot_weight() -> None:
     with pytest.raises(NotImplementedError, match="all_messages"):
         tinker_messages_to_sft_message_list(_SFT_MESSAGES, TrainOnWhat.ALL_MESSAGES)

@@ -159,6 +159,11 @@ def get_renderer(
             - ``"kimi_k26"``: Kimi K2.6 with thinking enabled (HF default — same token output as ``kimi_k25``)
             - ``"kimi_k26_disable_thinking"``: Kimi K2.6 with thinking disabled
             - ``"kimi_k26_preserve_thinking"``: Kimi K2.6 with thinking enabled and historical ``<think>...</think>`` blocks preserved (HF ``preserve_thinking=true``); use for long-horizon agents / multi-turn RL
+            - ``"kimi_k31_pro_max_reasoning"``: Kimi K3.1-Pro with max reasoning effort
+            - ``"kimi_k31_pro_high_reasoning"``: Kimi K3.1-Pro with high reasoning effort
+            - ``"kimi_k31_pro_low_reasoning"``: Kimi K3.1-Pro with low reasoning effort
+            - ``"kimi_k31_pro_disable_thinking"``: Kimi K3.1-Pro with thinking disabled
+            - ``"kimi_k31_pro_no_reasoning_effort"``: Kimi K3.1-Pro with thinking and no effort message
             - ``"nemotron3"``: Nemotron-3 with full reasoning
             - ``"nemotron3_low_thinking"``: Nemotron-3 with low-effort reasoning (Super only)
             - ``"nemotron3_disable_thinking"``: Nemotron-3 with reasoning off
@@ -229,6 +234,7 @@ def get_renderer(
     from tinker_cookbook.renderers.kimi_k2 import KimiK2Renderer
     from tinker_cookbook.renderers.kimi_k25 import KimiK25DisableThinkingRenderer, KimiK25Renderer
     from tinker_cookbook.renderers.kimi_k26 import KimiK26PreserveThinkingRenderer
+    from tinker_cookbook.renderers.kimi_k31_pro import KimiK31ProRenderer
     from tinker_cookbook.renderers.llama3 import Llama3Renderer
     from tinker_cookbook.renderers.nemotron3 import (
         Nemotron3DisableThinkingRenderer,
@@ -323,6 +329,16 @@ def get_renderer(
         renderer = KimiK25DisableThinkingRenderer(tokenizer, image_processor=image_processor)
     elif name == "kimi_k26_preserve_thinking":
         renderer = KimiK26PreserveThinkingRenderer(tokenizer, image_processor=image_processor)
+    elif name == "kimi_k31_pro_max_reasoning":
+        renderer = KimiK31ProRenderer(tokenizer, reasoning_effort="max")
+    elif name == "kimi_k31_pro_high_reasoning":
+        renderer = KimiK31ProRenderer(tokenizer, reasoning_effort="high")
+    elif name == "kimi_k31_pro_low_reasoning":
+        renderer = KimiK31ProRenderer(tokenizer, reasoning_effort="low")
+    elif name == "kimi_k31_pro_disable_thinking":
+        renderer = KimiK31ProRenderer(tokenizer, support_thinking=False)
+    elif name == "kimi_k31_pro_no_reasoning_effort":
+        renderer = KimiK31ProRenderer(tokenizer, reasoning_effort=None)
     elif name == "nemotron3":
         renderer = Nemotron3Renderer(tokenizer)
     elif name == "nemotron3_low_thinking":
