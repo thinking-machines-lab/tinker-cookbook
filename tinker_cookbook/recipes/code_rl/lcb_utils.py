@@ -761,6 +761,31 @@ def reliability_guard(maximum_memory_bytes=None):
     os.getcwd = None
     os.chdir = None
 
+    # Low-level file-read primitives that bypass the patched builtins.open
+    # (a submission reading the answer key from the workdir via os.open,
+    # os.fdopen, io.open or codecs.open must fail closed). Attribute lookups
+    # on these modules resolve at call time, so patching them here takes
+    # effect for all spellings except the already-bound `open` builtin.
+    # Known bypass spellings that remain callable: `import posix; posix.open`
+    # and `import _io; _io.open` / `_io.FileIO` (C-level, not patched here).
+    # They are not a way back to the answer key today — the unlink in
+    # TEST_CODE removes the files before any submission code runs — but if a
+    # future change reintroduces a file or fd, close those spellings too or
+    # run the submission in a subprocess jail.
+    os.open = None
+    os.fdopen = None
+    os.popen = None
+    os.read = None
+    os.pread = None
+
+    import io
+
+    io.open = None
+
+    import codecs
+
+    codecs.open = None
+
     import shutil
 
     shutil.rmtree = None
@@ -784,6 +809,8 @@ def reliability_guard(maximum_memory_bytes=None):
 
 TEST_CODE = """
 import json
+import os
+import shutil
 import sys
 
 from testing_util import run_test
@@ -793,9 +820,23 @@ with open('test_cases.txt', 'r') as fin:
 with open('code.py', 'r') as fin:
     code = fin.read()
 
+# The expected outputs now live only in this process's memory. Remove the
+# grading artifacts from the workdir before any submission code executes:
+# a submission staged in the same directory must not be able to read
+# test_cases.txt (answer key) or import testing_util to patch the grader.
+for _artifact in ('test_cases.txt', 'testing_util.py'):
+    try:
+        os.unlink(_artifact)
+    except OSError:
+        pass
+shutil.rmtree('__pycache__', ignore_errors=True)
+sys.modules.pop('testing_util', None)
+
 result, metadata = run_test(sample, code, debug=False, timeout=%(timeout)s)
-if any(x != True for x in result):
-    print(metadata)
+# `not result` fails closed when the sample carries zero test cases; an empty
+# result list must never count as a pass.
+if not result or any(x != True for x in result):
+    print(metadata or {'error_code': -5, 'error_message': 'No test results'})
     sys.exit(-1)
 else:
     sys.exit(0)
