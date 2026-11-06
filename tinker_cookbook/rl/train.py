@@ -10,7 +10,7 @@ import io
 import logging
 import re
 import time
-from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import Executor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -304,6 +304,25 @@ def _training_logprobs_from_fwd_bwd(
     return [output["logprobs"].to_torch() for output in fwd_bwd_result.loss_fn_outputs]
 
 
+@dataclass
+class EarlySamplerSave:
+    """Requests the post-update sampler weights together with the final ``optim_step``.
+
+    :func:`train_step` calls :meth:`enqueue` right after it enqueues the last
+    ``optim_step``, before awaiting that step's result. Requests run in the order
+    they are enqueued, so the save still sees the update, and it can land on the
+    same clock cycle instead of a later one.
+    """
+
+    record_stability_info: bool = False
+    sampling_client: Awaitable[tinker.SamplingClient] | None = None
+
+    def enqueue(self, training_client: tinker.TrainingClient) -> None:
+        self.sampling_client = training_client.save_weights_and_get_sampling_client(
+            record_stability_info=self.record_stability_info
+        )
+
+
 @trace.scope
 async def train_step(
     data_D: list[tinker.Datum],
@@ -313,13 +332,15 @@ async def train_step(
     loss_fn: LossFnType,
     loss_fn_config: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
+    early_sampler_save: EarlySamplerSave | None = None,
 ) -> list[torch.Tensor]:
     """Train the model on collected trajectories.
 
     Pipelines ``forward_backward`` and ``optim_step`` so they land on the same
     clock cycle, maximizing GPU utilization. The data is split into
     ``num_substeps`` batches; each batch is enqueued before consuming the
-    previous result to keep the pipeline full.
+    previous result to keep the pipeline full. With ``early_sampler_save``, the
+    sampler save is enqueued right behind the last ``optim_step`` too.
 
     Args:
         data_D (list[tinker.Datum]): Training data assembled from trajectory
@@ -335,6 +356,8 @@ async def train_step(
             to the loss function. Defaults to None.
         metrics (dict[str, Any] | None): If provided, optimizer metrics from
             the final optim_step are merged into this dict in-place.
+        early_sampler_save (EarlySamplerSave | None): If provided, its
+            ``enqueue`` runs right after the last ``optim_step`` is enqueued.
 
     Returns:
         list[torch.Tensor]: Per-datum training log-probabilities returned by
@@ -364,6 +387,8 @@ async def train_step(
         [_remove_mask(d) for d in batches[0]], loss_fn=loss_fn, loss_fn_config=loss_fn_config
     )
     optim_future = training_client.optim_step(adam_params)
+    if early_sampler_save is not None and len(batches) == 1:
+        early_sampler_save.enqueue(training_client)
 
     for i in range(len(batches)):
         # Enqueue next batch before consuming current results (to stay on same clock cycle)
@@ -374,6 +399,8 @@ async def train_step(
                 loss_fn_config=loss_fn_config,
             )
             next_optim_future = training_client.optim_step(adam_params)
+            if early_sampler_save is not None and i + 2 == len(batches):
+                early_sampler_save.enqueue(training_client)
         else:
             next_fwd_bwd_future = None
             next_optim_future = None
@@ -1873,6 +1900,7 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     usage: TokenUsage = TokenUsage(),
     cost_tracker: CostTracker | None = None,
     sampling_client_reuse: SamplingClientReuse | None = None,
+    early_sampler_save: EarlySamplerSave | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Compute end-of-iteration metrics and export weights unless reuse is allowed.
 
@@ -1908,6 +1936,10 @@ async def compute_full_batch_metrics_and_get_sampling_client(
         sampling_client_reuse: Optional previous client and worker-finished event.
             Checked after training; marks ``reused`` when returning old weights.
             Periodic checkpoints and post-update KL always export.
+        early_sampler_save (EarlySamplerSave | None): A sampler save that
+            :func:`train_step` already enqueued. Its client is returned instead
+            of saving again (and instead of reusing old weights), unless a
+            periodic checkpoint is due.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
@@ -1925,24 +1957,35 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     if cost_tracker is not None:
         metrics.update(cost_tracker.record_step(usage + training_usage(data_D)))
 
+    periodic_save_due = i_batch > 0 and checkpoint_mgr.should_save_periodic(i_batch)
+    early_sampling_client = (
+        early_sampler_save.sampling_client
+        if early_sampler_save is not None and not periodic_save_due
+        else None
+    )
     if (
-        sampling_client_reuse is not None
+        early_sampling_client is None
+        and sampling_client_reuse is not None
         and sampling_client_reuse.rollout_workers_finished.is_set()
         and not do_compute_post_kl
-        and not (i_batch > 0 and checkpoint_mgr.should_save_periodic(i_batch))
+        and not periodic_save_due
     ):
         sampling_client_reuse.reused = True
         return sampling_client_reuse.sampling_client, metrics
 
     # Get a sampling client using the new weights
-    sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
-        training_client,
-        checkpoint_mgr,
-        i_batch,
-        record_stability_info=record_stability_info,
-        cost_tracker=cost_tracker,
-    )
-    metrics.update(checkpoint_metrics)
+    if early_sampling_client is not None:
+        async with trace.scope_span("save_checkpoint"):
+            sampling_client = await early_sampling_client
+    else:
+        sampling_client, checkpoint_metrics = await save_checkpoint_and_get_sampling_client(
+            training_client,
+            checkpoint_mgr,
+            i_batch,
+            record_stability_info=record_stability_info,
+            cost_tracker=cost_tracker,
+        )
+        metrics.update(checkpoint_metrics)
 
     # Compute post-KL metrics if configured
     if do_compute_post_kl:
@@ -2207,6 +2250,18 @@ async def do_train_step_and_get_sampling_client(
     )
     metrics.update(prepare_minibatch_metrics)
 
+    # Request the new sampler weights together with the optimizer step unless a
+    # periodic checkpoint will export them or the old client may be reused.
+    early_sampler_save = None
+    if not checkpoint_mgr.should_save_periodic(i_batch + 1) and not (
+        sampling_client_reuse is not None
+        and sampling_client_reuse.rollout_workers_finished.is_set()
+        and not config.compute_post_kl
+    ):
+        early_sampler_save = EarlySamplerSave(
+            record_stability_info=config.records_stability_info()
+        )
+
     training_logprobs_D = await train_step(
         data_D=data_D,
         training_client=training_client,
@@ -2215,6 +2270,7 @@ async def do_train_step_and_get_sampling_client(
         loss_fn=config.training_loss_fn(),
         loss_fn_config=config.loss_fn_config,
         metrics=metrics,
+        early_sampler_save=early_sampler_save,
     )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
@@ -2229,6 +2285,7 @@ async def do_train_step_and_get_sampling_client(
         usage=usage,
         cost_tracker=cost_tracker,
         sampling_client_reuse=sampling_client_reuse,
+        early_sampler_save=early_sampler_save,
     )
     metrics.update(full_batch_metrics)
 
