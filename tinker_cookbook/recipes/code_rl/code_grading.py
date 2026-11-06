@@ -1,23 +1,28 @@
 """
 Code grading utilities for RL training.
 
-Supports two execution backends:
+Supports three execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
+- tensorlake: Cloud-based Tensorlake sandbox
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
 from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 
+if TYPE_CHECKING:
+    from tinker_cookbook.sandbox.tensorlake_sandbox import TensorlakeSandboxPool
+
 # Global sandbox backend clients (lazily initialized)
 _sandboxfusion_client: SandboxFusionClient | None = None
 _modal_pool: Any = None  # ModalSandboxPool, but avoid import at module level
+_tensorlake_pool: TensorlakeSandboxPool | None = None
 
 
 def _get_sandboxfusion_client() -> SandboxFusionClient:
@@ -39,6 +44,26 @@ def _get_modal_pool():
         image = modal.Image.debian_slim().pip_install("numpy")
         _modal_pool = ModalSandboxPool(image=image)
     return _modal_pool
+
+
+def _get_tensorlake_pool() -> TensorlakeSandboxPool:
+    """Get or create the Tensorlake sandbox pool."""
+    global _tensorlake_pool
+    if _tensorlake_pool is None:
+        from tinker_cookbook.sandbox.tensorlake_sandbox import TensorlakeSandboxPool
+
+        _tensorlake_pool = TensorlakeSandboxPool(
+            setup_command="pip install --break-system-packages numpy"
+        )
+    return _tensorlake_pool
+
+
+async def shutdown_sandbox_pools() -> None:
+    """Terminate the global Tensorlake pool and delete its setup snapshot."""
+    global _tensorlake_pool
+    pool, _tensorlake_pool = _tensorlake_pool, None
+    if pool is not None:
+        await pool.terminate()
 
 
 def extract_code_from_model(model_response: str) -> str | None:
@@ -116,6 +141,31 @@ async def _check_with_modal(
     }
 
 
+async def _check_with_tensorlake(
+    test_cases: dict[str, str],
+    generation: str,
+    timeout: int,
+    total_timeout: int,
+) -> tuple[bool, dict[str, Any]]:
+    """Execute tests using Tensorlake sandbox."""
+    pool = _get_tensorlake_pool()
+    result = await pool.run_in_workdir(
+        files={
+            "test_cases.txt": json.dumps(test_cases),
+            "code.py": generation,
+            "testing_util.py": TEST_UTIL,
+            "run.py": TEST_CODE % {"timeout": timeout},
+        },
+        command=["python3", "run.py"],
+        timeout=total_timeout,
+    )
+    return result.exit_code == 0, {
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
 async def sandbox_check_correctness(
     sample: list[dict[str, Any]],
     generation: str,
@@ -146,6 +196,8 @@ async def sandbox_check_correctness(
 
         if use_backend == SandboxBackend.MODAL:
             return await _check_with_modal(test_cases, generation, timeout, total_timeout)
+        elif use_backend == SandboxBackend.TENSORLAKE:
+            return await _check_with_tensorlake(test_cases, generation, timeout, total_timeout)
         elif use_backend == SandboxBackend.SANDBOXFUSION:
             return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
         else:
