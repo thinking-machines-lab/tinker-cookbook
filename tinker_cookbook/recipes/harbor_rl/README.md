@@ -85,6 +85,25 @@ The first argument is the task's `environment/` directory (containing a Dockerfi
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
+### Daytona backend (alternative)
+
+A Daytona factory with the same signature is also available:
+
+```python
+from tinker_cookbook.sandbox.daytona_sandbox import daytona_sandbox_factory
+
+cli_main(sandbox_factory=daytona_sandbox_factory, ...)
+```
+
+Install the extra and set your API key:
+
+```bash
+uv pip install 'tinker-cookbook[daytona] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+export DAYTONA_API_KEY="***"
+```
+
+Daytona builds each task's `environment/Dockerfile`, with `environment/` as the build context, and caches the build by content hash: the first sandbox of a task waits for the build, later ones start in seconds. Each sandbox gets the `cpus`, `memory` and `storage` from the `[environment]` table of the task's `task.toml`, and lives at most `sandbox_timeout` seconds. Make sure your organization's limits cover `group_size * groups_per_batch` such sandboxes at once. On Tier 1 and 2 organizations, sandboxes can only reach [essential services](https://www.daytona.io/docs/en/network-limits/) (PyPI, GitHub, Hugging Face, Ubuntu and Debian mirrors, ...), so a task that downloads from other hosts needs a higher tier.
+
 ## Running
 
 First, download the Terminal-Bench tasks:
