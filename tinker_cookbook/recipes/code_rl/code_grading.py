@@ -4,15 +4,24 @@ Code grading utilities for RL training.
 Supports two execution backends:
 - sandboxfusion: Local Docker-based sandbox (default)
 - modal: Cloud-based Modal sandbox
+
+Grading is out of band: the sandbox only runs the program on the test inputs and returns its raw
+outputs (lcb_utils.RUN_CODE); the expected outputs never enter the sandbox, and the comparison runs
+locally, through the same run_test, on a trusted replay of those outputs. A verdict decided inside the
+sandbox (the exit code of a harness that shares a process with the program) can be faked: a program
+that calls os._exit(0) before the tests run would score as passing.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import sys
+import uuid
 from typing import Any
 
-from tinker_cookbook.recipes.code_rl.lcb_utils import TEST_CODE, TEST_UTIL
+from tinker_cookbook.recipes.code_rl.lcb_utils import RUN_CODE, TEST_UTIL
 from tinker_cookbook.sandbox import SandboxBackend, SandboxFusionClient
 
 # Global sandbox backend clients (lazily initialized)
@@ -71,49 +80,124 @@ def postprocess_lcb_sample(sample: list[dict[str, Any]]) -> dict[str, str]:
     }
 
 
-async def _check_with_sandboxfusion(
-    test_cases: dict[str, str],
-    generation: str,
-    timeout: int,
-    total_timeout: int,
-) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using SandboxFusion backend."""
-    client = _get_sandboxfusion_client()
+_MARKER = "<<CODE_RL_RUN_RESULT>>"
 
-    return await client.run(
-        code=TEST_CODE % {"timeout": timeout},
-        files={
-            "test_cases.txt": json.dumps(test_cases),
-            "code.py": generation,
-            "testing_util.py": TEST_UTIL,
-        },
-        timeout=total_timeout,
+# Runs locally in a throwaway subprocess (run_test's reliability_guard disables os functions in the
+# process that calls it). Only trusted code runs here: TEST_UTIL and the replay program.
+_GRADE_CODE = r"""
+import json, sys
+p = json.loads(sys.stdin.read())
+util = {}
+exec(p["test_util"], util)
+results, meta = util["run_test"]({"input_output": p["input_output"]}, test=p["replay"], timeout=p["timeout"])
+record = json.dumps({"results": [r is True for r in results], "meta": meta}, default=str)
+sys.__stdout__.write("\n" + p["marker"] + record + "\n")
+"""
+
+_DECODE = """
+def _dec(x):
+    if isinstance(x, list):
+        return [_dec(v) for v in x]
+    if isinstance(x, dict) and "__t" in x:
+        return tuple(_dec(v) for v in x["__t"])
+    if isinstance(x, dict) and "__d" in x:
+        return {_dec(k): _dec(v) for k, v in x["__d"]}
+    return x
+"""
+
+
+def _preamble() -> str:
+    """The import preamble run_test prepends to every program, taken from its source."""
+    start = TEST_UTIL.index('sol = "') + len('sol = "')
+    return json.loads('"' + TEST_UTIL[start : TEST_UTIL.index('"\n', start)] + '"')
+
+
+def _replay_program(records: list[dict[str, Any]], fn_name: str | None, class_based: bool) -> str:
+    """A trusted stand-in for the program: returns (call-based) or prints (stdin) the recorded outputs in
+    order, raising where the program raised. The records are embedded as a JSON string literal."""
+    data = repr(json.dumps(records))
+    if fn_name is not None:
+        body = (
+            f"_R = json.loads({data})\n" + _DECODE + "def _next():\n    r = _R.pop(0)\n"
+            "    if not r['ok']:\n        raise RuntimeError(r['error'])\n    return _dec(r['out'])\n"
+        )
+        if class_based:
+            method = f"class Solution:\n    def {fn_name}(self, *a):\n        return _next()\n"
+        else:
+            method = f"def {fn_name}(*a):\n    return _next()\n"
+        return "import json\n" + body + method
+    # run_test rewraps a stdin program into code(), called once per test: keep the cursor on sys.
+    return (
+        "import json\nimport sys\n"
+        f"_r = json.loads({data})[getattr(sys, '_ri', 0)]; sys._ri = getattr(sys, '_ri', 0) + 1\n"
+        "if not _r['ok']:\n    raise RuntimeError(_r['error'])\nsys.stdout.write(_r['out'])\n"
     )
 
 
-async def _check_with_modal(
-    test_cases: dict[str, str],
-    generation: str,
-    timeout: int,
-    total_timeout: int,
-) -> tuple[bool, dict[str, Any]]:
-    """Execute tests using Modal sandbox."""
+def _last_record(stdout: str, marker: str) -> dict[str, Any] | None:
+    """The last record printed after `marker`, or None."""
+    i = stdout.rfind(marker)
+    if i < 0:
+        return None
+    try:
+        record = json.loads(stdout[i + len(marker) :].strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+async def _run_with_sandboxfusion(files: dict[str, str], total_timeout: int) -> str:
+    """Run RUN_CODE with `files` in SandboxFusion; return its stdout."""
+    client = _get_sandboxfusion_client()
+    _success, data = await client.run(code=RUN_CODE, files=files, timeout=total_timeout)
+    return str((data.get("run_result") or {}).get("stdout") or "")
+
+
+async def _run_with_modal(files: dict[str, str], total_timeout: int) -> str:
+    """Run RUN_CODE with `files` in a Modal sandbox; return its stdout."""
     pool = _get_modal_pool()
     result = await pool.run_in_workdir(
-        files={
-            "test_cases.txt": json.dumps(test_cases),
-            "code.py": generation,
-            "testing_util.py": TEST_UTIL,
-            "run.py": TEST_CODE % {"timeout": timeout},
-        },
+        files={**files, "run.py": RUN_CODE},
         command=["python", "run.py"],
         timeout=total_timeout,
     )
-    return result.exit_code == 0, {
-        "exit_code": result.exit_code,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
+    return result.stdout or ""
+
+
+async def _grade_locally(
+    records: list[dict[str, Any]], input_output: str, generation: str, timeout: int, marker: str
+) -> tuple[bool, dict[str, Any]]:
+    """Compare recorded outputs with the expected ones through run_test, in a local subprocess."""
+    fn_name = json.loads(input_output).get("fn_name")
+    payload = {
+        "test_util": TEST_UTIL,
+        "replay": _replay_program(records, fn_name, "class Solution" in generation),
+        "input_output": input_output,
+        "timeout": timeout,
+        "marker": marker,
     }
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-I",
+        "-c",
+        _GRADE_CODE,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(json.dumps(payload).encode()), 120)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return False, {"error": "local grading timed out"}
+    graded = _last_record(out.decode("utf-8", "replace"), marker)
+    if graded is None:
+        return False, {"error": "local grading failed"}
+    results = graded.get("results") or []
+    n = len(json.loads(input_output)["inputs"])
+    passed = bool(results) and len(results) == n and all(results)
+    return passed, {"results": results, "meta": graded.get("meta")}
 
 
 async def sandbox_check_correctness(
@@ -125,6 +209,10 @@ async def sandbox_check_correctness(
     """
     Check correctness of generated code using sandbox execution.
 
+    The sandbox runs the program on the test inputs only and returns its outputs; the comparison with
+    the expected outputs happens here, outside the sandbox. No valid run record (early exit, crash,
+    timeout, garbage) is a failure, and so is a sample without test cases.
+
     Args:
         sample: List of test cases in LiveCodeBench format
         generation: Generated code to test
@@ -134,22 +222,50 @@ async def sandbox_check_correctness(
     Returns:
         Tuple of (all_passed: bool, details: dict)
     """
-    assert len(sample) >= 1, "Sample must contain at least one test case"
-
-    # Process test cases
-    test_cases = postprocess_lcb_sample(sample)
-    use_backend = backend or SandboxBackend.SANDBOXFUSION
+    if not sample:
+        return False, {"error": "no test cases"}
 
     try:
-        test_cnt = len(json.loads(test_cases["input_output"])["inputs"])
+        input_output = postprocess_lcb_sample(sample)["input_output"]
+        in_outs = json.loads(input_output)
+        test_cnt = len(in_outs["inputs"])
+        if test_cnt == 0:
+            return False, {"error": "no test cases"}
         total_timeout = (timeout + 1) * test_cnt + 5
 
+        # Inputs only: the expected outputs never enter the sandbox.
+        inputs_only: dict[str, Any] = {"inputs": in_outs["inputs"]}
+        if "fn_name" in in_outs:
+            inputs_only["fn_name"] = in_outs["fn_name"]
+        marker = f"{_MARKER}{uuid.uuid4().hex}:"
+        files = {
+            "payload.json": json.dumps(
+                {
+                    "program": generation,
+                    "input_output": json.dumps(inputs_only),
+                    "timeout": timeout,
+                    "marker": marker,
+                    "preamble": _preamble(),
+                }
+            ),
+            "testing_util.py": TEST_UTIL,
+        }
+
+        use_backend = backend or SandboxBackend.SANDBOXFUSION
         if use_backend == SandboxBackend.MODAL:
-            return await _check_with_modal(test_cases, generation, timeout, total_timeout)
+            stdout = await _run_with_modal(files, total_timeout)
         elif use_backend == SandboxBackend.SANDBOXFUSION:
-            return await _check_with_sandboxfusion(test_cases, generation, timeout, total_timeout)
+            stdout = await _run_with_sandboxfusion(files, total_timeout)
         else:
             raise ValueError(f"Invalid sandbox backend: {use_backend}")
+
+        run = _last_record(stdout, marker)
+        if run is None or run.get("status") != "ran" or not isinstance(run.get("records"), list):
+            return False, {"error": "no valid run record", "status": (run or {}).get("status")}
+        records = run["records"]
+        if not all(isinstance(r, dict) and isinstance(r.get("ok"), bool) for r in records):
+            return False, {"error": "malformed run record"}
+        return await _grade_locally(records, input_output, generation, timeout, marker)
 
     except Exception as e:
         return False, {"error": str(e)}
