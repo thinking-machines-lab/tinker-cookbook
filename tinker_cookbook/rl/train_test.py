@@ -72,6 +72,72 @@ def test_missing_provenance_is_caught_before_any_request_is_sent():
     assert client.requests == []
 
 
+class _LoggedAwaitable:
+    def __init__(self, events: list[str], name: str, value: Any) -> None:
+        self.events, self.name, self.value = events, name, value
+
+    def __await__(self):
+        self.events.append(f"await {self.name}")
+        return asyncio.sleep(0, result=self.value).__await__()
+
+
+class _OrderRecordingTrainingClient:
+    """Logs when each request is enqueued and when its result is awaited."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def forward_backward(
+        self, data: list[tinker.Datum], loss_fn: LossFnType, loss_fn_config: dict[str, Any] | None
+    ) -> _LoggedAwaitable:
+        self.events.append("forward_backward")
+        outputs = [{"logprobs": tinker.TensorData(data=[0.0], dtype="float32")} for _ in data]
+        result = tinker.ForwardBackwardOutput(
+            loss_fn_output_type="logprobs", loss_fn_outputs=outputs, metrics={}
+        )
+        return _LoggedAwaitable(self.events, "forward_backward", result)
+
+    def optim_step(self, adam_params: tinker.AdamParams) -> _LoggedAwaitable:
+        self.events.append("optim_step")
+        return _LoggedAwaitable(self.events, "optim_step", tinker.OptimStepResponse())
+
+    def save_weights_and_get_sampling_client(
+        self, record_stability_info: bool = False
+    ) -> _LoggedAwaitable:
+        self.events.append(f"save_weights_and_get_sampling_client({record_stability_info})")
+        return _LoggedAwaitable(self.events, "sampling_client", "sampling-client")
+
+
+@pytest.mark.parametrize("num_substeps", [1, 2, 3])
+def test_early_sampler_save_is_enqueued_behind_the_last_optim_step(num_substeps: int):
+    # The save must follow the last optim_step (so it sees the update) and be sent before
+    # that step's result is awaited (so the trainer can run both in the same cycle).
+    client = _OrderRecordingTrainingClient()
+    early_save = train_module.EarlySamplerSave(record_stability_info=True)
+    asyncio.run(
+        train_step(
+            [_datum([str(i)]) for i in range(num_substeps)],
+            cast(tinker.TrainingClient, client),
+            learning_rate=1e-5,
+            num_substeps=num_substeps,
+            loss_fn="importance_sampling",
+            early_sampler_save=early_save,
+        )
+    )
+    save = "save_weights_and_get_sampling_client(True)"
+    assert client.events.count(save) == 1
+    save_index = client.events.index(save)
+    assert client.events[save_index - 1] == "optim_step"
+    assert client.events[:save_index].count("optim_step") == num_substeps
+    assert client.events[:save_index].count("await optim_step") < num_substeps
+    assert early_save.sampling_client is not None
+    assert asyncio.run(_await(early_save.sampling_client)) == "sampling-client"
+
+
+async def _await(awaitable: Any) -> Any:
+    return await awaitable
+
+
 def test_stable_reinforce_without_provenance_is_a_clear_error():
     with pytest.raises(ValueError, match="sequence_id"):
         _check_provenance(
