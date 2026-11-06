@@ -23,7 +23,7 @@ python -m tinker_cookbook.recipes.forecasting.train \
 
 ## Prompt
 
-Task: Given a binary prediction-market question and information available at a historical snapshot, forecast the probability that the market will resolve YES. The model does not use tools or live search in this recipe.
+Task: Given a binary prediction-market question and information available at a historical snapshot, forecast the probability that the market will resolve YES. By default the model does not use tools or live search; see [Optional: web search as of the snapshot](#optional-web-search-as-of-the-snapshot).
 
 Here is the exact prompt template we use:
 
@@ -149,6 +149,31 @@ setting `max_steps=64` is a reasonable way to shorten the training time.
 
 - every 16 steps and after the final update
 - 8 forecasts per question
+
+## Optional: web search as of the snapshot
+
+Live web search would leak outcomes into training, since articles about how a
+market resolved exist by the time you train. Set `search=True` to give the model
+a `search` tool backed by [Linkup Rewind](https://linkup.so), which answers
+"as of" a past UTC day: both the matching pages and their ranking come only from
+what had been crawled by then.
+
+```bash
+python -m tinker_cookbook.recipes.forecasting.train search=True
+```
+
+- No API key is needed: without `LINKUP_API_KEY`, requests use Linkup's shared,
+  rate-limited keyless tier. Set `LINKUP_API_KEY` for higher limits on full
+  training runs.
+- Each question searches as of the last full UTC day before its snapshot, so
+  nothing from the snapshot day or later can appear.
+- The model may search for up to `search_max_turns - 1` turns (default `4`) and
+  then answers as usual; results show `search_num_results` pages (default `5`)
+  per query.
+- Rewards, metrics and AUC are computed exactly as without search, so runs are
+  directly comparable.
+
+The reference results below were produced without search.
 
 ## Reward
 
