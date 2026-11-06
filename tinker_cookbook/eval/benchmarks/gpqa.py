@@ -8,6 +8,7 @@ Pattern: Single-turn ``MessageEnv`` + programmatic grading.
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import Sequence
 from typing import cast
 
@@ -96,6 +97,7 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
         for row in ds:
             row = dict(row)
             question = row["Question"]
+            example_id = make_example_id("gpqa", question)
             correct_answer = row.get("Answer", row.get("Correct Answer", ""))
 
             choice_cols = [
@@ -113,6 +115,10 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
                     inc = row.get(f"Incorrect Answer {i}", "")
                     if inc:
                         choices.append(inc)
+                # This layout always lists the correct answer first, so without a shuffle
+                # every expected letter is A. Seeding on the example id keeps the order
+                # the same across runs and samples.
+                random.Random(example_id).shuffle(choices)
 
             if not choices:
                 continue
@@ -136,7 +142,6 @@ class GPQABenchmarkBuilder(BenchmarkBuilder):
                 f"{question}\n\n{format_mcq_choices(choices)}\n\n"
                 "Think step by step, then give your final answer as a single letter (A, B, C, or D)."
             )
-            example_id = make_example_id("gpqa", question)
             msg_env = GPQAMessageEnv(
                 prompt,
                 expected,
