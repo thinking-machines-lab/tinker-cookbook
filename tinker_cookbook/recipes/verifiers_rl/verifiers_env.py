@@ -132,24 +132,30 @@ def _episode_to_trajectory(episode: vf.Episode) -> tuple[Trajectory, float, Metr
     spans: list[tuple[list[int], list[int], list[float]]] = []
     context: list[int] = []
     for node in branch.nodes:
-        num_sampled = sum(node.mask)
+        # verifiers stores per-token streams as numpy arrays; tinker takes lists.
+        token_ids, mask, node_logprobs = (
+            node.token_ids.tolist(),
+            node.mask.tolist(),
+            node.logprobs.tolist(),
+        )
+        num_sampled = sum(mask)
         if not node.sampled or num_sampled == 0:
-            context.extend(node.token_ids)
+            context.extend(token_ids)
             continue
-        if not all(node.mask[len(node.mask) - num_sampled :]):
+        if not all(mask[len(mask) - num_sampled :]):
             raise ValueError(
                 "sampled tokens are not a suffix of the assistant node; cannot map "
                 "this trace onto (observation, action) transitions"
             )
-        if len(node.logprobs) != num_sampled:
+        if len(node_logprobs) != num_sampled:
             raise ValueError(
-                f"assistant node carries {len(node.logprobs)} logprobs for {num_sampled} "
+                f"assistant node carries {len(node_logprobs)} logprobs for {num_sampled} "
                 "sampled tokens; the generate endpoint must return one logprob per token"
             )
-        scaffold = node.token_ids[: len(node.token_ids) - num_sampled]
-        sampled = node.token_ids[len(node.token_ids) - num_sampled :]
-        spans.append((context + scaffold, sampled, list(node.logprobs)))
-        context.extend(node.token_ids)
+        scaffold = token_ids[: len(token_ids) - num_sampled]
+        sampled = token_ids[len(token_ids) - num_sampled :]
+        spans.append((context + scaffold, sampled, node_logprobs))
+        context.extend(token_ids)
 
     if not spans:
         return failed, trace.reward, _trace_metrics(trace, failed=True)

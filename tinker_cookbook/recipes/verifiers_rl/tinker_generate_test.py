@@ -139,7 +139,8 @@ async def test_train_client_config_points_at_the_server() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_rejects_unsupported_sampling_params() -> None:
-    """A sampling key the endpoint cannot honor is an error, never a silent drop."""
+    """A sampling key the endpoint cannot honor is an error, never a silent drop; so is
+    ``min_p`` at any value but the neutral one the train client sends."""
     from tinker_cookbook.recipes.verifiers_rl.tinker_generate import TinkerGenerateServer
 
     fake = _FakeSamplingClient()
@@ -153,13 +154,14 @@ async def test_generate_rejects_unsupported_sampling_params() -> None:
                     "logprobs": 1,
                     "skip_special_tokens": False,
                     "repetition_penalty": 1.1,
+                    "min_p": 0.05,
                     "stop": ["</answer>"],
                 },
             },
         )
 
     assert status == 400
-    assert "repetition_penalty" in data["error"] and "stop" in data["error"]
+    assert all(key in data["error"] for key in ("repetition_penalty", "min_p", "stop"))
     assert fake.calls == []
 
 
@@ -212,7 +214,7 @@ async def test_bridged_second_turn_through_the_train_client(monkeypatch) -> None
     monkeypatch.setattr(renderers, "create_renderer", lambda *a, **kw: _MessageTokenRenderer())
 
     trace = vf.Trace(
-        agent=vf.AgentInfo(config=vf.AgentConfig()),
+        agent=vf.AgentInfo(config=vf.AgentConfig.model_validate({})),
         task=vf.TraceTask(type="Task", data=vf.TaskData.model_validate({"idx": 0})),
     )
     user = vf.UserMessage(content="u1")

@@ -47,7 +47,7 @@ def _episode(nodes, rewards=None, metrics=None):
 
     trace = vf.Trace(
         task=vf.TraceTask(type="Task", data=vf.TaskData.model_validate({"idx": 0})),
-        agent=vf.AgentInfo(config=vf.AgentConfig()),
+        agent=vf.AgentInfo(config=vf.AgentConfig.model_validate({})),
         nodes=nodes,
         rewards=rewards or {},
         metrics=metrics or {},
@@ -84,7 +84,7 @@ class TestConvertEpisodesToTrajectoryGroup:
         # node's unsampled generation-prompt scaffold.
         assert transition.ob.to_ints() == [1, 2, 3, 4, 5]
         assert transition.ac.tokens == [6, 7]
-        assert transition.ac.maybe_logprobs == [-0.1, -0.2]
+        assert transition.ac.maybe_logprobs == pytest.approx([-0.1, -0.2])
         assert transition.episode_done
         assert trajectory.final_ob.to_ints() == [1, 2, 3, 4, 5, 6, 7]
 
@@ -112,7 +112,7 @@ class TestConvertEpisodesToTrajectoryGroup:
         # trajectory_to_data can merge the turns into one datum.
         assert second.ob.to_ints() == [1, 2, 3, 4, 5, 6, 7, 8]
         assert second.ac.tokens == [9]
-        assert second.ac.maybe_logprobs == [-0.3]
+        assert second.ac.maybe_logprobs == pytest.approx([-0.3])
         assert second.episode_done
 
     def test_weighted_rewards_sum(self) -> None:
@@ -172,7 +172,7 @@ class TestConvertEpisodesToTrajectoryGroup:
         episode.traces.append(
             vf.Trace(
                 task=episode.task,
-                agent=vf.AgentInfo(config=vf.AgentConfig(), name="judge"),
+                agent=vf.AgentInfo(config=vf.AgentConfig.model_validate({}), name="judge"),
             )
         )
         with pytest.raises(ValueError, match="single-agent"):

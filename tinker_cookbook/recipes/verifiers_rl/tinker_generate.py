@@ -33,6 +33,9 @@ _WIRE_KEYS = frozenset({"logprobs", "skip_special_tokens", "routed_experts_promp
 ``skip_special_tokens`` on every turn, ``routed_experts_prompt_start`` on a turn bridged
 from the previous one. The endpoint always returns per-token logprobs and raw token ids
 and Tinker returns no routed experts, so none of them changes the sampled distribution."""
+_NEUTRAL_KEYS = {"min_p": 0.0}
+"""Keys Tinker cannot apply, accepted only at the value that leaves sampling unchanged.
+The verifiers train client sends ``min_p=0.0`` on every turn."""
 
 
 class TinkerGenerateServer:
@@ -126,7 +129,13 @@ class TinkerGenerateServer:
                 status=400,
             )
         sampling_params = body.get("sampling_params") or {}
-        unsupported = sorted(set(sampling_params) - _SAMPLING_KEYS - _WIRE_KEYS)
+        unsupported = sorted(
+            key
+            for key, value in sampling_params.items()
+            if key not in _SAMPLING_KEYS
+            and key not in _WIRE_KEYS
+            and not (key in _NEUTRAL_KEYS and value == _NEUTRAL_KEYS[key])
+        )
         if unsupported:
             # verifiers passes provider-specific sampling keys through; silently
             # dropping one would run a different distribution than requested.
