@@ -16,6 +16,8 @@ from tinker_cookbook.renderers import Renderer
         ("The answer is (A). Options B and D contradict the passage.", "A", 1.0),
         ("\\boxed{D} because B is ruled out in section 2.", "D", 1.0),
         ("B", "B", 1.0),
+        ("The answer is A. Wait, actually the answer is B.", "B", 1.0),
+        ("Option A looks wrong and B is weak, so the answer is C.", "C", 1.0),
         ("Final answer: C. I reject option B.", "B", 0.0),
     ],
 )
