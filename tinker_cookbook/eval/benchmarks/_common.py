@@ -377,7 +377,7 @@ def extract_gsm8k_answer(text: str) -> str:
 
     answer_match = re.search(r"(?:answer is|answer:)\s*\$?([0-9,.-]+)", text, re.IGNORECASE)
     if answer_match:
-        return answer_match.group(1).strip().replace(",", "")
+        return answer_match.group(1).strip().replace(",", "").rstrip(".")
 
     # Bold pattern: **123** or **$123.00** (common in chat model responses)
     bold_numbers = re.findall(r"\*\*\$?([-]?\d+[,\d]*\.?\d*)", text)

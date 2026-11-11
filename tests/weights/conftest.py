@@ -29,11 +29,18 @@ def save_model_to_disk(
     tokenizer_name: str,
     is_vision: bool = False,
     trust_remote_code: bool = True,
+    save_original_format: bool = True,
 ) -> None:
-    """Create a tiny model from config and save to disk with tokenizer."""
+    """Create a tiny model from config and save to disk with tokenizer.
+
+    ``save_original_format`` is forwarded to ``save_pretrained``. By default
+    transformers reverts its load-time weight conversions on save; pass
+    ``False`` to write the in-memory layout instead, for architectures whose
+    hub checkpoints already use it (e.g. Qwen3.5 MoE's fused experts).
+    """
     auto_cls = AutoModelForImageTextToText if is_vision else AutoModelForCausalLM
     model = auto_cls.from_config(config, trust_remote_code=trust_remote_code, dtype=torch.float32)
-    model.save_pretrained(path)
+    model.save_pretrained(path, save_original_format=save_original_format)
     tok = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=trust_remote_code)
     tok.save_pretrained(path)
 

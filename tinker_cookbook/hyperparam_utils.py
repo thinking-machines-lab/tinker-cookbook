@@ -109,6 +109,7 @@ def _get_hidden_size(model_name: str) -> int:
         "moonshotai/Kimi-K2-Thinking": 7168,
         "moonshotai/Kimi-K2.5": 7168,
         "moonshotai/Kimi-K2.6": 7168,
+        "moonshotai/Kimi-K3.1-Pro": 7168,
         # Qwen3 (text-only)
         "Qwen/Qwen3-235B-A22B-Instruct-2507": 4096,
         "Qwen/Qwen3-30B-A3B-Instruct-2507": 2048,
@@ -149,6 +150,7 @@ def _get_hidden_size(model_name: str) -> int:
         # Thinking Machines Lab Inkling
         "thinkingmachines/Inkling": 6144,
         "thinkingmachines/Inkling-Small": 4096,
+        "thinkingmachines/Inkling-2-Small": 4608,
     }
 
     if model_name in _KNOWN_HIDDEN_SIZES:
@@ -221,6 +223,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "moonshotai/Kimi-K2-Thinking": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "moonshotai/Kimi-K2.5": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
     "moonshotai/Kimi-K2.6": {"mlp": 144_583_680, "attn": 1_940_288, "unembed": 171_008},
+    "moonshotai/Kimi-K3.1-Pro": {"mlp": 766_457_856, "attn": 8_040_960, "unembed": 171_008},
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
         "mlp": 11_346_176,
         "attn": 584_832,
@@ -250,6 +253,7 @@ _LORA_PARAMS_PER_RANK_BY_COMPONENT: dict[str, dict[str, int]] = {
     "openai/gpt-oss-20b": {"mlp": 6_842_880, "attn": 497_664, "unembed": 203_968},
     "thinkingmachines/Inkling": {"mlp": 154_705_920, "attn": 3_424_256, "unembed": 207_168},
     "thinkingmachines/Inkling-Small": {"mlp": 64_503_808, "attn": 1_311_744, "unembed": 205_120},
+    "thinkingmachines/Inkling-2-Small": {"mlp": 128_065_536, "attn": 2_347_008, "unembed": 205_632},
     "zai-org/GLM-5.3": {"mlp": 121_356_288, "attn": 2_920_320, "unembed": 161_024},
     "zai-org/GLM-5.3-Flash": {"mlp": 75_755_520, "attn": 2_009_088, "unembed": 158_976},
 }
@@ -328,6 +332,7 @@ def get_lr(model_name: str, is_lora: bool = True) -> float:
         "openai/gpt-oss-20b",
         "openai/gpt-oss-120b",
         "moonshotai/Kimi-K2.6",
+        "moonshotai/Kimi-K3.1-Pro",
         "zai-org/GLM-5.3",
         "zai-org/GLM-5.3-Flash",
         "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",

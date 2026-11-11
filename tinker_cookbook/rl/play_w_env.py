@@ -24,7 +24,7 @@ from tinker_cookbook.completers import (
 )
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import Env, Trajectory
-from tinker_cookbook.tokenizer_utils import Tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer, encode_without_special_tokens
 
 
 async def get_async_input(prompt: str, multiline: bool = False) -> str:
@@ -67,7 +67,7 @@ class ManualPolicy(TokenCompleter):
 
         prompt_text = "Your action:" if self.multiline else "Your action: "
         action_str = await get_async_input(colored(prompt_text, "yellow"), multiline=self.multiline)
-        action_tokens = self.tokenizer.encode(action_str, add_special_tokens=False)
+        action_tokens = encode_without_special_tokens(self.tokenizer, action_str)
         self.step_count += 1
         return TokensWithLogprobs(tokens=action_tokens, maybe_logprobs=None)
 

@@ -27,8 +27,8 @@ async def main(config: Config):
 
     # Resolve model name from checkpoint when needed, and validate explicit model_name if provided.
     if model_path is not None:
-        rest_client = service_client.create_rest_client()
-        training_run = await rest_client.get_training_run_by_tinker_path_async(model_path)
+        rest_client = tinker.RestClient()
+        training_run = await rest_client.get_training_run_by_tinker_path(model_path)
         if model_name is not None and model_name != training_run.base_model:
             raise ConfigurationError(
                 f"Model name {model_name} does not match training run base model {training_run.base_model}"
@@ -53,7 +53,7 @@ async def main(config: Config):
 
     sampling_client = service_client.create_sampling_client(
         model_path=config.model_path, base_model=config.model_name
-    )
+    ).result()
 
     # Run the evaluation
     logger.info(f"Running inspect evaluation for tasks: {config.tasks}")

@@ -34,6 +34,11 @@
 | `kimi_k26` | Kimi K2.6 | Thinking enabled |
 | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
 | `kimi_k26_preserve_thinking` | Kimi K2.6 | Preserve historical thinking |
+| `kimi_k31_pro_max_reasoning` | Kimi K3.1-Pro | Thinking enabled, reasoning effort max (default) |
+| `kimi_k31_pro_high_reasoning` | Kimi K3.1-Pro | Thinking enabled, reasoning effort high |
+| `kimi_k31_pro_low_reasoning` | Kimi K3.1-Pro | Thinking enabled, reasoning effort low |
+| `kimi_k31_pro_disable_thinking` | Kimi K3.1-Pro | Thinking disabled |
+| `kimi_k31_pro_no_reasoning_effort` | Kimi K3.1-Pro | Thinking enabled, no reasoning-effort message |
 | `nemotron3` | Nemotron-3 Nano/Super | Thinking enabled |
 | `nemotron3_disable_thinking` | Nemotron-3 Nano/Super | Thinking disabled |
 | `nemotron3_ultra` | Nemotron-3 Ultra / 3.5 Lightning / 3.5 Super | Thinking enabled |
@@ -113,7 +118,7 @@ register_renderer("my_renderer", my_renderer_factory)
 - `tinker_cookbook/renderers/qwen3_5.py` — Qwen3.5 renderers
 - `tinker_cookbook/renderers/llama3.py` — Llama3 renderer
 - `tinker_cookbook/renderers/deepseek_v3.py` — DeepSeek renderers
-- `tinker_cookbook/renderers/kimi_k2.py`, `kimi_k26.py` — Kimi renderers
+- `tinker_cookbook/renderers/kimi_k2.py`, `kimi_k26.py`, `kimi_k31_pro.py` — Kimi renderers
 - `tinker_cookbook/renderers/nemotron3.py` — Nemotron renderer
 - `tinker_cookbook/renderers/gpt_oss.py` — GPT-OSS renderers
 

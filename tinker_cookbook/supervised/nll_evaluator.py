@@ -15,7 +15,7 @@ from tinker_cookbook.utils.deprecation import deprecated, warn_deprecated
 class SamplerNLLEvaluator(SamplingClientEvaluator):
     """Compute mean negative log-likelihood on held-out data via a sampling client.
 
-    Scores a fixed set of datums with ``compute_logprobs_async`` and returns the
+    Scores a fixed set of datums with ``compute_logprobs`` and returns the
     weighted mean NLL. When a ``tokenizer`` is supplied it also reports
     bits-per-byte, a tokenizer-independent NLL comparable across models.
 
@@ -52,14 +52,14 @@ class SamplerNLLEvaluator(SamplingClientEvaluator):
         """Return per-token logprobs for one datum, aligned with its weights.
 
         A datum's ``model_input`` is right-shifted (it drops the final token) and
-        its weights align with ``target_tokens``. ``compute_logprobs_async``
+        its weights align with ``target_tokens``. ``compute_logprobs``
         scores every position except the first, so we rebuild the full sequence by
         appending the last target token and discard the leading logprob. The
         result then lines up one-to-one with the datum's weights.
         """
         target_tokens = datum.loss_fn_inputs["target_tokens"].data
         full_sequence = datum.model_input.append_int(int(target_tokens[-1]))
-        logprobs = await sampling_client.compute_logprobs_async(full_sequence)
+        logprobs = await sampling_client.compute_logprobs(full_sequence)
         return tinker.TensorData.from_numpy(np.array(logprobs[1:], dtype=np.float32))
 
     @classmethod
@@ -80,7 +80,7 @@ class SamplerNLLEvaluator(SamplingClientEvaluator):
 class NLLEvaluator(TrainingClientEvaluator):
     """Evaluator that computes mean negative log-likelihood on held-out data.
 
-    Uses the training client's ``forward_async`` to compute log-probabilities
+    Uses the training client's ``forward`` to compute log-probabilities
     on a fixed set of datums and returns the weighted mean NLL.  When a
     ``tokenizer`` is supplied it additionally reports bits-per-byte, a
     tokenizer-independent NLL that is comparable across models.
@@ -127,8 +127,8 @@ class NLLEvaluator(TrainingClientEvaluator):
             name="NLLEvaluator",
             message="NLLEvaluator is deprecated. Prefer to create a sampling client with TrainingClient.save_weights_and_get_sampling_client() and SamplerNLLEvaluator instead",
         )
-        future = await training_client.forward_async(self.data, loss_fn="cross_entropy")
-        result = await future.result_async()
+        future = training_client.forward(self.data, loss_fn="cross_entropy")
+        result = await future
         logprobs = [x["logprobs"] for x in result.loss_fn_outputs]
         return _compute_nll_metrics(logprobs, self.data, self.name, self.tokenizer)
 

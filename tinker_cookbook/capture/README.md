@@ -95,7 +95,7 @@ Add finer-grained coordinates anywhere below:
 from tinker_cookbook.capture import capture
 
 with capture(iteration=i, group_idx=g, traj_idx=t):
-    await sampling_client.sample_async(...)
+    await sampling_client.sample(...)
 ```
 
 ## Design principles

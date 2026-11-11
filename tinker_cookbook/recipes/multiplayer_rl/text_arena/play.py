@@ -142,7 +142,7 @@ async def main(config: PlayConfig) -> None:
     service_client = tinker.ServiceClient()
     sampling_client = service_client.create_sampling_client(
         model_path=config.checkpoint_path,
-    )
+    ).result()
     model_token_completer = TinkerTokenCompleter(
         sampling_client=sampling_client,
         max_tokens=64,

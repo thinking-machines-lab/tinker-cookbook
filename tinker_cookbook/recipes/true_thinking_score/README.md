@@ -45,7 +45,7 @@ different perturbation conditions:
 
 Each cell measures $S_x(c) = P(y^* \mid \text{context}=c,\;\text{step}=x)$
 — the probability of the correct answer given that CoT prefix — via
-`compute_logprobs_async`.
+`compute_logprobs`.
 
 TTS is then the average of the two row-wise diffs:
 
@@ -67,7 +67,7 @@ changes when you perturb it.
 
 ### What we implement in Tinker
 
-We replicate TTS computation using Tinker's `compute_logprobs_async` API:
+We replicate TTS computation using Tinker's `compute_logprobs` API:
 
 1. **Generate CoT**: Sample from a thinking model (greedy, temperature=0)
    using the renderer's chat template. The model produces `<think>...</think>`
@@ -88,7 +88,7 @@ We replicate TTS computation using Tinker's `compute_logprobs_async` API:
 4. **Early-exit confidence**: For each of the four conditions, build
    a sequence `[prompt + <think> CoT_prefix </think> \boxed{answer}]`
    using the renderer's chat template, then measure
-   $P(\text{answer tokens} \mid \text{prefix})$ via `compute_logprobs_async`.
+   $P(\text{answer tokens} \mid \text{prefix})$ via `compute_logprobs`.
 
 5. **Compute TTS** from the four confidence measurements.
 
@@ -282,4 +282,4 @@ pytest tinker_cookbook/recipes/true_thinking_score/tts_test.py -v
 ### References
 
 - [Can Aha Moments Be Fake?](https://arxiv.org/abs/2510.24941) — Zhao et al., 2025
-- [Tinker API docs](https://tinker-docs.thinkingmachines.ai/) — `compute_logprobs_async` reference
+- [Tinker API docs](https://tinker-docs.thinkingmachines.ai/) — `compute_logprobs` reference

@@ -25,7 +25,7 @@ async def sample_decision(
 ) -> dict[str, float]:
     """The probability of each label of a rendered decision, in choice order.
 
-    One ``sample_async`` request with ``max_tokens=1``; ``asyncio.gather`` calls to batch. The
+    One ``sample`` request with ``max_tokens=1``; ``asyncio.gather`` calls to batch. The
     probabilities are a softmax over the labels' tokens at the answer position.
     """
     labels = rendering.labels
@@ -34,7 +34,7 @@ async def sample_decision(
     target_ids[rendering.choice_pos - 1] = torch.tensor(
         [rendering.label_tokens[label] for label in labels], dtype=torch.int64
     )
-    response = await sampling_client.sample_async(
+    response = await sampling_client.sample(
         prompt=tinker.ModelInput.from_ints(rendering.tokens),
         num_samples=1,
         sampling_params=tinker.SamplingParams(max_tokens=1),

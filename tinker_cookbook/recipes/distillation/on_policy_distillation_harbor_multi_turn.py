@@ -31,7 +31,7 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chz
 from tinker.types import LossFnType
@@ -45,11 +45,21 @@ from tinker_cookbook.recipes.distillation.harbor_multiturn import (
 )
 from tinker_cookbook.recipes.harbor_rl.harbor_env import (
     HarborTask,
-    default_sandbox_factory,
+    SandboxFactory,
     load_harbor_tasks,
 )
+from tinker_cookbook.utils.misc_utils import lookup_func
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_sandbox_factory(value: str) -> SandboxFactory | None:
+    if value == "None":
+        return None
+    factory = lookup_func(value)
+    if not callable(factory):
+        raise ValueError(f"Sandbox factory must be callable: {value}")
+    return cast(SandboxFactory, factory)
 
 
 @chz.chz
@@ -68,6 +78,11 @@ class CLIConfig:
 
     # Harbor environment
     task_name: str = "terminal-bench-2.0"
+    sandbox_factory: SandboxFactory | None = chz.field(
+        default=None,
+        blueprint_cast=_parse_sandbox_factory,
+        doc="Sandbox factory as module:callable; None keeps the default Modal backend.",
+    )
     max_turns: int = 10
     sandbox_timeout: int = 600
     command_timeout: int = 120
@@ -93,6 +108,9 @@ class CLIConfig:
     log_path: str | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
 
     # Evaluation and checkpointing
     eval_every: int = 20
@@ -142,7 +160,7 @@ async def cli_main(cli_config: CLIConfig, tasks: list[HarborTask]):
         sandbox_timeout=cli_config.sandbox_timeout,
         command_timeout=cli_config.command_timeout,
         max_trajectory_tokens=cli_config.max_trajectory_tokens,
-        sandbox_factory=default_sandbox_factory,
+        sandbox_factory=cli_config.sandbox_factory,
         reward_fn=zero_reward,
     )
 
@@ -173,6 +191,7 @@ async def cli_main(cli_config: CLIConfig, tasks: list[HarborTask]):
         loss_fn_config=cli_config.loss_fn_config,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
+        session_name=cli_config.session_name or wandb_name,
         log_path=log_path,
         base_url=cli_config.base_url,
         load_checkpoint_path=cli_config.load_checkpoint_path,

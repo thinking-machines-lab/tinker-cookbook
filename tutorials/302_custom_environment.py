@@ -346,7 +346,7 @@ def _(mo):
 
 @app.cell
 async def _(MODEL_NAME, service_client, tinker):
-    training_client = await service_client.create_lora_training_client_async(
+    training_client = await service_client.create_lora_training_client(
         base_model=MODEL_NAME, rank=32
     )
 
@@ -397,7 +397,7 @@ async def _(
         env_group_builders = train_dataset.get_batch(batch_index)
 
         # 1. Save weights and get a sampling client for the current policy
-        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+        sampling_client = await training_client.save_weights_and_get_sampling_client()
 
         # 2. Run rollouts for each group (async, one group per problem)
         trajectory_groups = []
@@ -425,12 +425,12 @@ async def _(
         datums, _metadata = assemble_training_data(trajectory_groups, advantages)
 
         # 5. Train
-        fwd_bwd_future = await training_client.forward_backward_async(
+        fwd_bwd_future = training_client.forward_backward(
             [_remove_mask(d) for d in datums], loss_fn="importance_sampling"
         )
-        optim_future = await training_client.optim_step_async(adam_params)
-        await fwd_bwd_future.result_async()
-        await optim_future.result_async()
+        optim_future = training_client.optim_step(adam_params)
+        await fwd_bwd_future
+        await optim_future
 
         # Log metrics
         all_rewards = [r for tg in trajectory_groups for r in tg.get_total_rewards()]
@@ -494,12 +494,12 @@ async def _(
     tinker,
     training_client,
 ):
-    eval_client = await training_client.save_weights_and_get_sampling_client_async()
+    eval_client = await training_client.save_weights_and_get_sampling_client()
 
     for prompt_text, format_type in EVAL_PROBLEMS:
         messages = [{"role": "user", "content": prompt_text}]
         model_input = renderer.build_generation_prompt(messages)
-        result = await eval_client.sample_async(
+        result = await eval_client.sample(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(

@@ -108,7 +108,7 @@ def _(api_key, get_renderer, mo, tinker):
     MODEL_NAME = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model=MODEL_NAME)
+    sampling_client = service_client.create_sampling_client(base_model=MODEL_NAME).result()
     tokenizer = sampling_client.get_tokenizer()
     renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
 

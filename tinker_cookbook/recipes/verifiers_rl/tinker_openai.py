@@ -86,7 +86,7 @@ class TinkerChatCompletions(OpenAIAsyncChatCompletions):
         model_input = self._parent.renderer.build_generation_prompt(messages)
         prompt_token_ids: list[int] = model_input.to_ints()
 
-        sample = await self._parent.sampling_client.sample_async(
+        sample = await self._parent.sampling_client.sample(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
@@ -187,7 +187,7 @@ class TinkerCompletions(OpenAIAsyncCompletions):
         prompt_token_ids: list[int] = self._parent.tokenizer.encode(prompt, add_special_tokens=True)
         model_input = tinker.ModelInput.from_ints(prompt_token_ids)
 
-        sample = await self._parent.sampling_client.sample_async(
+        sample = await self._parent.sampling_client.sample(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(

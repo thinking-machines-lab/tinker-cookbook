@@ -1,11 +1,13 @@
 """Unit tests for SDFT recipe (no API key needed)."""
 
 import math
-from unittest.mock import AsyncMock, MagicMock
+from concurrent.futures import Future
+from unittest.mock import MagicMock
 
 import pytest
 import tinker
 import torch
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from tinker_cookbook.distillation.sdft import (
     DEFAULT_DEMO_TEMPLATE,
@@ -299,8 +301,10 @@ class TestBuildTopkDistillationDatums:
         mock_response = MagicMock()
         mock_response.topk_prompt_logprobs = mock_topk
 
-        mock_client = AsyncMock()
-        mock_client.sample_async = AsyncMock(return_value=mock_response)
+        future: Future[MagicMock] = Future()
+        future.set_result(mock_response)
+        mock_client = MagicMock()
+        mock_client.sample.return_value = AwaitableConcurrentFuture(future)
 
         new_datums, metrics = await build_topk_distillation_datums(
             data_D=[datum],
@@ -374,8 +378,10 @@ class TestBuildTopkDistillationDatums:
 
         mock_response = MagicMock()
         mock_response.topk_prompt_logprobs = [None]
-        mock_client = AsyncMock()
-        mock_client.sample_async = AsyncMock(return_value=mock_response)
+        future: Future[MagicMock] = Future()
+        future.set_result(mock_response)
+        mock_client = MagicMock()
+        mock_client.sample.return_value = AwaitableConcurrentFuture(future)
 
         new_datums, _ = await build_topk_distillation_datums(
             data_D=[datum],
@@ -424,8 +430,10 @@ class TestBuildReverseKLDatums:
         ]
         mock_response = MagicMock()
         mock_response.topk_prompt_logprobs = mock_topk
-        mock_client = AsyncMock()
-        mock_client.sample_async = AsyncMock(return_value=mock_response)
+        future: Future[MagicMock] = Future()
+        future.set_result(mock_response)
+        mock_client = MagicMock()
+        mock_client.sample.return_value = AwaitableConcurrentFuture(future)
 
         rev_datums, metrics = await build_reverse_kl_datums(
             data_D=[datum],
@@ -473,8 +481,10 @@ class TestBuildReverseKLDatums:
         ]
         mock_response = MagicMock()
         mock_response.topk_prompt_logprobs = mock_topk
-        mock_client = AsyncMock()
-        mock_client.sample_async = AsyncMock(return_value=mock_response)
+        future: Future[MagicMock] = Future()
+        future.set_result(mock_response)
+        mock_client = MagicMock()
+        mock_client.sample.return_value = AwaitableConcurrentFuture(future)
 
         rev_datums, _ = await build_reverse_kl_datums(
             data_D=[datum],

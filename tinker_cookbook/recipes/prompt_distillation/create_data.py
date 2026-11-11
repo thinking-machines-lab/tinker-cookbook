@@ -97,7 +97,9 @@ def setup_clients():
         user_metadata=recipe_user_metadata("dataset_prompt_distillation"),
     )
     print("Creating sampling client")
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
+    sampling_client = service_client.create_sampling_client(
+        base_model="Qwen/Qwen3.6-35B-A3B"
+    ).result()
     tokenizer = get_tokenizer("Qwen/Qwen3.6-35B-A3B")
     renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
 
@@ -120,7 +122,7 @@ async def create_data_async(config: Config, sampling_client: Any, tokenizer: Any
         params = tinker.SamplingParams(
             max_tokens=1000, temperature=0.15, stop=renderer.get_stop_sequences()
         )
-        result = await sampling_client.sample_async(
+        result = await sampling_client.sample(
             prompt=tokenized_prompt, sampling_params=params, num_samples=1
         )
         response = tokenizer.decode(result.sequences[0].tokens)

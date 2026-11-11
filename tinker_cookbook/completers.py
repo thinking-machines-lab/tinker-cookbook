@@ -25,6 +25,11 @@ class TokensWithLogprobs:
     tokens: list[int]
     maybe_logprobs: list[float] | None
     stop_reason: tinker.StopReason = "stop"
+    # Tinker's id for the sampled sequence, used for provenance; None if the completer has none.
+    # https://tinker-docs.thinkingmachines.ai/tinker/datum/#provenance
+    sequence_id: str | None = None
+    # Prompt tokens billed as prefix-cache hits for this sample (SampleResponse.prompt_cache_hit_tokens).
+    prompt_cache_hit_tokens: int = 0
 
     @property
     def logprobs(self) -> list[float]:
@@ -136,7 +141,7 @@ class TinkerTokenCompleter(TokenCompleter):
                 )
 
         # Sample from the model
-        sample_result = await self.sampling_client.sample_async(
+        sample_result = await self.sampling_client.sample(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
@@ -154,6 +159,8 @@ class TinkerTokenCompleter(TokenCompleter):
             tokens=sampled_seq.tokens,
             maybe_logprobs=sampled_seq.logprobs,
             stop_reason=sampled_seq.stop_reason,
+            sequence_id=sampled_seq.sequence_id,
+            prompt_cache_hit_tokens=sample_result.prompt_cache_hit_tokens,
         )
 
 
@@ -201,7 +208,7 @@ class TinkerMessageCompleter(MessageCompleter):
         model_input = self.renderer.build_generation_prompt(messages)
 
         # Sample from the model
-        response = await self.sampling_client.sample_async(
+        response = await self.sampling_client.sample(
             model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(

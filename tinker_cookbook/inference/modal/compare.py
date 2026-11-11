@@ -59,12 +59,12 @@ async def compare(tinker_path: str, url: str, prompts: str = "") -> None:
 
     tok = get_tokenizer(model)
     rend = renderers.get_renderer(model_info.get_recommended_renderer_name(model), tok)
-    sc = tinker.ServiceClient().create_sampling_client(model_path=tinker_path)
+    sc = tinker.ServiceClient().create_sampling_client(model_path=tinker_path).result()
 
     disagree = 0
     for q in questions:
         mi = rend.build_generation_prompt([{"role": "user", "content": q}])
-        sampled = await sc.sample_async(
+        sampled = await sc.sample(
             mi,
             num_samples=1,
             sampling_params=tinker.SamplingParams(temperature=0.0, max_tokens=MAX_TOKENS),

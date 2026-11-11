@@ -126,9 +126,9 @@ def inkling_decision_renderer(inkling_renderer: Renderer) -> DecisionRenderer:
 
 
 def _mock_sampling_client(logprobs_by_label: list[float]) -> MagicMock:
-    """A sampling client whose ``sample_async`` returns the given logprobs at the answer row."""
+    """A sampling client whose ``sample`` returns the given logprobs at the answer row."""
 
-    async def sample_async(
+    async def sample(
         *,
         prompt: tinker.ModelInput,
         num_samples: int,
@@ -145,7 +145,7 @@ def _mock_sampling_client(logprobs_by_label: list[float]) -> MagicMock:
         return MagicMock(target_prompt_logprobs=tinker.TensorData.from_torch(dense))
 
     client = MagicMock()
-    client.sample_async = AsyncMock(side_effect=sample_async)
+    client.sample = AsyncMock(side_effect=sample)
     return client
 
 
@@ -444,7 +444,7 @@ class TestSampleDecision:
         client = _mock_sampling_client([0.0, 0.0])
         rendering = inkling_decision_renderer.render(EXCHANGE_DECISION)
         await sample_decision(client, rendering)
-        kwargs = client.sample_async.await_args.kwargs
+        kwargs = client.sample.await_args.kwargs
         assert kwargs["prompt"].to_ints() == rendering.tokens
         assert kwargs["sampling_params"].max_tokens == 1
         # Row i scores prompt position i + 1; only the answer row requests anything.
@@ -461,7 +461,7 @@ class TestSampleDecision:
         self, inkling_decision_renderer: DecisionRenderer
     ) -> None:
         client = MagicMock()
-        client.sample_async = AsyncMock(return_value=MagicMock(target_prompt_logprobs=None))
+        client.sample = AsyncMock(return_value=MagicMock(target_prompt_logprobs=None))
         with pytest.raises(RuntimeError):
             await sample_decision(client, inkling_decision_renderer.render(EXCHANGE_DECISION))
 

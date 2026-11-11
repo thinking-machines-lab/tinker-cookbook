@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import base64
+import pickle
 import wave
 from pathlib import Path
 from typing import Any, cast
@@ -9,6 +9,7 @@ import pytest
 import tinker
 from PIL import Image
 
+from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.renderers import (
     AudioPart,
     ImagePart,
@@ -20,66 +21,8 @@ from tinker_cookbook.renderers import (
     tml_v0,
 )
 from tinker_cookbook.supervised.data import conversation_to_datum
+from tinker_cookbook.third_party.tml_renderers_compat import tinker_messages_to_message_list
 from tinker_cookbook.tokenizer_utils import ensure_tml_renderers_importable, get_tokenizer
-
-
-class _FakeTmlRenderersChat:
-    class AuthorKind:
-        Model = "model"
-        User = "user"
-
-    class MessageList:
-        pass
-
-    class MessageMetadata:
-        def __init__(self, training_metadata=None):
-            self.training_metadata = training_metadata
-
-    class TrainingMetadata:
-        def __init__(self, weight: float, is_synthetic: bool):
-            self.weight = weight
-            self.is_synthetic = is_synthetic
-
-    class _Author:
-        def __init__(self, kind):
-            self.kind = kind
-
-    class Message:
-        def __init__(self, kind):
-            self.author = _FakeTmlRenderersChat._Author(kind)
-            self.message_metadata = None
-
-        def copy(self, message_metadata=None):
-            copied = _FakeTmlRenderersChat.Message(self.author.kind)
-            copied.message_metadata = message_metadata
-            return copied
-
-    class OpenAIMessage:
-        source_messages: Any = None
-
-        def __init__(self, role):
-            self.role = role
-
-        @staticmethod
-        def from_oss_messages(messages):
-            _FakeTmlRenderersChat.OpenAIMessage.source_messages = messages
-            return [_FakeTmlRenderersChat.OpenAIMessage(message["role"]) for message in messages]
-
-        def to_messages(self):
-            if self.role == "assistant":
-                return [_FakeTmlRenderersChat.Message(_FakeTmlRenderersChat.AuthorKind.Model)]
-            return [_FakeTmlRenderersChat.Message(_FakeTmlRenderersChat.AuthorKind.User)]
-
-
-@pytest.fixture
-def mock_tml_renderers_chat(monkeypatch: pytest.MonkeyPatch) -> type[_FakeTmlRenderersChat]:
-    _FakeTmlRenderersChat.OpenAIMessage.source_messages = None
-    monkeypatch.setattr(
-        tml_v0,
-        "import_module",
-        lambda module="tml_renderers": _FakeTmlRenderersChat,
-    )
-    return _FakeTmlRenderersChat
 
 
 def _require_tml_renderers() -> None:
@@ -98,198 +41,24 @@ def _messages() -> list[Message]:
     ]
 
 
-def _renderer() -> tml_v0.TmlV0Renderer:
+# The wheel tokenizer class each model must get, so every parametrized test also checks routing.
+_INKLING_TOKENIZERS = {
+    "thinkingmachines/Inkling": "O200kBaseChatTokenizer",
+    "thinkingmachines/Inkling-2-Small": "H200kBaseChatTokenizer",
+}
+_INKLING_MODELS = list(_INKLING_TOKENIZERS)
+
+
+def _renderer(model_name: str = "thinkingmachines/Inkling") -> tml_v0.TmlV0Renderer:
     _require_tml_renderers()
-    tokenizer = get_tokenizer("thinkingmachines/Inkling")
-    return cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
+    tokenizer = get_tokenizer(model_name)
+    renderer = cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
+    assert type(renderer.tokenizer.tml_tokenizer).__name__ == _INKLING_TOKENIZERS[model_name]
+    return renderer
 
 
 def _input_len(model_input) -> int:
     return sum(int(chunk.length) for chunk in model_input.chunks)
-
-
-@pytest.mark.parametrize("version", ["2.10.0", "2.12.0+cu130", "3.0.0"])
-def test_validate_torch_version_accepts_supported_versions(
-    monkeypatch: pytest.MonkeyPatch, version: str
-) -> None:
-    monkeypatch.setattr(tml_v0.torch, "__version__", version)
-    tml_v0._validate_torch_version()
-
-
-def test_validate_torch_version_rejects_unsupported_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tml_v0.torch, "__version__", "2.9.1")
-    with pytest.raises(RuntimeError, match=r"requires PyTorch 2\.10 or newer; found 2\.9\.1"):
-        tml_v0._validate_torch_version()
-
-
-def test_cookbook_dicts_are_converted_with_tool_calls_for_openai_message(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    messages = [
-        Message(role="user", content="Weather?"),
-        Message(
-            role="assistant",
-            content="",
-            tool_calls=[
-                ToolCall(
-                    id="call_weather",
-                    function=ToolCall.FunctionBody(name="get_weather", arguments='{"city": "SF"}'),
-                )
-            ],
-        ),
-    ]
-
-    rendered = cast(Any, tml_v0._messages_to_render_input(messages))
-
-    assert all(isinstance(message, mock_tml_renderers_chat.OpenAIMessage) for message in rendered)
-    source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
-    assert source_messages is not None
-    assert source_messages[1]["tool_calls"][0]["id"] == "call_weather"
-    assert isinstance(source_messages[1]["tool_calls"][0], dict)
-
-
-def test_cookbook_audio_bytes_are_normalized_to_openai_input_audio(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    audio = b"RIFF-test-wav-bytes"
-    messages = [
-        Message(
-            role="user",
-            content=[
-                TextPart(type="text", text="Transcribe this."),
-                AudioPart(type="audio", audio=audio, format="wav"),
-            ],
-        )
-    ]
-
-    tml_v0._messages_to_render_input(messages)
-
-    source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
-    assert source_messages is not None
-    audio_part = source_messages[0]["content"][1]
-    assert audio_part["type"] == "input_audio"
-    assert audio_part["input_audio"] == {
-        "data": base64.b64encode(audio).decode("ascii"),
-        "format": "wav",
-    }
-
-
-def test_cookbook_audio_local_path_and_metadata_are_normalized(
-    tmp_path: Path,
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    audio = b"not-really-mp3"
-    path = tmp_path / "clip.mp3"
-    path.write_bytes(audio)
-    messages = [
-        Message(
-            role="user",
-            content=[
-                AudioPart(
-                    type="audio",
-                    audio=str(path),
-                    num_frames=48_000,
-                    sample_rate=24_000,
-                )
-            ],
-        )
-    ]
-
-    tml_v0._messages_to_render_input(messages)
-
-    source_messages = mock_tml_renderers_chat.OpenAIMessage.source_messages
-    assert source_messages is not None
-    assert source_messages[0]["content"][0]["input_audio"] == {
-        "data": base64.b64encode(audio).decode("ascii"),
-        "format": "mp3",
-        "num_frames": 48_000,
-        "sample_rate": 24_000,
-    }
-
-
-def test_cookbook_audio_non_wav_requires_complete_metadata() -> None:
-    with pytest.raises(ValueError, match="must provide num_frames and sample_rate"):
-        tml_v0._audio_part_to_openai(
-            AudioPart(type="audio", audio=b"mp3", format="mp3", num_frames=48_000)
-        )
-
-
-def test_cookbook_audio_metadata_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="must be positive"):
-        tml_v0._audio_part_to_openai(
-            AudioPart(
-                type="audio",
-                audio=b"mp3",
-                format="mp3",
-                num_frames=48_000,
-                sample_rate=0,
-            )
-        )
-
-
-def test_cookbook_audio_remote_url_is_rejected() -> None:
-    part = AudioPart(type="audio", audio="https://example.com/clip.wav")
-
-    with pytest.raises(ValueError, match="does not fetch remote audio URLs"):
-        tml_v0._audio_part_to_openai(part)
-
-
-def test_native_tml_renderers_inputs_pass_through(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    messages = [
-        mock_tml_renderers_chat.Message(mock_tml_renderers_chat.AuthorKind.User),
-        mock_tml_renderers_chat.OpenAIMessage("user"),
-    ]
-    message_list = mock_tml_renderers_chat.MessageList()
-
-    assert tml_v0._messages_to_render_input(cast(Any, messages)) is messages
-    assert tml_v0._messages_to_render_input(cast(Any, message_list)) is message_list
-
-
-def test_selective_sft_masking_sets_zero_training_metadata(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    messages = [
-        Message(role="user", content="First."),
-        Message(role="assistant", content="One."),
-        Message(role="user", content="Second."),
-        Message(role="assistant", content="Two."),
-    ]
-
-    rendered = cast(
-        Any, tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
-    )
-
-    assert rendered[1].message_metadata.training_metadata.weight == 0.0
-    assert rendered[3].message_metadata is None
-
-
-def test_customized_sft_masking_respects_trainable_flag(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    messages = [
-        Message(role="user", content="Prompt."),
-        Message(role="assistant", content="Skip.", trainable=False),
-        Message(role="assistant", content="Train.", trainable=True),
-    ]
-
-    rendered = cast(Any, tml_v0._cookbook_messages_to_sft_input(messages, TrainOnWhat.CUSTOMIZED))
-
-    assert rendered[1].message_metadata.training_metadata.weight == 0.0
-    assert rendered[2].message_metadata is None
-
-
-def test_selective_sft_rejects_native_tml_renderers_inputs(
-    mock_tml_renderers_chat: type[_FakeTmlRenderersChat],
-) -> None:
-    with pytest.raises(NotImplementedError, match="selective train_on_what"):
-        tml_v0._cookbook_messages_to_sft_input(
-            cast(Any, [mock_tml_renderers_chat.OpenAIMessage("assistant")]),
-            TrainOnWhat.LAST_ASSISTANT_MESSAGE,
-        )
 
 
 def test_inkling_tokenizer_resolves_to_tml_adapter() -> None:
@@ -398,7 +167,7 @@ def test_last_assistant_message_masks_earlier_assistant_messages() -> None:
 def test_unsupported_content_fails_loudly() -> None:
     renderer = _renderer()
 
-    with pytest.raises(Exception, match="Unsupported content part type"):
+    with pytest.raises(Exception, match=r"(?i)unsupported content part type"):
         renderer.build_supervised_example(
             [
                 Message(
@@ -425,8 +194,9 @@ def test_remote_image_url_fails_loudly() -> None:
         )
 
 
-def test_image_path_builds_tinker_chunk() -> None:
-    renderer = _renderer()
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_image_path_builds_tinker_chunk(model_name: str) -> None:
+    renderer = _renderer(model_name)
     image = Image.new("RGB", (64, 48), (30, 200, 120))
     model_input = renderer.build_generation_prompt(
         [
@@ -498,8 +268,9 @@ def test_empty_partial_assistant_message_fails_loudly() -> None:
         renderer.build_generation_prompt(_messages(), prefill="")
 
 
-def test_tool_calls_are_accepted_through_oss_messages() -> None:
-    renderer = _renderer()
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_tool_calls_are_accepted_through_oss_messages(model_name: str) -> None:
+    renderer = _renderer(model_name)
     messages = [
         Message(role="user", content="What's the weather?"),
         Message(
@@ -521,12 +292,13 @@ def test_tool_calls_are_accepted_through_oss_messages() -> None:
     assert _input_len(model_input) > 0
 
 
-def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_parsed_tml_tool_call_returns_cookbook_tool_call_object(model_name: str) -> None:
     _require_tml_renderers()
     chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
     tml_v0_module = cast(Any, tml_v0.import_module("tml_renderers.v0"))
 
-    renderer = _renderer()
+    renderer = _renderer(model_name)
     tml_renderer = tml_v0_module.Renderer(renderer.tokenizer.tml_tokenizer)
     tool_message = chat.Message(
         content=chat.InvokeTool(
@@ -559,8 +331,9 @@ def test_parsed_tml_tool_call_returns_cookbook_tool_call_object() -> None:
     assert '"San Francisco"' in tool_calls[0].function.arguments
 
 
-def test_tool_declarations_emit_tool_declare_prefix() -> None:
-    renderer = _renderer()
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_tool_declarations_emit_tool_declare_prefix(model_name: str) -> None:
+    renderer = _renderer(model_name)
 
     prefix = renderer.create_conversation_prefix_with_tools(
         [
@@ -651,7 +424,9 @@ def test_native_tml_renderers_openai_messages_are_accepted_directly() -> None:
     chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
 
     renderer = _renderer()
-    openai_messages = chat.OpenAIMessage.from_oss_messages(_messages())
+    openai_messages = chat.OpenAIMessage.from_messages(
+        tinker_messages_to_message_list(_messages()).messages
+    )
 
     model_input, weights = renderer.build_supervised_example(openai_messages)
 
@@ -690,15 +465,18 @@ def test_selective_sft_modes_require_cookbook_dict_messages_for_masking() -> Non
     chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
 
     renderer = _renderer()
-    openai_messages = chat.OpenAIMessage.from_oss_messages(_messages())
+    openai_messages = chat.OpenAIMessage.from_messages(
+        tinker_messages_to_message_list(_messages()).messages
+    )
 
     with pytest.raises(NotImplementedError, match="selective train_on_what"):
         renderer.build_supervised_example(openai_messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE)
 
 
-def test_extension_property_holds_multiturn() -> None:
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_extension_property_holds_multiturn(model_name: str) -> None:
     """Prove the `has_extension_property=True` claim on a real multi-turn conversation."""
-    renderer = _renderer()
+    renderer = _renderer(model_name)
     messages = [
         Message(role="system", content="You are concise."),
         Message(role="user", content="What is 2+2?"),
@@ -714,3 +492,54 @@ def test_extension_property_holds_multiturn() -> None:
         prompt_before_second_assistant[: len(sequence_through_first_assistant)]
         == sequence_through_first_assistant
     )
+
+
+@pytest.mark.parametrize("suffix", ["", ":peft:262144"])
+def test_h200k_renderer_discovery_and_round_trip(suffix: str) -> None:
+    model_name = "thinkingmachines/Inkling-2-Small" + suffix
+    renderer = get_renderer(get_recommended_renderer_name(model_name), get_tokenizer(model_name))
+    assert isinstance(renderer, tml_v0.TmlV0Renderer)
+    tokenizers = tml_v0.import_module("tml_renderers.tokenizers")
+    text = "Hello Inkling! The quick brown fox jumps over the lazy dog. 東京"
+    assert renderer.tokenizer.encode(text) == tokenizers.H200kBaseChatTokenizer().encode_ordinary(
+        text
+    )
+    assert renderer.tokenizer.encode(text) != get_tokenizer("thinkingmachines/Inkling").encode(text)
+    prompt = renderer.build_generation_prompt(_messages()[:-1]).to_ints()
+    renderer = pickle.loads(pickle.dumps(renderer))
+    assert renderer.build_generation_prompt(_messages()[:-1]).to_ints() == prompt
+    model_input, weights = renderer.build_supervised_example(_messages())
+    tokens = model_input.to_ints()
+    assert tokens[: len(prompt)] == prompt
+    assert not weights[: len(prompt)].any()
+    assert weights[len(prompt) :].sum() > 0
+    message, termination = renderer.parse_response(tokens[len(prompt) :])
+    assert termination.is_clean
+    assert message["content"] == "Hello."
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "thinkingmachines/Inkling-Small",
+        "thinkingmachines/Inkling-2-Small",
+    ],
+)
+@pytest.mark.parametrize("effort", [0.7, 0.2])
+def test_explicit_effort_preserves_sampling_sft_and_pickle_parity(
+    model_name: str, effort: float
+) -> None:
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer("tml_v0", tokenizer)
+    assert isinstance(renderer, tml_v0.TmlV0Renderer)
+    prompt = renderer.build_generation_prompt(_messages()[:-1], effort=effort).to_ints()
+    assert f"Thinking effort level: {effort}" in tokenizer.decode(prompt)
+    model_input, weights = renderer.build_supervised_example(_messages(), effort=effort)
+    assert model_input.to_ints()[: len(prompt)] == prompt
+    assert not weights[: len(prompt)].any()
+    assert weights[len(prompt) :].sum() > 0
+    restored = pickle.loads(pickle.dumps(renderer))
+    assert restored.build_generation_prompt(_messages()[:-1], effort=effort).to_ints() == prompt
+    default_prompt = renderer.build_generation_prompt(_messages()[:-1]).to_ints()
+    assert "Thinking effort level: 0.9" in tokenizer.decode(default_prompt)
+    assert default_prompt != prompt

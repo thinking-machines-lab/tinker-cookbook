@@ -57,8 +57,8 @@ You can list available models with:
 
 ```python
 import tinker
-service = tinker.ServiceClient()
-for m in service.get_server_capabilities().supported_models:
+rest_client = tinker.RestClient()
+for m in rest_client.get_server_capabilities().result().supported_models:
     print(m.model_name)
 ```
 
@@ -76,7 +76,7 @@ provider = register_litellm_provider()
 service = tinker.ServiceClient()
 sampler = service.create_sampling_client(
     model_path="tinker://<experiment-id>/sampler_weights/000080"
-)
+).result()
 
 # The provider reads the base model from the sampling client automatically
 # to resolve the correct renderer and tokenizer.
@@ -138,7 +138,7 @@ completion_token_ids = fields["completion_token_ids"]  # list[int]
 
 ## Tool calling
 
-Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, DeepSeek V3, Kimi K2/K2.6, GPT-OSS):
+Tool declarations are supported for models whose renderers implement `create_conversation_prefix_with_tools` (Qwen3, DeepSeek V3, Kimi K2/K2.6/K3.1-Pro, GPT-OSS):
 
 ```python
 response = await litellm.acompletion(

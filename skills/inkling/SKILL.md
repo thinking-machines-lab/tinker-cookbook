@@ -1,17 +1,25 @@
 ---
 name: inkling
-description: Sample, evaluate, and post-train Inkling and Inkling-Small, Thinking Machines Lab's models built for Tinker. Use this skill whenever the user mentions Inkling, `thinkingmachines/Inkling`, tml-renderers, `tml_v0` / `TmlV0Renderer`, or thinking/reasoning effort — and whenever they are choosing a model, building training data, running evals, setting up SFT or RL, handling parse errors, or working with audio or image inputs for an Inkling model. Inkling has requirements that differ from other Tinker models (mandatory effort conditioning, its own renderer and tokenizer, a learning rate you calibrate yourself), so load this skill before writing any Inkling code.
+description: Sample, evaluate, and post-train Inkling 2 Small, Inkling, and Inkling-Small, Thinking Machines Lab's models built for Tinker. Use this skill whenever the user mentions Inkling, `thinkingmachines/Inkling`, tml-renderers, `tml_v0` / `TmlV0Renderer`, or thinking/reasoning effort — and whenever they are choosing a model, building training data, running evals, setting up SFT or RL, handling parse errors, or working with audio or image inputs for an Inkling model. Inkling has requirements that differ from other Tinker models (mandatory effort conditioning, its own renderer and tokenizer, a learning rate you calibrate yourself), so load this skill before writing any Inkling code.
 ---
 
 # Inkling
 
-[Inkling](https://thinkingmachines.ai/inkling/) is Thinking Machines Lab's open-weight model family built for Tinker: general-purpose models that code, reason, call tools, and accept image and audio input.
+[Inkling](https://thinkingmachines.ai/inkling/) is Thinking Machines Lab's open-weight model family built for Tinker: general-purpose models that code, reason, and call tools. Inkling is also natively multimodal.
 
-Inkling is a Mixture-of-Experts transformer with 975B total parameters and 41B active. Inkling-Small is an efficient sibling at 276B total and 12B active, reaching comparable performance to Inkling at a quarter of its size. Both offer native reasoning over audio and images, variable thinking effort, a context window of up to 1M tokens, and well-rounded performance across a range of benchmarks.
+Every Inkling model is a Mixture-of-Experts transformer with variable thinking effort and well-rounded performance across a range of benchmarks.
 
-Inkling-Small's efficiency makes it a reasonable default for most tasks, and a natural fit for workloads where cost and latency matter, such as coding, using LLMs to grade, or generating synthetic data for other models. The two share a renderer, tokenizer, and effort interface, so moving between them is a one-line change to the model name, and benchmarking both on your own task is cheap.
+| Model | Total / active parameters | Input |
+|---|---|---|
+| `thinkingmachines/Inkling-2-Small` | 594B / 17B | text, images |
+| `thinkingmachines/Inkling` | 975B / 41B | text, images, audio |
+| `thinkingmachines/Inkling-Small` | 276B / 12B | text, images, audio |
 
-Both models are offered as post-trained versions on Tinker, not base models: they arrive instruction-tuned and effort-conditioned, so treat them as starting points for further post-training — SFT, RL, distillation — rather than for continued pretraining.
+See [Models & Pricing](https://tinker-docs.thinkingmachines.ai/tinker/models/) for context lengths and prices.
+
+All Inkling models share the `tml_v0` renderer and the effort interface, so moving between them is a one-line change to the model name, and benchmarking several on your own task is cheap. The tokenizer depends on the model: always pass the model name to `get_tokenizer`, and never reuse a tokenizer or a rendered dataset across models.
+
+All Inkling models are offered as post-trained versions on Tinker, not base models: they arrive instruction-tuned and effort-conditioned, so treat them as starting points for further post-training — SFT, RL, distillation — rather than for continued pretraining.
 
 Working with Inkling differs from other Tinker models in three ways, each covered below: every render needs an explicit thinking-effort value, rendering and tokenization go through `tml-renderers` rather than a Hugging Face chat template, and the learning rate is yours to calibrate.
 
@@ -19,18 +27,18 @@ Working with Inkling differs from other Tinker models in three ways, each covere
 
 Inkling renders through the standalone [`tml-renderers`](https://pypi.org/project/tml-renderers/) package, included in the default installation together with the required `torch>=2.10`.
 
-Pass `thinkingmachines/Inkling` or `thinkingmachines/Inkling-Small` anywhere the cookbook takes a model name. The tokenizer and renderer (`tml_v0`) are selected automatically for any `thinkingmachines/Inkling*` model, including the [`:peft:` long-context variants](https://tinker-docs.thinkingmachines.ai/tinker/models/):
+Pass `thinkingmachines/Inkling-2-Small`, `thinkingmachines/Inkling`, or `thinkingmachines/Inkling-Small` anywhere the cookbook takes a model name. Every Inkling model is served in both short and long context. The cookbook selects the tokenizer and the renderer (`tml_v0`) from the model name, including for the [`:peft:` long-context variants](https://tinker-docs.thinkingmachines.ai/tinker/models/):
 
 ```python
 from tinker_cookbook import model_info
 from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-model_name = "thinkingmachines/Inkling"
+model_name = "thinkingmachines/Inkling-2-Small"
 renderer = get_renderer(model_info.get_recommended_renderer_name(model_name), get_tokenizer(model_name))
 ```
 
-Never hardcode a renderer name, and never call `tokenizer.encode()` to build a prompt — the Inkling tokenizer adapter has no chat template, so raw encoding produces out-of-distribution tokens. The [Using Inkling guide](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/) is the canonical reference for setup and supported inputs.
+Never hardcode a renderer name, and pass effort explicitly when changing the default. Never call `tokenizer.encode()` to build a prompt — the Inkling tokenizer adapter has no chat template, so raw encoding produces out-of-distribution tokens. The [Using Inkling guide](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/) is the canonical reference for setup and supported inputs.
 
 ## Thinking effort: set it everywhere
 
@@ -61,7 +69,7 @@ from tinker_cookbook.renderers import Message
 from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-renderer = TmlV0Renderer(get_tokenizer("thinkingmachines/Inkling"))
+renderer = TmlV0Renderer(get_tokenizer("thinkingmachines/Inkling-2-Small"))
 messages = [Message(role="user", content="Solve this problem step by step.")]
 prompt = renderer.build_generation_prompt(messages, effort=0.9)
 ```
@@ -84,13 +92,13 @@ Render supervised data at the same effort you will use at test time, so training
 model_input, weights = renderer.build_supervised_example(messages_with_response, effort=0.9)
 ```
 
-We suggest picking **one** effort for the whole dataset and using it at test time too, leaning toward the higher end — `0.9` or `0.99` — unless your task genuinely does not need reasoning; mixed-effort training recipes are something we plan to share later. Generic supervised dataset builders currently render at the default `0.9`; call `build_supervised_example` (or `build_supervised_examples`, which returns multiple examples when a conversation expands to several) directly to render at another effort.
+We suggest picking **one** effort for the whole dataset and using it at test time too, leaning toward the higher end — `0.9` or `0.99` — unless your task genuinely does not need reasoning; mixed-effort training recipes are something we plan to share later. Generic supervised dataset builders render at the default `0.9`; call `build_supervised_example` (or `build_supervised_examples` for multiple examples) directly with an explicit `effort` to use another value. Use the same explicit effort for sampling and evaluation.
 
 For custom training code built directly on the Tinker SDK and `tml-renderers`, use `render_for_completion_with_effort` rather than `render_for_completion` — the latter omits the effort message.
 
 ## Post-training
 
-We suggest calibrating the learning rate to your own task and dataset rather than starting from a general-purpose default. `hyperparam_utils.get_lr("thinkingmachines/Inkling")` deliberately raises `NotImplementedError` instead of returning a number, so pick a starting value and sweep from there.
+We suggest calibrating the learning rate to your own task and dataset rather than starting from a general-purpose default. `hyperparam_utils.get_lr("thinkingmachines/Inkling-2-Small")` deliberately raises `NotImplementedError` instead of returning a number, so pick a starting value and sweep from there.
 
 - **Sweep learning rate and effort together over the first few RL steps.** We suggest doing this before committing to any long run, and trying the higher end of your learning-rate range as part of the sweep.
 - **Watch entropy.** The cookbook logs `optim/entropy` each step. Healthy entropy means the model is still producing variance, which is what makes rewards differ within a group and keeps the model responsive to training.
@@ -114,7 +122,7 @@ If malformed terminations are frequent, check `max_tokens` first — truncation 
 
 ## Audio and images
 
-Both models accept [audio](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/audio/) and [image](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/images/) input. Encode media locally through `tml-renderers`; the renderer accepts raw bytes, a local path, or a base64 `data:` URI, and deliberately refuses remote URLs. Audio must be WAV, MP3, or FLAC, and non-WAV formats must supply `num_frames` and `sample_rate` together. Clean, adequately loud audio noticeably improves results.
+All Inkling models accept [image](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/images/) input. Inkling and Inkling-Small also accept [audio](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/audio/) input. Encode media locally through `tml-renderers`; the renderer accepts raw bytes, a local path, or a base64 `data:` URI, and deliberately refuses remote URLs. Audio must be WAV, MP3, or FLAC, and non-WAV formats must supply `num_frames` and `sample_rate` together. Clean, adequately loud audio noticeably improves results.
 
 ```bash
 python -m tinker_cookbook.scripts.inkling.sample_audio

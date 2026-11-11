@@ -4,7 +4,7 @@ Black-box agent harnesses speak a chat API to this proxy (see
 ``proxy/README.md``); the proxy renders chat messages to tokens with a
 cookbook renderer, samples through the (instrumented) Tinker SDK, and decodes
 the sampled tokens back to a chat response. Because the actual sampling goes
-through ``SamplingClient.sample_async``, everything is captured by the
+through ``SamplingClient.sample``, everything is captured by the
 in-process SDK instrumentation (:mod:`tinker_cookbook.capture.instrument`): this module contains NO export
 logic of its own. Each request enters a ``capture(...)`` scope built from the
 ``/r/...`` address in the URL path, so wire rows are born addressed;
@@ -75,7 +75,7 @@ class SampleResponseLike(Protocol):
 class SamplingClientLike(Protocol):
     """The slice of ``tinker.SamplingClient`` the proxy uses."""
 
-    def sample_async(
+    def sample(
         self, prompt: tinker.ModelInput, num_samples: int, sampling_params: tinker.SamplingParams
     ) -> Awaitable[SampleResponseLike]: ...
 
@@ -556,7 +556,7 @@ async def _complete(
         scope_pairs.setdefault("requested_model", str(requested_model))
     with capture(**scope_pairs):
         try:
-            response = await deps.sampling_client.sample_async(
+            response = await deps.sampling_client.sample(
                 prompt=model_input, num_samples=1, sampling_params=sampling_params
             )
         except tinker.BadRequestError as e:

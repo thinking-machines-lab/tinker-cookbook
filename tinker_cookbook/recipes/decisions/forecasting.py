@@ -204,6 +204,9 @@ class Config:
     log_path: str | None = None  # set this to make the run resumable
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated run name when wandb_name is unset.
+    session_name: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
     base_url: str | None = None
 
@@ -234,7 +237,7 @@ async def train(
     custom_loss = probability_loss(brier_score_loss)
 
     async def evaluate(step: int) -> None:
-        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+        sampling_client = await training_client.save_weights_and_get_sampling_client()
         metrics = await evaluate_forecasts(sampling_client, decision_renderer, validation)
         ml_logger.log_metrics({f"test/{k}": v for k, v in metrics.items()}, step=step)
 
@@ -248,12 +251,12 @@ async def train(
         datums = decision_dist_datums(
             decision_renderer, [(decision, {target: 1.0}) for decision, target in batch]
         )
-        fwd_bwd_future = await training_client.forward_backward_custom_async(datums, custom_loss)
-        optim_future = await training_client.optim_step_async(
+        fwd_bwd_future = training_client.forward_backward_custom(datums, custom_loss)
+        optim_future = training_client.optim_step(
             tinker.AdamParams(learning_rate=cfg.learning_rate)
         )
-        fwd_bwd_result = await fwd_bwd_future.result_async()
-        await optim_future.result_async()
+        fwd_bwd_result = await fwd_bwd_future
+        await optim_future
 
         metrics = {
             f"train/{key}": value
@@ -332,6 +335,7 @@ async def main(cfg: Config) -> None:
     service_client = tinker.ServiceClient(
         base_url=cfg.base_url,
         user_metadata=recipe_user_metadata("recipe_decisions_forecasting"),
+        display_name=cfg.session_name or cfg.wandb_name or run_name,
     )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
@@ -342,15 +346,13 @@ async def main(cfg: Config) -> None:
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, resume_info.state_path, renderer_name
         )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
-            )
+        training_client = await service_client.create_training_client_from_state_with_optimizer(
+            resume_info.state_path, user_metadata=user_metadata
         )
         start_step = int(resume_info.get("step", 0))
         logger.info("Resumed training from %s at step %d", resume_info.state_path, start_step)
     else:
-        training_client = await service_client.create_lora_training_client_async(
+        training_client = await service_client.create_lora_training_client(
             base_model=cfg.model_name,
             rank=cfg.lora_rank,
             seed=cfg.seed,

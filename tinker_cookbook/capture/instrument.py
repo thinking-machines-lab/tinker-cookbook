@@ -9,9 +9,7 @@ Patched methods (public surface only):
 
 - ``tinker.SamplingClient.sample`` / ``sample_async``
 - ``tinker.TrainingClient.forward_backward`` / ``optim_step`` /
-  ``save_weights_for_sampler`` and their ``*_async`` variants (the training
-  loops in ``rl/train.py`` and ``supervised/train.py`` call the async entry
-  points).
+  ``save_weights_for_sampler`` and their deprecated ``*_async`` variants.
 
 Rules:
 
@@ -165,10 +163,12 @@ def _finalize(record: CaptureRecord, started: float, error: BaseException | None
 def _attach_done_callback(future: object, on_done: Callable[[Future[object]], None]) -> bool:
     """Attach ``on_done`` to a future-like object.
 
-    Handles both a ``concurrent.futures.Future`` (``sample``) and the SDK's
-    ``APIFuture`` wrapper, which exposes only ``result``/``result_async`` but
-    wraps an inner concurrent future as ``_future``.
+    Prefer the SDK's public ``APIFuture.future()`` adapter; retain support
+    for concurrent futures and legacy wrappers exposing ``_future``.
     """
+    to_future = getattr(future, "future", None)
+    if callable(to_future):
+        future = to_future()
     add_cb = getattr(future, "add_done_callback", None)
     if add_cb is None:
         inner = getattr(future, "_future", None)

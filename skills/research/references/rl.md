@@ -66,6 +66,8 @@ class MyDatasetBuilder(RLDatasetBuilder):
 
 The dataset's `get_batch(batch_idx)` returns `Sequence[EnvGroupBuilder]`.
 
+Training length: `rl.train.Config` runs `min(num_epochs * len(dataset), max_steps)` steps. For more than one pass over the data, set `num_epochs` (default 1); a `max_steps` above `len(dataset)` alone does not cycle the dataset. To repeat a dataset elsewhere, use `rl.dataset_utils.EpochCycledRLDataset` (optional per-epoch `shuffle_seed`).
+
 ## ProblemEnv — single-turn answer verification
 
 Handles rendering, reward computation (with format penalty), and logging. You implement 4 methods:
@@ -304,9 +306,13 @@ if __name__ == "__main__":
 from tinker_cookbook.rl.train import AsyncConfig
 config = Config(
     ...,
-    async_config=AsyncConfig(max_steps_off_policy=4, groups_per_batch=8),
+    # Sampling runs at most max_steps_off_policy steps ahead of training. Nothing is
+    # discarded; AsyncConfig.loss_fn (default "stable_reinforce") stays stable on the stale data.
+    async_config=AsyncConfig(max_steps_off_policy=1, groups_per_batch=8),
 )
 ```
+
+A rollout that never finishes holds one slot forever; for environments that can hang, bound rollouts with `rollout_error_tolerance=RetryOnFailure(per_rollout_timeout=...)`.
 
 **Cleanup resources:** Override `cleanup()` on EnvGroupBuilder for sandboxes, DB connections, etc.
 

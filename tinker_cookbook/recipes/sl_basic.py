@@ -9,6 +9,7 @@ from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.data import FromConversationFileBuilder
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 DEFAULT_MODEL_NAME = "Qwen/Qwen3.5-9B-Base"
 
@@ -45,6 +46,11 @@ def build_config_blueprint(model_name: str = DEFAULT_MODEL_NAME) -> chz.Blueprin
 
 
 def main(config: train.Config):
+    if config.session_name is None:
+        config = chz.replace(
+            config,
+            session_name=default_cookbook_session_name("sl-basic", wandb_name=config.wandb_name),
+        )
     # Avoid clobbering log dir from your previous run:
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
     asyncio.run(train.main(config))

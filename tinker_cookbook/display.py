@@ -4,7 +4,7 @@ import tinker
 from termcolor import colored
 
 from tinker_cookbook.rl.types import Trajectory, Transition
-from tinker_cookbook.tokenizer_utils import Tokenizer
+from tinker_cookbook.tokenizer_utils import Tokenizer, encode_without_special_tokens
 from tinker_cookbook.utils.format_colorized import format_colorized
 
 
@@ -12,7 +12,7 @@ def to_ints(chunk: tinker.ModelInputChunk, tokenizer: Tokenizer):
     if isinstance(chunk, tinker.EncodedTextChunk):
         return chunk.tokens
     else:
-        (at_token,) = tokenizer.encode("@", add_special_tokens=False)
+        (at_token,) = encode_without_special_tokens(tokenizer, "@")
         return [at_token] * chunk.length
 
 

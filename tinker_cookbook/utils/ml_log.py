@@ -118,6 +118,36 @@ class Logger(ABC):
         """
         pass
 
+    def enable_event_steps(self) -> None:
+        """Use arrival-order history with explicit coordinates for concurrent producers."""
+        pass
+
+    def log_metrics_event(
+        self,
+        metrics: dict[str, Any],
+        step: int,
+        step_metric: str,
+        metric_axes: dict[str, str] | None = None,
+    ) -> None:
+        """Append an event referring to model coordinates, possibly an earlier step."""
+        self.log_metrics(metrics | {step_metric: step}, step=step)
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Record the latest value of each metric outside the step history (optional).
+
+        For values that move between training steps, such as running totals:
+        each call replaces the previous value rather than adding a row at a
+        step, so it can be made any number of times between steps without
+        disturbing the step sequence (W&B, for one, only publishes a step
+        once a later step is logged, and never accepts a step twice). Loggers
+        without such a channel leave this a no-op, so callers must not rely on
+        it for anything that has to be recorded.
+
+        Args:
+            metrics (dict[str, Any]): Metric name-to-value mapping.
+        """
+        pass
+
     def log_long_text(self, key: str, text: str) -> None:
         """Log long text content (optional to implement).
 
@@ -205,6 +235,10 @@ class JsonLogger(Logger):
         self._store.write_metrics(metrics, step)
         logger.info("Wrote metrics to %s/metrics.jsonl", self.log_dir)
 
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Append the values as a row without a step."""
+        self._store.write_metrics(metrics)
+
 
 class PrettyPrintLogger(Logger):
     """Logger that displays metrics as a Rich-formatted table in the console.
@@ -228,6 +262,10 @@ class PrettyPrintLogger(Logger):
     # Metric suffixes to hide from console output. These are still logged to
     # metrics.jsonl and other sinks — only the pretty-print table is filtered.
     _HIDDEN_SUFFIXES = (":total", ":count")
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Display the values in the console."""
+        self.log_metrics(metrics)
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Display metrics in console."""
@@ -311,6 +349,9 @@ class WandbLogger(Logger):
                 "pip install wandb (or uv add wandb)"
             )
 
+        self._event_steps = False
+        self._event_metric_axes: set[tuple[str, str]] = set()
+
         # Initialize wandb run
         assert wandb is not None  # For type checker
         try:
@@ -330,6 +371,34 @@ class WandbLogger(Logger):
                 "  - leave wandb_project unset to disable W&B logging."
             ) from e
 
+    def enable_event_steps(self) -> None:
+        if self.run and not self._event_steps:
+            self.run.define_metric("training/step")
+            self.run.define_metric("*", step_metric="training/step", step_sync=False)
+            self._event_steps = True
+
+    def log_metrics_event(
+        self,
+        metrics: dict[str, Any],
+        step: int,
+        step_metric: str,
+        metric_axes: dict[str, str] | None = None,
+    ) -> None:
+        if self.run and wandb is not None:
+            self.enable_event_steps()
+            axes = metric_axes or {}
+            coordinates = {step_metric, *axes.values()}
+            for coordinate in coordinates:
+                self.run.define_metric(coordinate)
+            for name in metrics:
+                if name in coordinates:
+                    continue
+                key = (name, axes.get(name, step_metric))
+                if key not in self._event_metric_axes:
+                    self.run.define_metric(name, step_metric=key[1], step_sync=False)
+                    self._event_metric_axes.add(key)
+            self.log_metrics(metrics | {step_metric: step})
+
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
         if self.run and wandb is not None:
@@ -338,8 +407,19 @@ class WandbLogger(Logger):
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
         if self.run and wandb is not None:
-            wandb.log(metrics, step=step)
+            if self._event_steps:
+                # Internal W&B steps count arrivals, never model versions. This
+                # commits training immediately and retains late evaluation rows.
+                coordinates = {"training/step": step} if step is not None else {}
+                wandb.log(metrics | coordinates, commit=True)
+            else:
+                wandb.log(metrics, step=step)
             logger.info("Logging to: %s", self.run.url)
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Update the run summary; published at once, outside the step history."""
+        if self.run and wandb is not None:
+            self.run.summary.update(metrics)
 
     def close(self) -> None:
         """Close wandb run."""
@@ -410,6 +490,11 @@ class NeptuneLogger(Logger):
             assert step is not None, "step is required to be int or float for Neptune logging."
             self.run.log_metrics(metrics, step=step)
             logger.info("Logging to: %s", self.run.get_run_url())
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Set the values as run attributes, outside the step series."""
+        if self.run and NeptuneRun is not None:
+            self.run.log_configs(metrics)
 
     def close(self) -> None:
         """Close neptune run."""
@@ -495,6 +580,25 @@ class MultiplexLogger(Logger):
         """Forward log_metrics to all child loggers."""
         for logger in self.loggers:
             logger.log_metrics(metrics, step)
+
+    def enable_event_steps(self) -> None:
+        for logger in self.loggers:
+            logger.enable_event_steps()
+
+    def log_metrics_event(
+        self,
+        metrics: dict[str, Any],
+        step: int,
+        step_metric: str,
+        metric_axes: dict[str, str] | None = None,
+    ) -> None:
+        for logger in self.loggers:
+            logger.log_metrics_event(metrics, step, step_metric, metric_axes)
+
+    def log_summary(self, metrics: dict[str, Any]) -> None:
+        """Forward summary values to all child loggers."""
+        for logger in self.loggers:
+            logger.log_summary(metrics)
 
     def log_long_text(self, key: str, text: str) -> None:
         """Forward log_long_text to all child loggers."""

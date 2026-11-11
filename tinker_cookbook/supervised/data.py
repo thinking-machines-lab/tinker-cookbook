@@ -4,12 +4,14 @@ Supervised learning dataset implementations from HuggingFace datasets.
 
 import json
 import logging
+import math
 from collections.abc import Callable
 from typing import Any, Literal, cast
 
 import blobfile
 import chz
 import datasets
+import numpy as np
 import tinker
 
 from tinker_cookbook.exceptions import DataFormatError, DataValidationError
@@ -336,8 +338,8 @@ class HFDatasetSource:
         split: Dataset split to load.
         weight: Relative mixing weight. When set, weights are normalized across sources
             to determine sampling probabilities. When left as ``None`` (default) for all
-            sources, each row across all sources is equally likely (i.e. simple concatenation
-            with uniform sampling).
+            sources, each original row has equal sampling probability. The stopping
+            strategy determines whether source rows can repeat.
         message_field: Column name containing conversation messages.
     """
 
@@ -348,15 +350,81 @@ class HFDatasetSource:
     message_field: str = "messages"
 
 
+def _split_interleaved_sources(
+    source_datasets: list[datasets.Dataset],
+    weights: list[float],
+    test_size: int,
+    seed: int,
+    uniform_rows: bool,
+) -> tuple[list[datasets.Dataset], list[float], datasets.Dataset]:
+    if any(not math.isfinite(weight) or weight < 0 for weight in weights):
+        raise ValueError("Source weights must be finite and non-negative for a holdout split")
+    if not math.isfinite(sum(weights)) or sum(weights) <= 0:
+        raise ValueError("Total weight across all sources must be finite and positive")
+    for i, (ds, weight) in enumerate(zip(source_datasets, weights, strict=True)):
+        if weight > 0 and len(ds) == 0:
+            raise ValueError(f"Cannot split empty positively weighted source at index {i}")
+
+    capacities = np.array(
+        [
+            len(ds) - 1 if weight > 0 else 0
+            for ds, weight in zip(source_datasets, weights, strict=True)
+        ],
+        dtype=np.int64,
+    )
+    max_test_size = int(capacities.sum())
+    if test_size > max_test_size:
+        raise ValueError(
+            f"test_size ({test_size}) exceeds the maximum unique holdout size ({max_test_size}) "
+            "while retaining one training row per positively weighted source"
+        )
+
+    rng = np.random.default_rng(seed)
+    remaining_rows = np.array([len(ds) for ds in source_datasets], dtype=np.int64)
+    counts = [0] * len(source_datasets)
+    for _ in range(test_size):
+        probabilities = np.where(capacities > 0, remaining_rows if uniform_rows else weights, 0.0)
+        probabilities /= probabilities.sum()
+        source_index = int(rng.choice(len(source_datasets), p=probabilities))
+        counts[source_index] += 1
+        capacities[source_index] -= 1
+        remaining_rows[source_index] -= 1
+
+    train_sources: list[datasets.Dataset] = []
+    train_weights: list[float] = []
+    heldout_sources: list[datasets.Dataset] = []
+    for ds, weight, count in zip(source_datasets, weights, counts, strict=True):
+        if weight == 0:
+            continue
+        shuffled = ds.shuffle(seed=int(rng.integers(0, 2**32)))
+        train_ds = shuffled.skip(count)
+        train_sources.append(train_ds)
+        train_weights.append(float(len(train_ds)) if uniform_rows else weight)
+        if count > 0:
+            heldout_sources.append(shuffled.take(count))
+
+    heldout = datasets.concatenate_datasets(heldout_sources).shuffle(seed=seed)
+    return train_sources, train_weights, heldout
+
+
 @chz.chz
 class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
     """Builds an SFT dataset by interleaving multiple HuggingFace datasets.
 
     Uses ``datasets.interleave_datasets`` to mix rows from multiple sources according
     to the configured weights. When no weights are specified, sources are weighted by
-    size so that every row is equally likely (equivalent to concatenation + shuffle).
-    The resulting dataset is a standard Arrow-backed ``datasets.Dataset`` with O(1)
+    size so that original rows have equal sampling probabilities. Interleaving can
+    repeat source rows, depending on the stopping strategy. The resulting dataset
+    is a standard Arrow-backed ``datasets.Dataset`` with O(1)
     random access and deterministic per-epoch shuffling.
+
+    A positive ``test_size`` holds out unique original rows before interleaving,
+    keeping at least one training row per positively weighted source. Explicit
+    weights guide source selection until a source's holdout capacity is exhausted;
+    without explicit weights, eligible rows are sampled uniformly. Requests that
+    cannot preserve the training sources raise ``ValueError``. Zero-weight sources
+    do not contribute to either partition in holdout mode. Identical content in
+    distinct original rows is not deduplicated.
     """
 
     sources: list[HFDatasetSource]
@@ -397,6 +465,16 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
         else:
             weights = [cast(float, s.weight) for s in self.sources]
 
+        test_ds = None
+        if self.test_size > 0:
+            hf_datasets, weights, test_ds = _split_interleaved_sources(
+                hf_datasets,
+                weights,
+                self.test_size,
+                self.shuffle_seed,
+                uniform_rows=all(source.weight is None for source in self.sources),
+            )
+
         total_weight = sum(weights)
         if total_weight <= 0:
             raise ValueError("Total weight across all sources must be positive")
@@ -414,17 +492,7 @@ class InterleavedChatDatasetBuilder(ChatDatasetBuilder):
             )
         logger.info(f"Interleaved dataset: {len(interleaved)} rows")
 
-        if self.test_size > 0 and len(interleaved) <= self.test_size:
-            logger.warning(
-                f"test_size ({self.test_size}) >= dataset size ({len(interleaved)}), skipping test split"
-            )
-        if self.test_size > 0 and len(interleaved) > self.test_size:
-            interleaved = interleaved.shuffle(seed=self.shuffle_seed)
-            test_ds = interleaved.take(self.test_size)
-            train_ds = interleaved.skip(self.test_size)
-        else:
-            train_ds = interleaved
-            test_ds = None
+        train_ds = interleaved
 
         train_on_what = (
             TrainOnWhat(self.common_config.train_on_what)

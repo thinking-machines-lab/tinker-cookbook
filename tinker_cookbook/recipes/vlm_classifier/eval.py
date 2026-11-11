@@ -142,7 +142,7 @@ class ClassifierEvaluator(SamplingClientEvaluator):
         """
 
         # Generate response
-        r: types.SampleResponse = await sampling_client.sample_async(
+        r: types.SampleResponse = await sampling_client.sample(
             prompt=model_input, num_samples=1, sampling_params=sampling_params
         )
         tokens: list[int] = r.sequences[0].tokens
@@ -463,9 +463,11 @@ def run_eval(eval_config: EvalConfig):
         base_url=eval_config.base_url,
         user_metadata=recipe_user_metadata("eval_vlm_classifier"),
     )
-    sampling_client = service_client.create_sampling_client(model_path=eval_config.model_path)
+    sampling_client = service_client.create_sampling_client(
+        model_path=eval_config.model_path
+    ).result()
 
-    rest_client = service_client.create_rest_client()
+    rest_client = tinker.RestClient(base_url=eval_config.base_url)
     training_run = rest_client.get_training_run_by_tinker_path(eval_config.model_path).result()
     if eval_config.model_name is not None and eval_config.model_name != training_run.base_model:
         raise ValueError(

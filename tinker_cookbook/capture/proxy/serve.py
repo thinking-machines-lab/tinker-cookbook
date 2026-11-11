@@ -116,9 +116,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     service_client = tinker.ServiceClient()
     if args.model_path is not None:
-        sampling_client = service_client.create_sampling_client(model_path=args.model_path)
+        sampling_client = service_client.create_sampling_client(model_path=args.model_path).result()
     else:
-        sampling_client = service_client.create_sampling_client(base_model=args.base_model)
+        sampling_client = service_client.create_sampling_client(base_model=args.base_model).result()
 
     deps = ProxyDeps(
         renderer=renderer,

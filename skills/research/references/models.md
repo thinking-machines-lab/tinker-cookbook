@@ -6,6 +6,7 @@ Full listing of available models with types, architecture, and sizes.
 
 | Model | Type | Arch | Size |
 |-------|------|------|------|
+| `thinkingmachines/Inkling-2-Small` | Hybrid + Vision | MoE | Large |
 | `thinkingmachines/Inkling` | Hybrid + Audio + Vision | MoE | Large |
 | `thinkingmachines/Inkling-Small` | Hybrid + Audio + Vision | MoE | Medium |
 
@@ -48,6 +49,7 @@ Use the `_disable_thinking` renderer variant when you want direct instruction-fo
 | `deepseek-ai/DeepSeek-V4.1-Flash` | Hybrid | MoE | Large |
 | `deepseek-ai/DeepSeek-V4.1-Flash-1017` | Hybrid | MoE | Large |
 | `moonshotai/Kimi-K2.6` | Hybrid + Vision | MoE | Large |
+| `moonshotai/Kimi-K3.1-Pro` | Hybrid + Vision | MoE | Large |
 | `zai-org/GLM-5.3` | Reasoning | MoE | Large |
 | `zai-org/GLM-5.3-Flash` | Reasoning | MoE | Large |
 

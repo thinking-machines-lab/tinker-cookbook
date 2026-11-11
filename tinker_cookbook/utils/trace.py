@@ -5,6 +5,7 @@ import contextlib
 import datetime
 import functools
 import inspect
+import itertools
 import json
 import logging
 import queue
@@ -17,10 +18,16 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from io import TextIOWrapper
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 if TYPE_CHECKING:
+    from tinker import APIFuture
+
     from tinker_cookbook.stores.training_store import TrainingRunStore
+
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+_future_track_ids = itertools.count(1_000_000)
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +129,7 @@ class IterationWindow:
                 trajectory_groups = await gather_rollouts(sampling_client, ...)
                 await train_step(training_client, trajectory_groups, ...)
 
-            # Aggregated metrics: time/total, time/run_evals, time/sample_async:total, ...
+            # Aggregated metrics: time/total, time/run_evals, time/sample:total, ...
             metrics.update(window.get_timing_metrics())
 
             # Persist per-span data for post-hoc analysis
@@ -435,33 +442,41 @@ def _instrument_sdk_clients() -> None:
 
     _methods_to_patch = {
         tinker.TrainingClient: [
-            "forward_async",
-            "forward_backward_async",
-            "forward_backward_custom_async",
-            "get_info_async",
-            "optim_step_async",
-            "save_state_async",
-            "load_state_async",
-            "load_state_with_optimizer_async",
-            "save_weights_for_sampler_async",
-            "save_weights_external_async",
-            "save_weights_and_get_sampling_client_async",
-            "create_sampling_client_async",
+            "forward",
+            "forward_backward",
+            "forward_backward_custom",
+            "get_info",
+            "optim_step",
+            "save_state",
+            "save_weights_for_sampler",
+            "save_weights_external",
+            "save_weights_and_get_sampling_client",
+            "create_sampling_client",
         ],
         tinker.SamplingClient: [
-            "sample_async",
-            "compute_logprobs_async",
-            "get_base_model_async",
+            "sample",
+            "compute_logprobs",
+            "get_base_model",
         ],
     }
 
+    completion_methods = {
+        "sample",
+        "compute_logprobs",
+        "save_weights_and_get_sampling_client",
+        "create_sampling_client",
+    }
     for cls, method_names in _methods_to_patch.items():
         for method_name in method_names:
             if hasattr(cls, method_name):
                 original = getattr(cls, method_name)
                 # Avoid double-wrapping
                 if not getattr(original, "_scope_instrumented", False):
-                    wrapped = scope(original)
+                    wrapped = (
+                        _make_future_scope_wrapper(original)
+                        if method_name in completion_methods
+                        else scope(original)
+                    )
                     wrapped._scope_instrumented = True  # type: ignore[attr-defined]
                     setattr(cls, method_name, wrapped)
 
@@ -507,6 +522,7 @@ class FunctionCallContext:
     thread_name: str
     category: str
     thread_id: int
+    track_id: int | None = None
 
 
 @dataclass
@@ -545,13 +561,21 @@ def _get_trace_thread_info() -> tuple[int, str, str]:
     return thread_id, thread_name, coroutine_name
 
 
-def _create_trace_events(name: str) -> CreateTraceEventsResult:
+def _create_trace_events(
+    name: str,
+    *,
+    collector: TraceCollector | None = None,
+    track_suffix: int | None = None,
+) -> CreateTraceEventsResult:
     """Create trace events and context information for a named span."""
-    assert _trace_collector is not None, (
-        "Trace collector must be initialized before creating trace events"
-    )
+    collector = collector if collector is not None else _trace_collector
+    assert collector is not None, "Trace collector must be initialized before creating trace events"
 
     thread_id, thread_name, coroutine_name = _get_trace_thread_info()
+    track_id = hash(coroutine_name) % 1000000
+    if track_suffix is not None:
+        coroutine_name = f"{coroutine_name}:{name}:{track_suffix}"
+        track_id = track_suffix
     category = "async"
 
     # Begin event for this function call
@@ -559,8 +583,8 @@ def _create_trace_events(name: str) -> CreateTraceEventsResult:
         name=name,
         ph=EventType.BEGIN,
         pid=thread_id,  # Process ID (we use thread ID as process)
-        tid=hash(coroutine_name) % 1000000,  # Track ID within the thread
-        ts=_trace_collector.get_timestamp(),
+        tid=track_id,  # Track ID within the thread
+        ts=collector.get_timestamp(),
         args={
             "track": coroutine_name,
             "thread": thread_name,
@@ -576,7 +600,7 @@ def _create_trace_events(name: str) -> CreateTraceEventsResult:
         name="thread_name",
         ph=EventType.METADATA,
         pid=thread_id,
-        tid=hash(coroutine_name) % 1000000,
+        tid=track_id,
         ts=0,
         args={"name": coroutine_name},
     )
@@ -599,6 +623,7 @@ def _create_trace_events(name: str) -> CreateTraceEventsResult:
             thread_name=thread_name,
             category=category,
             thread_id=thread_id,
+            track_id=track_id,
         ),
     )
 
@@ -606,18 +631,23 @@ def _create_trace_events(name: str) -> CreateTraceEventsResult:
 def _create_end_event(
     name: str,
     function_call_context: FunctionCallContext,
+    *,
+    collector: TraceCollector | None = None,
 ) -> TraceEvent:
     """Create an end trace event for a named span."""
-    assert _trace_collector is not None, (
-        "Trace collector must be initialized before creating trace events"
-    )
+    collector = collector if collector is not None else _trace_collector
+    assert collector is not None, "Trace collector must be initialized before creating trace events"
 
     return TraceEvent(
         name=name,
         ph=EventType.END,
         pid=function_call_context.thread_id,
-        tid=hash(function_call_context.coroutine_name) % 1000000,
-        ts=_trace_collector.get_timestamp(),
+        tid=(
+            function_call_context.track_id
+            if function_call_context.track_id is not None
+            else hash(function_call_context.coroutine_name) % 1000000
+        ),
+        ts=collector.get_timestamp(),
         args={
             "track": function_call_context.coroutine_name,
             "thread": function_call_context.thread_name,
@@ -625,6 +655,53 @@ def _create_end_event(
         },
         cat=function_call_context.category,
     )
+
+
+def _make_future_scope_wrapper(
+    func: Callable[_P, "APIFuture[_T]"],
+) -> Callable[_P, "APIFuture[_T]"]:
+    """Time SDK completion without delaying submission or replacing the future."""
+
+    @functools.wraps(func)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> "APIFuture[_T]":
+        collector = _trace_collector
+        window = _iteration_window.get(None)
+        if collector is None and window is None:
+            return func(*args, **kwargs)
+
+        name = func.__name__
+        started = time.perf_counter()
+        events = None
+        token = None
+        if collector is not None:
+            events = _create_trace_events(
+                name, collector=collector, track_suffix=next(_future_track_ids)
+            )
+            collector.add_event(events.begin_event)
+            collector.add_event(events.metadata_coroutine_event)
+            collector.add_event(events.metadata_thread_event)
+            token = trace_context.set(events.function_call_context.scope_context)
+
+        def finish() -> None:
+            if collector is not None and events is not None:
+                collector.add_event(
+                    _create_end_event(name, events.function_call_context, collector=collector)
+                )
+            if window is not None:
+                window.record_span(name, started, time.perf_counter())
+
+        try:
+            future = func(*args, **kwargs)
+        except BaseException:
+            finish()
+            raise
+        finally:
+            if token is not None:
+                trace_context.reset(token)
+        future.future().add_done_callback(lambda _: finish())
+        return future
+
+    return wrapper
 
 
 def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., Any]:
@@ -940,18 +1017,18 @@ def trace_iteration(step: int) -> Generator[IterationWindow, None, None]:
     to retrieve the aggregated timing dict (including ``time/total``).
 
     Span names are flat (the function or span name), not hierarchical. If ``train_step``
-    calls ``forward_backward_async``, both appear as separate top-level keys::
+    calls ``forward_backward``, both appear as separate top-level keys::
 
         time/train_step = 5.0              # inclusive (contains forward_backward)
-        time/forward_backward_async = 3.0  # just the inner call
+        time/forward_backward = 3.0  # just the inner call
 
-    For functions called multiple times (e.g. 160 concurrent ``sample_async``
+    For functions called multiple times (e.g. 160 concurrent ``sample``
     calls), aggregated keys are produced::
 
-        time/sample_async:total = 480.0
-        time/sample_async:count = 160
-        time/sample_async:mean  = 3.0
-        time/sample_async:max   = 4.9
+        time/sample:total = 480.0
+        time/sample:count = 160
+        time/sample:mean  = 3.0
+        time/sample:max   = 4.9
 
     Example::
 

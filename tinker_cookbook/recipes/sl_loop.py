@@ -16,6 +16,7 @@ from tinker_cookbook.supervised.data import conversation_to_datum
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
+from tinker_cookbook.utils.session_naming import default_cookbook_session_name
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
@@ -36,6 +37,9 @@ class Config:
     max_steps: int | None = None
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set, otherwise a
+    # default name based on the recipe is used.
+    session_name: str | None = None
 
 
 def main(config: Config):
@@ -74,6 +78,8 @@ def main(config: Config):
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata("recipe_sl_loop"),
+        display_name=config.session_name
+        or default_cookbook_session_name("sl-loop", wandb_name=config.wandb_name),
     )
 
     # Check for resuming
@@ -81,13 +87,13 @@ def main(config: Config):
     if resume_info:
         training_client = service_client.create_training_client_from_state_with_optimizer(
             resume_info.state_path
-        )
+        ).result()
         start_batch = resume_info.batch
         logger.info(f"Resuming from batch {start_batch}")
     else:
         training_client = service_client.create_lora_training_client(
             base_model=config.model_name, rank=config.lora_rank
-        )
+        ).result()
         start_batch = 0
 
     # Training loop (single epoch)

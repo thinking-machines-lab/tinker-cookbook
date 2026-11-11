@@ -59,6 +59,9 @@ class ExperimentConfig:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name, or the
+    # generated experiment name when wandb_name is unset.
+    session_name: str | None = None
 
     train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_MESSAGE
 
@@ -147,6 +150,9 @@ def run_experiment(experiment_config: ExperimentConfig):
         base_url=experiment_config.base_url,
         wandb_project=experiment_config.wandb_project,
         wandb_name=experiment_config.wandb_name or experiment_name,
+        session_name=experiment_config.session_name
+        or experiment_config.wandb_name
+        or experiment_name,
         lora_rank=experiment_config.lora_rank,
         save_every=experiment_config.save_every,
         eval_every=experiment_config.eval_every,

@@ -22,7 +22,7 @@ MODEL = "thinkingmachines/Inkling-Small"
 
 
 async def main() -> None:
-    sampling_client = await tinker.ServiceClient().create_sampling_client_async(base_model=MODEL)
+    sampling_client = await tinker.ServiceClient().create_sampling_client(base_model=MODEL)
     renderer = renderers.get_renderer(
         model_info.get_recommended_renderer_name(MODEL), get_tokenizer(MODEL)
     )
@@ -75,10 +75,10 @@ The `choice#` prefix in the assistant response is used to reduce ambiguity in th
 from tinker_cookbook.recipes.decisions import decision_choice_datums
 
 datums = decision_choice_datums(decision_renderer, [(decision, "cookbook"), ...])
-fwd_bwd_future = await training_client.forward_backward_async(datums, loss_fn="cross_entropy")
-optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
-await fwd_bwd_future.result_async()
-await optim_future.result_async()
+fwd_bwd_future = training_client.forward_backward(datums, loss_fn="cross_entropy")
+optim_future = training_client.optim_step(tinker.AdamParams(learning_rate=1e-4))
+await fwd_bwd_future
+await optim_future
 ```
 
 ### Soft labels
@@ -95,12 +95,12 @@ def manhattan_loss(choice_probs: torch.Tensor, target_probs: torch.Tensor) -> to
 
 
 datums = decision_dist_datums(decision_renderer, [(decision, {"heads": 0.5, "tails": 0.5}), ...])
-fwd_bwd_future = await training_client.forward_backward_custom_async(
+fwd_bwd_future = training_client.forward_backward_custom(
     datums, probability_loss(manhattan_loss)
 )
-optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
-await fwd_bwd_future.result_async()
-await optim_future.result_async()
+optim_future = training_client.optim_step(tinker.AdamParams(learning_rate=1e-4))
+await fwd_bwd_future
+await optim_future
 ```
 
 ## Customizing the answer format

@@ -91,6 +91,9 @@ class BenchmarkConfig:
     # Logging
     log_root: str | None = None
     wandb_project: str | None = None
+    # Prefix for Tinker session display names; each phase appends its name and dataset.
+    # When unset, the phase's W&B run name is used.
+    session_name: str | None = None
     base_url: str | None = None
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
@@ -126,7 +129,7 @@ async def run_base_eval(config: BenchmarkConfig) -> dict[str, float]:
         base_url=config.base_url,
         user_metadata=recipe_user_metadata("benchmark_sdft"),
     )
-    sampling_client = service_client.create_sampling_client(base_model=config.model_name)
+    sampling_client = service_client.create_sampling_client(base_model=config.model_name).result()
 
     evaluator = _build_evaluator(config, renderer)
     metrics = await evaluator(sampling_client)
@@ -179,6 +182,9 @@ async def run_sft(config: BenchmarkConfig) -> str | None:
         log_path=log_path,
         wandb_project=config.wandb_project,
         wandb_name=f"sdft-bench-sft-{config.dataset}",
+        session_name=f"{config.session_name}-sft-{config.dataset}"
+        if config.session_name
+        else f"sdft-bench-sft-{config.dataset}",
         base_url=config.base_url,
         eval_every=config.eval_every,
         save_every=config.save_every,
@@ -242,6 +248,9 @@ async def run_sdft(config: BenchmarkConfig) -> str | None:
         log_path=log_path,
         wandb_project=config.wandb_project,
         wandb_name=f"sdft-bench-sdft-{config.dataset}",
+        session_name=f"{config.session_name}-sdft-{config.dataset}"
+        if config.session_name
+        else f"sdft-bench-sdft-{config.dataset}",
         max_steps=config.max_steps,
     )
 
@@ -279,7 +288,7 @@ async def run_eval_checkpoint(config: BenchmarkConfig) -> dict[str, float]:
     )
     sampling_client = service_client.create_sampling_client(
         base_model=config.model_name, model_path=config.checkpoint_path
-    )
+    ).result()
 
     evaluator = _build_evaluator(config, renderer)
     metrics = await evaluator(sampling_client)

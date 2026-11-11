@@ -21,7 +21,7 @@ pre-created Modal secrets are needed.
 
 ```bash
 modal run -m tinker_cookbook.inference.modal.prepare \
-  --tinker-path tinker://<run-id>/sampler_weights/<name> \
+  --tinker-path tinker://<run-id>/external_weights/<name> \
   --base-model Qwen/Qwen3-8B --name my-finetune
 ```
 

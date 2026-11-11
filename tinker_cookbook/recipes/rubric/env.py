@@ -238,7 +238,9 @@ class RubricGradedDatasetBuilder(RLDatasetBuilder):
         )
         renderer = get_renderer(name=renderer_name, tokenizer=tokenizer)
         service_client = tinker.ServiceClient(base_url=self.base_url)
-        sampling_client = service_client.create_sampling_client(base_model=self.grader_llm_name)
+        sampling_client = service_client.create_sampling_client(
+            base_model=self.grader_llm_name
+        ).result()
         return TinkerMessageCompleter(
             sampling_client=sampling_client, renderer=renderer, max_tokens=2048
         )
