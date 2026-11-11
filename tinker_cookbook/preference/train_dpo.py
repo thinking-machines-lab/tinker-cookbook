@@ -4,6 +4,7 @@ Direct Preference Optimization (DPO) training
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -265,6 +266,42 @@ def compute_dpo_loss(
     return loss, metrics
 
 
+@trace.scope
+async def _run_dpo_optimizer_step(
+    training_client: tinker.TrainingClient,
+    data: list[tinker.Datum],
+    dpo_loss_fn: Callable[
+        [list[tinker.Datum], list[torch.Tensor]], tuple[torch.Tensor, dict[str, float]]
+    ],
+    adam_params: tinker.AdamParams,
+) -> tuple[tinker.ForwardBackwardOutput, tinker.OptimStepResponse]:
+    """Enqueue the custom DPO backward pass and its optimizer step before awaiting either.
+
+    ``forward_backward_custom`` runs the policy-logprob forward, applies the
+    client-side custom loss, and submits the resulting backward request before it
+    returns a future. Submitting ``optim_step`` immediately afterward keeps the
+    gradient/update dependency intact while letting both requests be queued
+    together. Awaiting the backward result first delays the optimizer submission
+    by a full round trip, which can place the update in a later worker-pool
+    scheduling slot and increase step latency.
+
+    This submits one backward pass and the optimizer step that consumes it. It does
+    not pipeline across optimizer steps: unlike
+    :func:`tinker_cookbook.distillation.sdft._train_step_reverse_kl`, which submits
+    the next substep before awaiting the current one, each DPO update here is fully
+    resolved before the next batch is built.
+    """
+    with trace.scope_span_sync("enqueue_forward_backward_custom"):
+        fwd_bwd_future = training_client.forward_backward_custom(data, dpo_loss_fn)
+    with trace.scope_span_sync("enqueue_optim_step"):
+        optim_future = training_client.optim_step(adam_params)
+
+    async with trace.scope_span("consume_dpo_update"):
+        fwd_bwd_result = await fwd_bwd_future
+        optim_result = await optim_future
+    return fwd_bwd_result, optim_result
+
+
 def do_update(
     epoch_idx: int,
     batch_idx: int,
@@ -441,12 +478,12 @@ def do_update(
             )
 
         with trace.scope_span_sync("step"):
-            # Do forward-backward with custom DPO loss
-            backward_result = training_client.forward_backward_custom(data, dpo_loss_fn).result()
+            # Submit the custom DPO backward pass and its optimizer step together,
+            # then consume both results.
+            backward_result, optim_result = asyncio.run(
+                _run_dpo_optimizer_step(training_client, data, dpo_loss_fn, adam_params)
+            )
             dpo_metrics = backward_result.metrics
-
-            # Optimizer step
-            training_client.optim_step(adam_params).result()
 
         # Prepare metrics
         metrics.update(
@@ -456,6 +493,8 @@ def do_update(
             progress=step / total_steps,
             **dpo_metrics,
         )
+        if optim_result.metrics:
+            metrics.update(optim_result.metrics)
 
     # Log timing metrics from trace_iteration window
     metrics.update(window.get_timing_metrics())
