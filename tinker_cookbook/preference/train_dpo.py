@@ -275,25 +275,30 @@ async def _run_dpo_optimizer_step(
     ],
     adam_params: tinker.AdamParams,
 ) -> tuple[tinker.ForwardBackwardOutput, tinker.OptimStepResponse]:
-    """Submit a custom DPO backward pass and optimizer update in one clock cycle.
+    """Enqueue the custom DPO backward pass and its optimizer step before awaiting either.
 
-    ``forward_backward_custom_async`` first obtains policy log-probabilities so the
-    client-side custom loss can produce gradients. Once it returns the backward
-    request has been submitted, and the optimizer request must be submitted before
-    either result is consumed. Waiting for the backward result first can miss the
-    optimizer slot in the same worker-pool clock cycle and substantially increase
-    step latency.
+    ``forward_backward_custom`` runs the policy-logprob forward, applies the
+    client-side custom loss, and submits the resulting backward request before it
+    returns a future. Submitting ``optim_step`` immediately afterward keeps the
+    gradient/update dependency intact while letting both requests be queued
+    together. Awaiting the backward result first delays the optimizer submission
+    by a full round trip, which can place the update in a later worker-pool
+    scheduling slot and increase step latency.
+
+    This submits one backward pass and the optimizer step that consumes it. It does
+    not pipeline across optimizer steps: unlike
+    :func:`tinker_cookbook.distillation.sdft._train_step_reverse_kl`, which submits
+    the next substep before awaiting the current one, each DPO update here is fully
+    resolved before the next batch is built.
     """
-    async with trace.scope_span("enqueue_forward_backward_custom"):
-        fwd_bwd_future = await training_client.forward_backward_custom_async(data, dpo_loss_fn)
-    async with trace.scope_span("enqueue_optim_step"):
-        optim_future = await training_client.optim_step_async(adam_params)
+    with trace.scope_span_sync("enqueue_forward_backward_custom"):
+        fwd_bwd_future = training_client.forward_backward_custom(data, dpo_loss_fn)
+    with trace.scope_span_sync("enqueue_optim_step"):
+        optim_future = training_client.optim_step(adam_params)
 
     async with trace.scope_span("consume_dpo_update"):
-        fwd_bwd_result, optim_result = await asyncio.gather(
-            fwd_bwd_future.result_async(),
-            optim_future.result_async(),
-        )
+        fwd_bwd_result = await fwd_bwd_future
+        optim_result = await optim_future
     return fwd_bwd_result, optim_result
 
 
@@ -473,6 +478,8 @@ def do_update(
             )
 
         with trace.scope_span_sync("step"):
+            # Submit the custom DPO backward pass and its optimizer step together,
+            # then consume both results.
             backward_result, optim_result = asyncio.run(
                 _run_dpo_optimizer_step(training_client, data, dpo_loss_fn, adam_params)
             )
