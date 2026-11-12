@@ -80,3 +80,37 @@ def test_aime_requires_integral_extracted_token(response: str, expected: int, re
     assert result.metrics == {"correct": reward}
     assert result.episode_done
     assert result.next_messages == []
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ("Using a**2 + b**2 = c**2 with legs 3 and 4, the hypotenuse is 5.", "5"),
+        ("She has 2**3 = 8 apples left, so she has 8 apples.", "8"),
+        ("The area is (1+2)**2 = 9 square meters.", "9"),
+        ("The side is x[0]**2 = 16 meters long.", "16"),
+        ("The area is 3**2 = **9** square meters, from 2 sides.", "9"),
+        ("That makes 2**3**2 = 512 apples.", "512"),
+        ("Since x**2**(n+1) = 64, the answer is 6.", "6"),
+        ("With {n}**2 = 25, n is 5.", "5"),
+    ],
+)
+def test_exponent_is_not_a_bold_answer(response: str, expected: str):
+    assert check_gsm8k(response, expected)
+    assert not check_gsm8k(response, "2")
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ("She earns **18 dollars** in total, over 3 days.", "18"),
+        ("She earns **$18 per day**, over 3 days.", "18"),
+        ("(**18 dollars**) over 3 days.", "18"),
+        ("She earns _**18 dollars**_ in total, over 3 days.", "18"),
+        ("She earned a total of**18**, over 3 days.", "18"),
+        ("She earned a total of**$18**, over 3 days.", "18"),
+        ("答案是**18元**，共3天。", "18"),
+    ],
+)
+def test_bold_answer_with_trailing_words(response: str, expected: str):
+    assert extract_gsm8k_answer(response) == expected
