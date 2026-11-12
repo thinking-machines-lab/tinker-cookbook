@@ -271,6 +271,40 @@ class TrainingRunStore:
         record.update(metrics)
         self._append_jsonl(record, "metrics.jsonl")
 
+    def truncate_metrics(self, from_step: int) -> int:
+        """Drop metrics.jsonl rows with ``step >= from_step``.
+
+        Used when resuming from a checkpoint so steps that a previous process
+        logged after its last checkpoint are not duplicated when they are
+        re-run.  Before rewriting, the original file is copied unchanged to
+        ``metrics.jsonl.pre_resume_<from_step>``.  Rows without an integer
+        ``step`` (and lines that are not valid JSON) are kept.
+
+        Returns:
+            int: Number of rows dropped.
+        """
+        path = self._path("metrics.jsonl")
+        if not self.storage.exists(path):
+            return 0
+        raw = self.storage.read(path)
+        kept: list[bytes] = []
+        dropped = 0
+        for line in raw.splitlines(keepends=True):
+            try:
+                step = json.loads(line).get("step")
+            except (ValueError, AttributeError):
+                step = None
+            if isinstance(step, int) and step >= from_step:
+                dropped += 1
+            else:
+                kept.append(line if line.endswith(b"\n") else line + b"\n")
+        if dropped == 0:
+            return 0
+        self.storage.write(self._path(f"metrics.jsonl.pre_resume_{from_step:06d}"), raw)
+        self.storage.write(path, b"".join(kept))
+        self._metrics = None
+        return dropped
+
     def write_timing_spans(self, step: int, spans: list[dict[str, Any]]) -> None:
         """Append one timing record to timing_spans.jsonl.
 

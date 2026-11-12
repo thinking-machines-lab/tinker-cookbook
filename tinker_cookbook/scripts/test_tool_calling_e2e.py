@@ -136,8 +136,8 @@ async def test_model(
     stop_sequences = renderer.get_stop_sequences()
 
     # Create sampling client
-    sampling_client = service_client.create_sampling_client(base_model=model_name)
-    result = await sampling_client.sample_async(
+    sampling_client = service_client.create_sampling_client(base_model=model_name).result()
+    result = await sampling_client.sample(
         prompt=prompt,
         num_samples=1,
         sampling_params=tinker.SamplingParams(

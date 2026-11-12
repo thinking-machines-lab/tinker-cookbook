@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+
+from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
 
 from . import train as recipe
 from .env import ProphetArenaRLDatasetBuilder
@@ -26,7 +29,9 @@ def test_final_checkpoint_is_evaluated_once(tmp_path: Path, monkeypatch) -> None
         def create_sampling_client(self, *, base_model, model_path):
             assert base_model == "Qwen/Qwen3.8-27B"
             assert model_path == checkpoint.sampler_path
-            return "sampling-client"
+            future = Future()
+            future.set_result("sampling-client")
+            return AwaitableConcurrentFuture(future)
 
     monkeypatch.setattr(recipe.tinker, "ServiceClient", ServiceClient)
     monkeypatch.setattr(recipe, "ForecastEvaluator", lambda *args, **kwargs: "evaluator")

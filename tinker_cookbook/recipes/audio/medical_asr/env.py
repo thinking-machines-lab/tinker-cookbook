@@ -266,7 +266,7 @@ class EkacareWEREvaluator(SamplingClientEvaluator):
 
         async def transcribe(prompt: tinker.ModelInput) -> tuple[str, ParseTermination]:
             async with semaphore:
-                resp = await sampling_client.sample_async(
+                resp = await sampling_client.sample(
                     prompt=prompt, num_samples=1, sampling_params=params
                 )
             # A garbled sample (e.g. truncated mid-multibyte-character) parses as

@@ -47,7 +47,7 @@ async def _sample_next_token(
     max_tokens: int,
     seed: int | None,
 ) -> tuple[list[int], list[float]]:
-    resp = await sampling_client.sample_async(
+    resp = await sampling_client.sample(
         prompt=model_input,
         num_samples=1,
         sampling_params=tinker.SamplingParams(
@@ -95,16 +95,14 @@ async def _compute_logp1_for_tokens(
     prompt_tokens: list[int],
     tokens: Sequence[int],
 ) -> dict[int, float]:
-    """Compute baseline log p_1(token|prompt) for each token via compute_logprobs_async."""
+    """Compute baseline log p_1(token|prompt) for each token via compute_logprobs."""
     res: dict[int, float] = {}
     for tok in tokens:
         seq = tinker.ModelInput.from_ints(prompt_tokens + [tok])
-        lps = await sampling_client.compute_logprobs_async(seq)
+        lps = await sampling_client.compute_logprobs(seq)
         lp = lps[len(prompt_tokens)]
         if lp is None:
-            raise RuntimeError(
-                "compute_logprobs_async did not return a logprob for the sampled token"
-            )
+            raise RuntimeError("compute_logprobs did not return a logprob for the sampled token")
         res[tok] = lp
     return res
 
@@ -159,7 +157,7 @@ async def _sample_sequence_oneshot(
 ) -> tuple[list[int], list[float]]:
     """Sample a sequence in one call with max_tokens > 1."""
     model_input = tinker.ModelInput.from_ints(prompt_tokens)
-    resp = await sampling_client.sample_async(
+    resp = await sampling_client.sample(
         prompt=model_input,
         num_samples=1,
         sampling_params=tinker.SamplingParams(
@@ -196,7 +194,7 @@ async def _resample_tokens_individually(
         # Increment seed for each position to get different random states
         pos_seed = (seed + i) if seed is not None else None
 
-        resp = await sampling_client.sample_async(
+        resp = await sampling_client.sample(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
@@ -249,7 +247,7 @@ async def validate_sequence_consistency(
     seed: int | None,
     tokenizer,
 ) -> None:
-    """Validate that sample_async(max_tokens > 1) returns accurate per-step logprobs.
+    """Validate that sample(max_tokens > 1) returns accurate per-step logprobs.
 
     Generates a sequence then resamples each position individually to find matching tokens
     and compare their logprobs, validating correctness at each step.
@@ -276,7 +274,7 @@ async def validate_sequence_consistency(
         model_input = tinker.ModelInput.from_ints(prefix)
 
         for attempt in range(num_attempts_per_position):
-            resp = await sampling_client.sample_async(
+            resp = await sampling_client.sample(
                 prompt=model_input,
                 num_samples=1,
                 sampling_params=tinker.SamplingParams(
@@ -311,7 +309,7 @@ async def main(cfg: Config) -> None:
     model_input = tinker.ModelInput.from_ints(prompt_tokens)
 
     service = tinker.ServiceClient(base_url=cfg.base_url)
-    sampler = service.create_sampling_client(base_model=cfg.base_model)
+    sampler = service.create_sampling_client(base_model=cfg.base_model).result()
 
     print("\n" + "=" * 75)
     print("TEMPERATURE SCALING VALIDATION")

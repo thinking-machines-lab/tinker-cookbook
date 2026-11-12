@@ -243,7 +243,7 @@ class TwentyQuestionsDatasetBuilder(RLDatasetBuilder):
         answerer_renderer = get_renderer(answerer_renderer_name, answerer_tokenizer)
         answerer_sampling_client = service_client.create_sampling_client(
             base_model=self.answerer_base_model
-        )
+        ).result()
         answerer = TinkerMessageCompleter(
             sampling_client=answerer_sampling_client, renderer=answerer_renderer, max_tokens=5
         )
@@ -263,7 +263,9 @@ def construct_minimal_20q_env(answer: str) -> TwentyQuestionsEnv:
     answerer_renderer_name = "qwen3_5_disable_thinking"
 
     service_client = tinker.ServiceClient()
-    answerer_sampling_client = service_client.create_sampling_client(base_model=answerer_model)
+    answerer_sampling_client = service_client.create_sampling_client(
+        base_model=answerer_model
+    ).result()
     answerer = TinkerMessageCompleter(
         sampling_client=answerer_sampling_client,
         renderer=get_renderer(answerer_renderer_name, get_tokenizer(answerer_model)),

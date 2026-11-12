@@ -73,6 +73,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import split_list
+from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,17 @@ def _build_teacher_forced_sequence(
     return teacher_forced
 
 
+def _completion_positions(mask: torch.Tensor, completion_len: int) -> list[tuple[int, int]]:
+    """Return student loss indices and their offsets in the retained teacher suffix."""
+    indices: list[int] = torch.where(mask > 0)[0].tolist()
+    if not indices:
+        return []
+    first_index = indices[0]
+    return [
+        (index, index - first_index) for index in indices if index - first_index < completion_len
+    ]
+
+
 @trace.scope
 async def compute_sdft_advantages(
     data_D: list[tinker.Datum],
@@ -225,7 +237,7 @@ async def compute_sdft_advantages(
     # Compute teacher logprobs in parallel
     teacher_logprobs_D = await asyncio.gather(
         *[
-            teacher_client.compute_logprobs_async(teacher_full)
+            teacher_client.compute_logprobs(teacher_full).coroutine()
             for teacher_full in teacher_full_sequences_D
         ]
     )
@@ -256,22 +268,25 @@ async def compute_sdft_advantages(
         teacher_lp_tensor = torch.tensor(teacher_completion_lps, dtype=torch.float32)
 
         new_advantages = torch.zeros_like(mask)
-        completion_mask_indices = torch.where(mask > 0)[0]
-
-        num_tokens = min(len(teacher_lp_tensor), len(completion_mask_indices))
-        for t in range(num_tokens):
-            idx = int(completion_mask_indices[t].item())
-            new_advantages[idx] = teacher_lp_tensor[t] - student_lp[idx]
+        positions = [
+            (student_pos, teacher_offset)
+            for student_pos, teacher_offset in _completion_positions(mask, completion_len)
+            if teacher_offset < len(teacher_lp_tensor)
+        ]
+        for student_pos, teacher_offset in positions:
+            new_advantages[student_pos] = (
+                teacher_lp_tensor[teacher_offset] - student_lp[student_pos]
+            )
 
         datum.loss_fn_inputs["advantages"] = tinker.TensorData.from_torch(new_advantages)
 
         masked_advantages = new_advantages * mask
         total_advantage_sum += masked_advantages.sum().item()
         total_mask_sum += mask.sum().item()
-        total_teacher_lp_sum += (teacher_lp_tensor[:num_tokens]).sum().item()
-        total_student_lp_sum += sum(
-            student_lp[int(completion_mask_indices[t].item())].item() for t in range(num_tokens)
+        total_teacher_lp_sum += (
+            teacher_lp_tensor[[teacher_offset for _, teacher_offset in positions]].sum().item()
         )
+        total_student_lp_sum += sum(student_lp[student_pos].item() for student_pos, _ in positions)
 
     metrics: dict[str, float] = {}
     if total_mask_sum > 0:
@@ -363,13 +378,13 @@ async def build_topk_distillation_datums(
     # Step 2: Get top-K logprobs from teacher in parallel
     topk_responses_D = await asyncio.gather(
         *[
-            teacher_client.sample_async(
+            teacher_client.sample(
                 prompt=teacher_forced,
                 num_samples=1,
                 sampling_params=tinker.SamplingParams(max_tokens=1),
                 include_prompt_logprobs=True,
                 topk_prompt_logprobs=topk,
-            )
+            ).coroutine()
             for teacher_forced in teacher_forced_sequences_D
         ]
     )
@@ -382,26 +397,24 @@ async def build_topk_distillation_datums(
 
     for i, datum in enumerate(data_D):
         mask = datum.loss_fn_inputs["mask"].to_torch()
-        completion_mask_indices = torch.where(mask > 0)[0]
         N = datum.model_input.length
         completion_len = completion_lengths_D[i]
         teacher_prompt_len = teacher_prompt_lengths_D[i]
+        positions = _completion_positions(mask, completion_len)
 
         target_tokens_NK = torch.zeros(N, topk, dtype=torch.long)
         weights_NK = torch.zeros(N, topk, dtype=torch.float32)
         n_completion_positions = 0
 
-        if completion_len > 0 and len(completion_mask_indices) > 0:
+        if positions:
             topk_all = topk_responses_D[i].topk_prompt_logprobs
 
-            num_tokens = min(completion_len, len(completion_mask_indices))
-            for t in range(num_tokens):
+            for t, (student_pos, teacher_offset) in enumerate(positions):
                 # Skip first N completion tokens (reference skips 3)
                 if t < skip_first_n_tokens:
                     continue
 
-                teacher_pos = teacher_prompt_len + t
-                student_pos = int(completion_mask_indices[t].item())
+                teacher_pos = teacher_prompt_len + teacher_offset
 
                 if topk_all is None or teacher_pos >= len(topk_all):
                     continue
@@ -434,7 +447,7 @@ async def build_topk_distillation_datums(
                 # Teacher entropy for monitoring (H = -sum p log p)
                 total_teacher_entropy += -(probs * logprobs).sum().item()
 
-            total_completion_tokens += num_tokens
+            total_completion_tokens += len(positions)
 
         raw_datums.append((target_tokens_NK, weights_NK, n_completion_positions))
 
@@ -524,13 +537,13 @@ async def build_reverse_kl_datums(
 
     topk_responses_D = await asyncio.gather(
         *[
-            teacher_client.sample_async(
+            teacher_client.sample(
                 prompt=teacher_forced,
                 num_samples=1,
                 sampling_params=tinker.SamplingParams(max_tokens=1),
                 include_prompt_logprobs=True,
                 topk_prompt_logprobs=topk,
-            )
+            ).coroutine()
             for teacher_forced in teacher_forced_sequences_D
         ]
     )
@@ -541,26 +554,24 @@ async def build_reverse_kl_datums(
 
     for i, datum in enumerate(data_D):
         mask = datum.loss_fn_inputs["mask"].to_torch()
-        completion_mask_indices = torch.where(mask > 0)[0]
         N = datum.model_input.length
         completion_len = completion_lengths_D[i]
         teacher_prompt_len = teacher_prompt_lengths_D[i]
+        positions = _completion_positions(mask, completion_len)
 
         target_tokens_NK = torch.zeros(N, topk, dtype=torch.long)
         # All slots start at 0 (masked). Valid slots get the renormalized
         # teacher probability; masked positions and unused slots keep 0.
         weights_NK = torch.zeros(N, topk, dtype=torch.float32)
 
-        if completion_len > 0 and len(completion_mask_indices) > 0:
+        if positions:
             topk_all = topk_responses_D[i].topk_prompt_logprobs
 
-            num_tokens = min(completion_len, len(completion_mask_indices))
-            for t in range(num_tokens):
+            for t, (student_pos, teacher_offset) in enumerate(positions):
                 if t < skip_first_n_tokens:
                     continue
 
-                teacher_pos = teacher_prompt_len + t
-                student_pos = int(completion_mask_indices[t].item())
+                teacher_pos = teacher_prompt_len + teacher_offset
 
                 if topk_all is None or teacher_pos >= len(topk_all):
                     continue
@@ -690,7 +701,7 @@ async def _train_step_reverse_kl(
     """Substep-pipelined custom forward/backward for the reverse-KL loss.
 
     Mirrors :func:`tinker_cookbook.rl.train.train_step` but uses
-    ``forward_backward_custom_async`` with :func:`reverse_kl_custom_loss`.
+    ``forward_backward_custom`` with :func:`reverse_kl_custom_loss`.
     The datums produced by :func:`build_reverse_kl_datums` carry only
     ``target_tokens`` and ``weights`` (with ``0`` in ``weights`` acting as
     the mask sentinel), so no ``mask`` stripping is needed.
@@ -700,27 +711,25 @@ async def _train_step_reverse_kl(
         return
 
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
-    fwd_bwd_future = await training_client.forward_backward_custom_async(
-        batches[0], reverse_kl_custom_loss
-    )
-    optim_future = await training_client.optim_step_async(adam_params)
+    fwd_bwd_future = training_client.forward_backward_custom(batches[0], reverse_kl_custom_loss)
+    optim_future = training_client.optim_step(adam_params)
     loss_metrics: dict[str, float] = {}
     optim_result: tinker.OptimStepResponse | None = None
 
     for i in range(len(batches)):
         if i + 1 < len(batches):
-            next_fwd_bwd_future = await training_client.forward_backward_custom_async(
+            next_fwd_bwd_future = training_client.forward_backward_custom(
                 batches[i + 1], reverse_kl_custom_loss
             )
-            next_optim_future = await training_client.optim_step_async(adam_params)
+            next_optim_future = training_client.optim_step(adam_params)
         else:
             next_fwd_bwd_future = None
             next_optim_future = None
 
-        fwd_bwd_result = await fwd_bwd_future.result_async()
+        fwd_bwd_result = await fwd_bwd_future
         if fwd_bwd_result.metrics:
             loss_metrics.update(fwd_bwd_result.metrics)
-        optim_result = await optim_future.result_async()
+        optim_result = await optim_future
 
         if next_fwd_bwd_future is not None and next_optim_future is not None:
             fwd_bwd_future = next_fwd_bwd_future
@@ -783,6 +792,8 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set.
+    session_name: str | None = None
     load_checkpoint_path: str | None = None
     max_steps: int | None = None
 
@@ -843,9 +854,16 @@ async def main(
     start_batch = resume_info.batch if resume_info else 0
 
     # Service and training client setup
+    session_display_name = resolve_session_display_name(
+        session_name=cfg.session_name,
+        wandb_name=cfg.wandb_name,
+    )
+    if session_display_name is not None:
+        logger.info(f"Tinker session display name: {session_display_name}")
     service_client = tinker.ServiceClient(
         base_url=cfg.base_url,
         user_metadata=recipe_user_metadata(cfg.recipe_name),
+        display_name=session_display_name,
     )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
@@ -857,22 +875,20 @@ async def main(
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, resume_info.state_path, cfg.renderer_name
         )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
-            )
+        training_client = await service_client.create_training_client_from_state_with_optimizer(
+            resume_info.state_path, user_metadata=user_metadata
         )
         logger.info(f"Resumed training from {resume_info.state_path}")
     elif cfg.load_checkpoint_path:
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, cfg.load_checkpoint_path, cfg.renderer_name
         )
-        training_client = await service_client.create_training_client_from_state_async(
+        training_client = await service_client.create_training_client_from_state(
             cfg.load_checkpoint_path, user_metadata=user_metadata
         )
         logger.info(f"Loaded weights from {cfg.load_checkpoint_path}")
     else:
-        training_client = await service_client.create_lora_training_client_async(
+        training_client = await service_client.create_lora_training_client(
             cfg.model_name, rank=cfg.lora_rank, user_metadata=user_metadata
         )
 
@@ -891,7 +907,7 @@ async def main(
         evaluators.append(RLTestSetEvaluator(test_dataset, max_tokens=cfg.max_tokens))
 
     # Teacher sampling client (same base model, static weights by default)
-    teacher_client = service_client.create_sampling_client(base_model=cfg.model_name)
+    teacher_client = service_client.create_sampling_client(base_model=cfg.model_name).result()
     logger.info(f"Created static teacher sampling client for {cfg.model_name}")
 
     checkpoint_mgr = checkpoint_utils.CheckpointManager(
@@ -931,7 +947,7 @@ async def main(
             # Uses the RL rollout infrastructure (do_group_rollout) rather than
             # raw sampling so that group_size > 1 and multi-turn environments
             # work out of the box. With the default group_size=1, this is
-            # equivalent to a single sample_async call per problem.
+            # equivalent to a single sample call per problem.
             async with trace.scope_span("sample"):
                 trajectory_groups_raw = await asyncio.gather(
                     *[
@@ -1058,11 +1074,11 @@ async def main(
             # Optional teacher hard-sync
             if cfg.teacher_sync_every and (i_batch + 1) % cfg.teacher_sync_every == 0:
                 sync_name = f"teacher_sync_{i_batch + 1}"
-                sync_future = await training_client.save_weights_for_sampler_async(sync_name)
-                sync_result = await sync_future.result_async()
+                sync_future = training_client.save_weights_for_sampler(sync_name)
+                sync_result = await sync_future
                 teacher_client = service_client.create_sampling_client(
                     base_model=cfg.model_name, model_path=sync_result.path
-                )
+                ).result()
                 logger.info(f"Synced teacher weights at step {i_batch + 1}")
 
         # Log timing

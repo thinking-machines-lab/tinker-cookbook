@@ -96,9 +96,11 @@ def _build_openai_messages(image: ImageInput, prompt: str) -> list[Message]:
     chat = import_module("tml_renderers.chat")
     mime = "image/png" if image.format == "PNG" else "image/jpeg"
     image_base64 = base64.b64encode(image.path.read_bytes()).decode("ascii")
+    # tml-renderers 0.2.1 and earlier have no from_openai_chat_dicts. There, pass
+    # openai_messages_to_tinker(<these dicts>) to the renderer instead.
     return cast(
         list[Message],
-        chat.OpenAIMessage.from_oss_messages(
+        chat.OpenAIMessage.from_openai_chat_dicts(
             [
                 {
                     "role": "user",
@@ -182,8 +184,8 @@ async def async_main(cfg: Config) -> None:
     prompt = renderer.build_generation_prompt(messages)
 
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
-    sampling_client = await service_client.create_sampling_client_async(base_model=cfg.model_name)
-    response = await sampling_client.sample_async(
+    sampling_client = await service_client.create_sampling_client(base_model=cfg.model_name)
+    response = await sampling_client.sample(
         prompt=prompt,
         num_samples=1,
         sampling_params=tinker.SamplingParams(

@@ -70,7 +70,7 @@ def copy_checkpoint(
             source_path,
             weights_access_token=source_access_token,
             user_metadata={"copied_from_path": source_path},
-        )
+        ).result()
     else:
         raise SystemExit(
             "copy_checkpoint requires tinker>=0.19.0. "

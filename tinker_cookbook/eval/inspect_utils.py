@@ -297,7 +297,9 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
             self.sampling_client = sampling_client
         elif model_path is not None:
             service_client = tinker.ServiceClient(api_key=api_key)
-            self.sampling_client = service_client.create_sampling_client(model_path=model_path)
+            self.sampling_client = service_client.create_sampling_client(
+                model_path=model_path
+            ).result()
         else:
             raise ConfigurationError("Either model_path or sampling_client must be provided")
 
@@ -333,7 +335,7 @@ class InspectAPIFromTinkerSampling(InspectAIModelAPI):
         )
 
         start_time = time.time()
-        sample_result = await self.sampling_client.sample_async(
+        sample_result = await self.sampling_client.sample(
             prompt=prompt, sampling_params=sampling_params, num_samples=num_responses
         )
         sampled_token_sequences = sample_result.sequences

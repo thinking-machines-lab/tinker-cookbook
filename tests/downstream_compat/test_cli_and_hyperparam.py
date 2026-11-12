@@ -256,6 +256,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 1_013_760,
         (False, False, True): 134_400,
     },
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017": {
+        (True, True, True): 108_821_760,
+        (True, True, False): 108_687_360,
+        (True, False, True): 107_808_000,
+        (True, False, False): 107_673_600,
+        (False, True, True): 1_148_160,
+        (False, True, False): 1_013_760,
+        (False, False, True): 134_400,
+    },
     "meta-llama/Llama-3.1-70B": {
         (True, True, True): 13_079_808,
         (True, True, False): 12_943_360,
@@ -337,6 +346,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 1_940_288,
         (False, False, True): 171_008,
     },
+    "moonshotai/Kimi-K3.1-Pro": {
+        (True, True, True): 774_669_824,
+        (True, True, False): 774_498_816,
+        (True, False, True): 766_628_864,
+        (True, False, False): 766_457_856,
+        (False, True, True): 8_211_968,
+        (False, True, False): 8_040_960,
+        (False, False, True): 171_008,
+    },
     "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16": {
         (True, True, True): 12_064_768,
         (True, True, False): 11_931_008,
@@ -408,6 +426,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, True): 3_631_424,
         (False, True, False): 3_424_256,
         (False, False, True): 207_168,
+    },
+    "thinkingmachines/Inkling-2-Small": {
+        (True, True, True): 130_618_176,
+        (True, True, False): 130_412_544,
+        (True, False, True): 128_271_168,
+        (True, False, False): 128_065_536,
+        (False, True, True): 2_552_640,
+        (False, True, False): 2_347_008,
+        (False, False, True): 205_632,
     },
     "thinkingmachines/Inkling-Small": {
         (True, True, True): 66_020_672,

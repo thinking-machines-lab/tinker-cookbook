@@ -269,7 +269,7 @@ async def compute_early_exit_confidence(
 
     Builds a chat-templated sequence ending with the CoT prefix + answer,
     then measures how much probability mass the model places on the answer
-    tokens via ``compute_logprobs_async``.
+    tokens via ``compute_logprobs``.
 
     The full sequence is:
         <chat template> <think> cot_prefix </think> \\boxed{answer}
@@ -313,10 +313,10 @@ async def compute_early_exit_confidence(
     full_input = full_input.append(tinker.EncodedTextChunk(tokens=answer_tokens))
 
     # Compute logprobs for the full sequence
-    logprobs = await sampling_client.compute_logprobs_async(full_input)
+    logprobs = await sampling_client.compute_logprobs(full_input)
 
     # Extract logprobs for the answer tokens.
-    # compute_logprobs_async returns logprobs[i] = log P(token[i+1] | token[0..i])
+    # compute_logprobs returns logprobs[i] = log P(token[i+1] | token[0..i])
     # So logprobs[answer_start_pos - 1] = log P(first_answer_token | prefix)
     answer_lps = logprobs[answer_start_pos - 1 : answer_start_pos - 1 + len(answer_tokens)]
 
@@ -504,7 +504,7 @@ async def generate_cot_and_compute_tts(
     tokenizer = get_tokenizer(model_name)
     renderer = renderers.get_renderer(renderer_name, tokenizer=tokenizer)
 
-    sampling_client = await service_client.create_sampling_client_async(base_model=model_name)
+    sampling_client = await service_client.create_sampling_client(base_model=model_name)
 
     # Build generation prompt using the renderer's chat template
     messages: list[renderers.Message] = [
@@ -515,7 +515,7 @@ async def generate_cot_and_compute_tts(
 
     # Generate CoT with greedy decoding (temperature=0), following the paper
     logger.info(f"Generating CoT for: {question[:80]}...")
-    sample_result = await sampling_client.sample_async(
+    sample_result = await sampling_client.sample(
         prompt=model_input,
         num_samples=1,
         sampling_params=tinker.SamplingParams(

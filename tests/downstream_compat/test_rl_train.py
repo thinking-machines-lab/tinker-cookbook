@@ -47,12 +47,14 @@ class TestRLDataProcessing:
     def test_trajectory_to_data_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params
 
-        assert_params(trajectory_to_data, ["traj", "traj_advantage"])
+        assert_params(trajectory_to_data, ["traj", "traj_advantage", "include_provenance"])
 
     def test_assemble_training_data_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params
 
-        assert_params(assemble_training_data, ["trajectory_groups_P", "advantages_P"])
+        assert_params(
+            assemble_training_data, ["trajectory_groups_P", "advantages_P", "include_provenance"]
+        )
 
 
 # ---------------------------------------------------------------------------

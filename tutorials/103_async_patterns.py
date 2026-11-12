@@ -69,7 +69,7 @@ async def _(api_key, get_renderer, mo, os, tinker):
     BASE_MODEL = "Qwen/Qwen3.5-4B"
 
     service_client = tinker.ServiceClient()
-    sampling_client = await service_client.create_sampling_client_async(base_model=BASE_MODEL)
+    sampling_client = await service_client.create_sampling_client(base_model=BASE_MODEL)
     tokenizer = sampling_client.get_tokenizer()
     renderer = get_renderer("qwen3_5", tokenizer)
 
@@ -98,7 +98,7 @@ def _(mo):
     mo.md(r"""
     ## Sequential sampling (the slow way)
 
-    The simplest approach: for each prompt, build the generation input, `await sample_async()` to block until it finishes, then move on to the next. Each request waits for the previous one to complete before starting.
+    The simplest approach: for each prompt, build the generation input, `await sample()` to block until it finishes, then move on to the next. Each request waits for the previous one to complete before starting.
     """)
     return
 
@@ -117,7 +117,7 @@ async def _(
     for _prompt_text in prompts:
         _messages = [{"role": "user", "content": _prompt_text}]
         _model_input = renderer.build_generation_prompt(_messages)
-        _result = await sampling_client.sample_async(
+        _result = await sampling_client.sample(
             prompt=_model_input, num_samples=1, sampling_params=params
         )
         _response_msg, _ = renderer.parse_response(_result.sequences[0].tokens)
@@ -139,7 +139,7 @@ def _(mo):
     mo.md(r"""
     ## Concurrent sampling with `asyncio.gather`
 
-    `asyncio.gather` schedules every `sample_async()` coroutine onto the event loop at once, so all the requests go out before any of them finishes -- then it waits for the whole batch. The key insight: submit **all** requests first, then collect results. Tinker batches concurrent requests on the GPU for higher throughput.
+    `asyncio.gather` schedules every sampling helper coroutine onto the event loop at once. Each `sample()` call submits its request immediately and returns an `APIFuture`, so all requests can run concurrently while the helpers await their results. The key insight: submit **all** requests first, then collect results. Tinker batches concurrent requests on the GPU for higher throughput.
     """)
     return
 
@@ -161,7 +161,7 @@ async def _(
     async def _sample_one(_prompt_text):
         _messages = [{"role": "user", "content": _prompt_text}]
         _model_input = renderer.build_generation_prompt(_messages)
-        return await sampling_client.sample_async(
+        return await sampling_client.sample(
             prompt=_model_input, num_samples=1, sampling_params=params
         )
 
@@ -198,7 +198,7 @@ async def _(get_text_content, params, renderer, sampling_client, time):
     _messages = [{"role": "user", "content": test_prompt}]
     _model_input = renderer.build_generation_prompt(_messages)
     _start = time.time()
-    _result = await sampling_client.sample_async(
+    _result = await sampling_client.sample(
         prompt=_model_input, num_samples=_GROUP_SIZE, sampling_params=params
     )
 
@@ -212,9 +212,7 @@ async def _(get_text_content, params, renderer, sampling_client, time):
 
     _start = time.time()
     for _ in range(_GROUP_SIZE):
-        await sampling_client.sample_async(
-            prompt=_model_input, num_samples=1, sampling_params=params
-        )
+        await sampling_client.sample(prompt=_model_input, num_samples=1, sampling_params=params)
     sequential_multi_time = time.time() - _start
 
     print(f"num_samples={_GROUP_SIZE} in one call: {multi_time:.1f}s")
@@ -251,7 +249,7 @@ async def _(
     async def _sample_group(_prompt_text):
         _messages = [{"role": "user", "content": _prompt_text}]
         _model_input = renderer.build_generation_prompt(_messages)
-        _result = await sampling_client.sample_async(
+        _result = await sampling_client.sample(
             prompt=_model_input, num_samples=_GROUP_SIZE, sampling_params=params
         )
         return _prompt_text, _result

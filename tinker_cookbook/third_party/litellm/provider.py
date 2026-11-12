@@ -123,7 +123,7 @@ async def _sample_chat_completion(
     if stop is None:
         stop = renderer.get_stop_sequences()
 
-    sample_response = await sampling_client.sample_async(
+    sample_response = await sampling_client.sample(
         prompt=model_input,
         num_samples=1,
         sampling_params=tinker.SamplingParams(
@@ -337,8 +337,8 @@ class TinkerLiteLLMProvider(CustomLLM):
             tokenizer = get_tokenizer(base_model)
             renderer_name = get_recommended_renderer_name(base_model)
             renderer = renderers.get_renderer(renderer_name, tokenizer)
-            sampling_client = self._get_service_client().create_sampling_client(
-                base_model=base_model
+            sampling_client = (
+                self._get_service_client().create_sampling_client(base_model=base_model).result()
             )
             self._clients[base_model] = _ClientBundle(
                 sampling_client=sampling_client,

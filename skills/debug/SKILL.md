@@ -23,8 +23,8 @@ Understanding the SDK's threading model is key to diagnosing most issues. The SD
 │     Main Thread      │     │      SDK Background Thread    │
 │  (user code)         │     │  (asyncio event loop)         │
 │                      │     │                               │
-│  fb = tc.fwd_bwd_   │────>│  HTTP POST /forward_backward  │
-│       async(data)    │     │  → returns request_id         │
+│  fb = tc.forward_   │────>│  HTTP POST /forward_backward  │
+│    backward(data)    │     │  → returns request_id         │
 │                      │     │                               │
 │  # prepare next      │     │  Long-poll /retrieve_future   │
 │  # batch here...     │     │  (HTTP 408 = not ready yet)   │
@@ -35,7 +35,7 @@ Understanding the SDK's threading model is key to diagnosing most issues. The SD
 └─────────────────────┘     └──────────────────────────────┘
 ```
 
-When you call `forward_backward_async()`, the SDK:
+When you call `forward_backward()`, the SDK:
 1. Submits the request coroutine to the background thread
 2. Returns a future immediately (main thread continues)
 3. Background thread sends HTTP request, starts long-polling for result
@@ -74,7 +74,8 @@ except ImportError: pass
 
 **Known problem versions:**
 - `pydantic >= 2.13.0b1` (beta): Serialization regression makes `model_dump()` extremely slow on large payloads (tokens/tensors). Symptom: SDK thread stalls for minutes on `forward_backward` submission. Fix: pin `pydantic<2.13` or use a stable release.
-- `transformers == 5.3.0`: Incorrect `tokenizer_class` for DeepSeek V2/V3 models (huggingface/transformers#44801, fixed in 5.3.1). Causes tokenizer loading failures. Upgrade or skip this version.
+- `transformers == 5.3.0` or `5.6.x`: `AutoTokenizer` resolves DeepSeek V2/V3 models to `LlamaTokenizer`, which strips spaces on decode (huggingface/transformers#44801). Upgrade to `>=5.7.0` or skip these versions.
+- `transformers 5.4.0`–`5.5.3`: `AutoTokenizer` resolves Kimi K2 models to the wrong tokenizer class on some platforms. Use `5.5.4` or `>=5.7.0`.
 - `transformers < 5.0`: Bug in `Qwen2VLImageProcessor` that miscounts image tokens for VL models. Fix: upgrade to `>=5.0`.
 - Always check if the user is on the **latest stable** tinker SDK. Suggest `pip install --upgrade tinker`.
 
@@ -88,16 +89,16 @@ The single most common performance mistake. If the user's code awaits each API c
 
 ```python
 # BAD: sequential — GPU idle while client prepares next call
-result = tc.forward_backward(data=batch, loss_fn="cross_entropy")  # blocks
-tc.optim_step(adam_params=params)  # blocks
+result = tc.forward_backward(data=batch, loss_fn="cross_entropy").result()  # blocks
+tc.optim_step(adam_params=params).result()  # blocks
 
 # BAD: async but still sequential
-result = await tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
-await tc.optim_step_async(adam_params=params)
+result = await tc.forward_backward(data=batch, loss_fn="cross_entropy")
+await tc.optim_step(adam_params=params)
 
 # GOOD: pipelined — submit both before awaiting
-fb_future = tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
-optim_future = tc.optim_step_async(adam_params=params)
+fb_future = tc.forward_backward(data=batch, loss_fn="cross_entropy")
+optim_future = tc.optim_step(adam_params=params)
 # ... prepare next batch while GPU works ...
 fb_result = fb_future.result()
 optim_result = optim_future.result()
@@ -137,7 +138,7 @@ If the user has a custom script without cookbook tracing, suggest wrapping key s
 import time
 
 t0 = time.perf_counter()
-fb_future = tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
+fb_future = tc.forward_backward(data=batch, loss_fn="cross_entropy")
 t_submit = time.perf_counter() - t0
 
 t0 = time.perf_counter()
@@ -200,7 +201,7 @@ The `--async-mode=enabled` flag is critical — without it, time spent in `await
 When a session is actively slow or hung, use the async task dump + thread stack watchdog to see what both threads are doing in real-time. Read `references/async-task-dump.md` for ready-to-paste diagnostic code.
 
 **Interpreting the output:**
-- SDK thread has pending `_forward_backward_async` tasks → Work submitted, waiting for server
+- SDK thread has pending `_run_async` tasks → Work submitted, waiting for server
 - SDK thread has pending `_result_async` → Normal long-polling behavior
 - SDK thread stopped logging entirely → **GIL contention** — the background thread can't wake up
 - Main thread stuck in numpy/torch/data code while SDK thread is stalled → GIL is the bottleneck
@@ -210,7 +211,7 @@ When a session is actively slow or hung, use the async task dump + thread stack 
 This is the most subtle and most common cause of "mysterious" slowdowns. Because the SDK's background thread shares Python's GIL with the main thread, CPU-heavy work in the user's code blocks the SDK from:
 - **Sending heartbeats** → Session may expire (warning: "Session heartbeat failed")
 - **Polling for results** → Futures appear to hang for minutes
-- **Submitting new requests** → Pipelining breaks even when using `_async` variants
+- **Submitting new requests** → Pipelining breaks even when submitting calls before awaiting
 
 **Symptoms of GIL contention:**
 - Steps are slow but server-side traces show the GPU finished quickly
@@ -260,9 +261,9 @@ If GIL is not the issue and the client submits quickly, check whether the wait i
 
 ```python
 import time, tinker
-svc = tinker.ServiceClient()
+rest = tinker.RestClient()
 t0 = time.perf_counter()
-caps = svc.get_server_capabilities()
+caps = rest.get_server_capabilities().result()
 print(f"API round-trip: {time.perf_counter() - t0:.2f}s")
 # >2s suggests network issues; <1s rules out network
 ```
@@ -302,7 +303,7 @@ from tinker_cookbook import weights
 
 # Download adapter
 adapter_dir = weights.download(
-    tinker_path="tinker://session-id/sampler_weights/step_N",
+    tinker_path="tinker://session-id/external_weights/step_N",
     output_dir="./adapter",
 )
 
@@ -390,14 +391,14 @@ svc = tinker.ServiceClient()
 # Step 1: API reachable?
 t0 = time.perf_counter()
 try:
-    caps = svc.get_server_capabilities()
-    print(f"API reachable ({time.perf_counter() - t0:.2f}s), {len(caps.models)} models available")
+    caps = tinker.RestClient().get_server_capabilities().result()
+    print(f"API reachable ({time.perf_counter() - t0:.2f}s), {len(caps.supported_models)} models available")
 except Exception as e:
     print(f"API unreachable: {type(e).__name__}: {e}")
 
 # Step 2: Can we create a training session? (small model for speed)
 try:
-    tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32)
+    tc = svc.create_lora_training_client(base_model="Qwen/Qwen3.5-9B-Base", rank=32).result()
     print(f"Training client created: {tc.get_info()}")
 except Exception as e:
     print(f"Training client failed: {type(e).__name__}: {e}")
@@ -452,6 +453,7 @@ Never hardcode renderer names. Each model family has specific token formats, and
 | DeepSeek V3 | `deepseekv3_thinking` | `deepseekv3` | Default is non-thinking. Thinking adds `<think>` prefill. |
 | DeepSeek V4.1 | `deepseekv4_1` | `deepseekv4_1_disable_thinking` | Default is thinking, reasoning effort high; `deepseekv4_1_low_reasoning`/`deepseekv4_1_max_reasoning` select other efforts. |
 | Kimi K2.6 | `kimi_k26` | `kimi_k26_disable_thinking` | Vision-capable. |
+| Kimi K3.1-Pro | `kimi_k31_pro_max_reasoning` | `kimi_k31_pro_disable_thinking` | Default reasoning effort is max; `kimi_k31_pro_high_reasoning`/`_low_reasoning` select lower efforts. Renders through `tml-renderers`. |
 | GLM-5.3 / GLM-5.3-Flash | `glm5_3_max_reasoning` | — | Thinking cannot be disabled; `glm5_3_low_reasoning`/`glm5_3_high_reasoning` select lower efforts. |
 | Nemotron3 | `nemotron3` | `nemotron3_disable_thinking` | |
 
@@ -503,6 +505,18 @@ else:
     print(f"  Cookbook length: {len(cookbook_tokens)}, HF length: {len(hf_tokens)}")
 ```
 
+**Models rendered by `tml-renderers`** (Inkling and Kimi K3.1-Pro; `tokenizer_utils.is_tml_renderers_model` returns `True`): `get_tokenizer` returns a `TmlRenderersTokenizerAdapter`, which has no `apply_chat_template`. Compare against the `tml-renderers` wheel instead:
+
+```python
+from importlib import import_module
+
+from tinker_cookbook.third_party.tml_renderers_compat import tinker_messages_to_message_list
+
+wheel = import_module("tml_renderers.renderers").KimiK31Pro()  # same as kimi_k31_pro_max_reasoning
+spans, _ = wheel.render_for_completion(tinker_messages_to_message_list(messages))
+wheel_tokens = import_module("tml_renderers.tinker").token_spans_to_tinker_model_input(spans).to_ints()
+```
+
 **If tokens match:** The renderer is correct. The issue is elsewhere (training config, data quality, etc.).
 
 **If tokens don't match:** Check these common causes:
@@ -512,7 +526,7 @@ else:
 
 ### Step 3: Check thinking mode handling
 
-For models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Nemotron3):
+For models with thinking capabilities (Qwen3, Qwen3.5/Qwen3.6, DeepSeek V3, Kimi K2.6, Kimi K3.1-Pro, Nemotron3):
 
 - Use the `_disable_thinking` renderer variant if you don't want `<think>` blocks
 - Historical assistant messages may have thinking stripped by default (depends on renderer)
@@ -617,7 +631,7 @@ Training quality is poor (high KL, bad outputs)
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Every step takes 5-10min | Missing async pipelining | Use `_async` variants, submit before await |
+| Every step takes 5-10min | Missing async pipelining | Submit calls before awaiting their `APIFuture`s |
 | First step slow, rest normal | Model warm-up / JIT | Expected behavior, no fix needed |
 | Steps hang indefinitely | Dependency bug or network | Check pydantic version; try different machine |
 | Slow with large batch_size | Payload serialization | Check pydantic version; reduce batch_size |

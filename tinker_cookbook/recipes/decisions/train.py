@@ -5,20 +5,20 @@ Tensor suffixes: T = token positions, K = choices, D = datums.
 Cross-entropy on the correct choice::
 
     datums = decision_choice_datums(decision_renderer, [(decision, "billing"), ...])
-    fwd_bwd_future = await training_client.forward_backward_async(datums, loss_fn="cross_entropy")
-    optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
-    await fwd_bwd_future.result_async()
-    await optim_future.result_async()
+    fwd_bwd_future = training_client.forward_backward(datums, loss_fn="cross_entropy")
+    optim_future = training_client.optim_step(tinker.AdamParams(learning_rate=1e-4))
+    await fwd_bwd_future
+    await optim_future
 
 A custom loss on the probability distribution over choices::
 
     datums = decision_dist_datums(decision_renderer, [(decision, {"billing": 1.0}), ...])
-    fwd_bwd_future = await training_client.forward_backward_custom_async(
+    fwd_bwd_future = training_client.forward_backward_custom(
         datums, probability_loss(lambda probs, target: ((probs - target) ** 2).sum())
     )
-    optim_future = await training_client.optim_step_async(tinker.AdamParams(learning_rate=1e-4))
-    await fwd_bwd_future.result_async()
-    await optim_future.result_async()
+    optim_future = training_client.optim_step(tinker.AdamParams(learning_rate=1e-4))
+    await fwd_bwd_future
+    await optim_future
 """
 
 from __future__ import annotations

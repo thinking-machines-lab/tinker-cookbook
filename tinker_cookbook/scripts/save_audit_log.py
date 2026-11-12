@@ -47,7 +47,7 @@ import tinker
 from tinker.types import AuditLogEntry, AuditLogResponse
 
 if TYPE_CHECKING:
-    from tinker.lib.public_interfaces.rest_client import RestClient
+    from tinker import AdminClient
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def _write_atomic(path: Path, response: AuditLogResponse) -> None:
 
 
 def fetch_and_save_day(
-    rest_client: RestClient,
+    rest_client: AdminClient,
     output_dir: Path,
     day: date,
 ) -> int:
@@ -111,7 +111,7 @@ def days_to_fetch(
 
 
 def run_once(
-    rest_client: RestClient,
+    rest_client: AdminClient,
     output_dir: Path,
     backfill_days: int,
 ) -> None:
@@ -160,8 +160,7 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    service_client = tinker.ServiceClient()
-    rest_client = service_client.create_rest_client()
+    rest_client = tinker.AdminClient()
 
     if args.once:
         run_once(rest_client, args.output_dir, args.backfill_days)

@@ -264,7 +264,7 @@ class PreferenceModelFromChatRenderer(PreferenceModel):
                 a tie or an unrecognized output.
         """
         pm_input = self.comparison_renderer.build_generation_prompt(comparison)
-        response = await self.sampling_client.sample_async(
+        response = await self.sampling_client.sample(
             pm_input,
             num_samples=1,
             sampling_params=types.SamplingParams(temperature=0.0, max_tokens=1),
@@ -320,7 +320,11 @@ class PreferenceModelBuilderFromChatRenderer(PreferenceModelBuilder):
                 Tinker sampling client.
         """
         convo_renderer = renderers.get_renderer(self.renderer_name, get_tokenizer(self.model_name))
-        sampling_client = tinker.ServiceClient(base_url=self.base_url).create_sampling_client(
-            model_path=self.rm_weights_path,
+        sampling_client = (
+            tinker.ServiceClient(base_url=self.base_url)
+            .create_sampling_client(
+                model_path=self.rm_weights_path,
+            )
+            .result()
         )
         return PreferenceModelFromChatRenderer(convo_renderer, sampling_client)

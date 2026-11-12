@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tinker_cookbook.stores.eval_store import EvalStore, RunMetadata
-from tinker_cookbook.stores.storage import LocalStorage
+from tinker_cookbook.stores.storage import LocalStorage, storage_join
 
 
 class TestEvalStorePathConstructor:
@@ -87,6 +87,66 @@ class TestDeleteRun:
         # Directories should be cleaned up too
         assert not (tmp_path / "eval" / "runs" / run_id / "gsm8k").exists()
         assert not (tmp_path / "eval" / "runs" / run_id).exists()
+
+    @pytest.mark.parametrize("prefix", ["", "eval"])
+    @pytest.mark.parametrize("with_metadata", [False, True])
+    @pytest.mark.parametrize("transcript", [b"", b'{"idx": 0, "reward": 1.0}\n'])
+    def test_delete_run_removes_unfinished_benchmark(
+        self, tmp_path: Path, prefix: str, with_metadata: bool, transcript: bytes
+    ) -> None:
+        storage = LocalStorage(tmp_path)
+        store = EvalStore(storage, prefix)
+        if with_metadata:
+            store.create_run("model", ["complete", "unfinished"], run_id="target")
+        run_path = storage_join(prefix, "runs", "target")
+        storage.write(storage_join(run_path, "complete", "result.json"), b"{}")
+        storage.write(storage_join(run_path, "complete", "trajectories.jsonl"), transcript)
+        storage.write(storage_join(run_path, "unfinished", "trajectories.jsonl"), transcript)
+        storage.write(storage_join(run_path, "summary.json"), b"{}")
+        store.create_run("model", [], run_id="target-extra")
+        other_store = EvalStore(storage, "other")
+        other_store.create_run("model", [], run_id="target")
+        index = storage.read(storage_join(prefix, "runs.jsonl"))
+
+        assert store.list_benchmarks("target") == ["complete"]
+        store.delete_run("target")
+        store.delete_run("target")
+
+        assert not storage.exists(run_path)
+        assert store.list_benchmarks("target") == []
+        assert [run.run_id for run in store.list_runs()] == ["target-extra"]
+        assert storage.read(storage_join(prefix, "runs.jsonl")) == index
+        assert store.read_run("target-extra").model_name == "model"
+        assert other_store.read_run("target").model_name == "model"
+
+    @pytest.mark.parametrize("prefix", ["", "eval"])
+    @pytest.mark.parametrize("with_metadata", [False, True])
+    def test_delete_empty_run(self, tmp_path: Path, prefix: str, with_metadata: bool) -> None:
+        storage = LocalStorage(tmp_path)
+        store = EvalStore(storage, prefix)
+        run_path = storage_join(prefix, "runs", "empty")
+        if with_metadata:
+            store.create_run("model", [], run_id="empty")
+        else:
+            (tmp_path / run_path).mkdir(parents=True)
+
+        store.delete_run("empty")
+        store.delete_run("empty")
+
+        assert not storage.exists(run_path)
+
+    def test_delete_run_leaves_unknown_artifacts(self, tmp_path: Path) -> None:
+        storage = LocalStorage(tmp_path)
+        store = EvalStore(storage)
+        store.create_run("model", [], run_id="target")
+        storage.write("runs/target/note.txt", b"unrecognized artifact")
+        storage.write("runs/target/unfinished/trajectories.jsonl", b"{}\n")
+
+        store.delete_run("target")
+
+        assert not storage.exists("runs/target/unfinished/trajectories.jsonl")
+        assert storage.read("runs/target/note.txt") == b"unrecognized artifact"
+        assert store.list_runs() == []
 
     def test_delete_run_idempotent(self, tmp_path: Path) -> None:
         store = EvalStore(LocalStorage(tmp_path), "eval")

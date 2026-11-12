@@ -671,44 +671,44 @@ def test_save_gantt_chart_html():
 # --- SDK client instrumentation ---
 
 
-def test_sdk_client_instrumentation_covers_all_async_methods():
-    """Tripwire: catches new async methods added to Tinker SDK clients.
-
-    If this test fails after a tinker dependency bump, add the new method(s) to
-    _instrument_sdk_clients in trace.py.
-    """
-    # Collect all public async methods from SDK clients
-    sdk_async_methods: dict[type, set[str]] = {}
+def test_sdk_client_instrumentation_covers_unified_methods():
+    """Tripwire: covers future-returning instance methods and cached metadata."""
+    sdk_methods: dict[type, set[str]] = {}
     for cls in (tinker.TrainingClient, tinker.SamplingClient):
         methods = set()
-        for name in dir(cls):
-            if name.startswith("_"):
+        for name, attr in vars(cls).items():
+            if name.startswith("_") or name.endswith("_async"):
                 continue
-            attr = getattr(cls, name, None)
-            if attr is not None and inspect.iscoroutinefunction(attr):
+            if name in {"load_state", "load_state_with_optimizer"}:
+                continue  # Replaced by ServiceClient factories.
+            if not inspect.isfunction(attr):
+                continue  # Static/class factories are not instance operations.
+            annotation = str(inspect.signature(attr).return_annotation)
+            if "Future" in annotation or name in {"get_info", "get_base_model"}:
                 methods.add(name)
-        sdk_async_methods[cls] = methods
+        assert methods
+        sdk_methods[cls] = methods
 
-    # Instrument via trace_init and check all are wrapped
     with trace_session():
-        for cls, methods in sdk_async_methods.items():
+        for cls, methods in sdk_methods.items():
             for method_name in methods:
                 original = getattr(cls, method_name)
                 assert getattr(original, "_scope_instrumented", False), (
-                    f"{cls.__name__}.{method_name} is an async method but not instrumented by "
+                    f"{cls.__name__}.{method_name} is not instrumented by "
                     f"_instrument_sdk_clients. Add it to the method list in trace.py."
                 )
+                assert not inspect.iscoroutinefunction(original)
 
 
 def test_scope_double_wrapping_prevention():
     """_instrument_sdk_clients is idempotent — calling trace_init twice doesn't double-wrap."""
     with trace_session():
-        first_ref = tinker.TrainingClient.forward_backward_async
+        first_ref = tinker.TrainingClient.forward_backward
         assert getattr(first_ref, "_scope_instrumented", False)
 
     # Second trace_init — should not re-wrap
     with trace_session():
-        second_ref = tinker.TrainingClient.forward_backward_async
+        second_ref = tinker.TrainingClient.forward_backward
         assert getattr(second_ref, "_scope_instrumented", False)
         # Same wrapper object — not double-wrapped
         assert first_ref is second_ref

@@ -223,7 +223,7 @@ class TestSampleChatCompletion:
             sequences=[FakeSampledSequence(tokens=[10, 20, 30], logprobs=[0.1, 0.2, 0.3])]
         )
         sampling_client = MagicMock()
-        sampling_client.sample_async = AsyncMock(return_value=fake_response)
+        sampling_client.sample = AsyncMock(return_value=fake_response)
 
         renderer = MagicMock()
         renderer.build_generation_prompt.return_value = MagicMock()
@@ -248,7 +248,7 @@ class TestSampleChatCompletion:
         assert result.parsed_message["content"] == "response"
 
         # Verify sampling params were passed correctly
-        call_kwargs = sampling_client.sample_async.call_args.kwargs
+        call_kwargs = sampling_client.sample.call_args.kwargs
         assert call_kwargs["sampling_params"].temperature == 0.5
         assert call_kwargs["sampling_params"].max_tokens == 64
 
@@ -258,7 +258,7 @@ class TestSampleChatCompletion:
             sequences=[FakeSampledSequence(tokens=[10], logprobs=[0.1])]
         )
         sampling_client = MagicMock()
-        sampling_client.sample_async = AsyncMock(return_value=fake_response)
+        sampling_client.sample = AsyncMock(return_value=fake_response)
 
         renderer = MagicMock()
         renderer.build_generation_prompt.return_value = MagicMock()
@@ -294,7 +294,7 @@ class TestSampleChatCompletion:
             sequences=[FakeSampledSequence(tokens=[10], logprobs=None)]
         )
         sampling_client = MagicMock()
-        sampling_client.sample_async = AsyncMock(return_value=fake_response)
+        sampling_client.sample = AsyncMock(return_value=fake_response)
 
         renderer = MagicMock()
         renderer.build_generation_prompt.return_value = MagicMock()
@@ -311,7 +311,7 @@ class TestSampleChatCompletion:
             stop=["STOP"],
         )
 
-        call_kwargs = sampling_client.sample_async.call_args.kwargs
+        call_kwargs = sampling_client.sample.call_args.kwargs
         assert call_kwargs["sampling_params"].stop == ["STOP"]
         # get_stop_sequences should NOT be called when stop is explicit
         renderer.get_stop_sequences.assert_not_called()
@@ -433,7 +433,7 @@ class TestTinkerLiteLLMProvider:
             sequences=[FakeSampledSequence(tokens=[10, 20], logprobs=[0.1, 0.2])]
         )
         mock_sampling_client = MagicMock()
-        mock_sampling_client.sample_async = AsyncMock(return_value=fake_response)
+        mock_sampling_client.sample = AsyncMock(return_value=fake_response)
 
         mock_renderer = MagicMock()
         mock_renderer.build_generation_prompt.return_value = MagicMock()

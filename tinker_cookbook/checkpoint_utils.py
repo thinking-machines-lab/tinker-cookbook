@@ -228,7 +228,7 @@ async def get_renderer_name_from_checkpoint_async(
     """
     try:
         rest_client = service_client.create_rest_client()
-        training_run = await rest_client.get_training_run_by_tinker_path_async(checkpoint_path)
+        training_run = await rest_client.get_training_run_by_tinker_path(checkpoint_path)
         return (training_run.user_metadata or {}).get(RENDERER_NAME_METADATA_KEY)
     except (tinker.TinkerError, ValueError) as e:
         logger.warning(
@@ -455,13 +455,11 @@ async def save_checkpoint_async(
     """
     futures = {}
     if kind in ["state", "both"]:
-        futures["state"] = await training_client.save_state_async(name, ttl_seconds=ttl_seconds)
+        futures["state"] = training_client.save_state(name, ttl_seconds=ttl_seconds)
     if kind in ["sampler", "both"]:
-        futures["sampler"] = await training_client.save_weights_for_sampler_async(
-            name, ttl_seconds=ttl_seconds
-        )
+        futures["sampler"] = training_client.save_weights_for_sampler(name, ttl_seconds=ttl_seconds)
 
-    results = {k: await v.result_async() for k, v in futures.items()}
+    results = {k: await v for k, v in futures.items()}
     paths = {k + "_path": v.path for k, v in results.items()}
     trace.update_scope_context(paths)
     logger.info(f"Saved checkpoints: {paths}")
@@ -753,9 +751,9 @@ class CheckpointManager:
         deleted so that the last entry in ``checkpoints.jsonl`` always points
         to valid server-side data.
         """
-        # Drain any in-flight periodic save so its record lands in
-        # checkpoints.jsonl *before* the final record.
+        # Pending save records must precede the final record in checkpoints.jsonl.
         await self._resolve_pending_periodic_async()
+        await self._resolve_pending_rolling_async()
         paths = await save_checkpoint_async(
             training_client=self._training_client,
             name="final",
@@ -851,7 +849,7 @@ class CheckpointManager:
             return
         try:
             rest_client = self._service_client.create_rest_client()
-            await rest_client.delete_checkpoint_from_tinker_path_async(self._prev_state_path)
+            await rest_client.delete_checkpoint_from_tinker_path(self._prev_state_path)
             logger.info("Deleted rolling checkpoint %s", self._prev_state_path)
         except Exception:
             logger.warning(

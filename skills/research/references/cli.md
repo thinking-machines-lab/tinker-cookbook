@@ -90,8 +90,8 @@ tinker run list --format json | jq '.[].id'
 ```bash
 tinker run list
 tinker checkpoint list --run-id <RUN_ID>
-tinker checkpoint download tinker://<RUN_ID>/sampler_weights/final -o ./adapter
-tinker checkpoint push-hf tinker://<RUN_ID>/sampler_weights/final --repo user/my-model
+tinker checkpoint download tinker://<RUN_ID>/external_weights/final -o ./adapter
+tinker checkpoint push-hf tinker://<RUN_ID>/external_weights/final --repo user/my-model
 ```
 
 ## Pitfalls

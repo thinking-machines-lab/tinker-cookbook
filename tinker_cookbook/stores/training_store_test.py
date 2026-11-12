@@ -451,3 +451,30 @@ class TestIncrementalReader:
         assert len(restored.records) == 1
         # Can still read after unpickle (lock recreated)
         restored.read()
+
+
+def test_truncate_metrics_drops_rows_from_resume_step(tmp_path: Path):
+    store = TrainingRunStore(LocalStorage(tmp_path))
+    for step in [0, 1, 2, 3, 4]:
+        store.write_metrics({"loss": float(step)}, step=step)
+    store.write_metrics({"note": "no step"})
+    original = (tmp_path / "metrics.jsonl").read_bytes()
+    assert len(store.read_metrics()) == 6
+
+    assert store.truncate_metrics(3) == 2
+
+    assert [r.get("step") for r in store.read_metrics()] == [0, 1, 2, None]
+    assert (tmp_path / "metrics.jsonl.pre_resume_000003").read_bytes() == original
+    assert not list(tmp_path.glob(".*.tmp"))
+
+    # Re-logging the re-run steps leaves one row per step.
+    store.write_metrics({"loss": 3.5}, step=3)
+    assert [r.get("step") for r in store.read_metrics()] == [0, 1, 2, None, 3]
+
+
+def test_truncate_metrics_noop_without_later_rows(tmp_path: Path):
+    store = TrainingRunStore(LocalStorage(tmp_path))
+    assert store.truncate_metrics(0) == 0
+    store.write_metrics({"loss": 1.0}, step=0)
+    assert store.truncate_metrics(1) == 0
+    assert not list(tmp_path.glob("metrics.jsonl.pre_resume_*"))

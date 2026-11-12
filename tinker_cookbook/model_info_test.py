@@ -149,6 +149,29 @@ class TestDeepSeekV4_1:
         ]
 
 
+class TestDeepSeekV4_1Flash1017:
+    def test_peft_suffix_uses_deepseekv4_1_renderer(self):
+        assert (
+            get_recommended_renderer_name("deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144")
+            == "deepseekv4_1"
+        )
+
+    def test_attributes(self):
+        attrs = get_model_attributes("deepseek-ai/DeepSeek-V4.1-Flash-1017")
+        assert attrs.organization == "deepseek-ai"
+        assert attrs.version_str == "4.1"
+        assert attrs.size_str == "552B-A16B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is False
+        assert get_recommended_renderer_names("deepseek-ai/DeepSeek-V4.1-Flash-1017") == [
+            "deepseekv4_1",
+            "deepseekv4_1_low_reasoning",
+            "deepseekv4_1_max_reasoning",
+            "deepseekv4_1_disable_thinking",
+            "deepseekv4_1_preserve_thinking",
+        ]
+
+
 class TestGlm5_3:
     def test_glm5_3_uses_glm5_3_renderer(self):
         assert get_recommended_renderer_name("zai-org/GLM-5.3") == "glm5_3_max_reasoning"
@@ -191,6 +214,28 @@ class TestGlm5_3:
         ]
 
 
+class TestKimiK31Pro:
+    def test_peft_suffix_uses_kimi_k31_pro_renderer(self):
+        assert get_recommended_renderer_name(
+            "moonshotai/Kimi-K3.1-Pro:peft:262144"
+        ) == get_recommended_renderer_name("moonshotai/Kimi-K3.1-Pro")
+
+    def test_attributes(self):
+        attrs = get_model_attributes("moonshotai/Kimi-K3.1-Pro")
+        assert attrs.organization == "moonshotai"
+        assert attrs.version_str == "K3.1"
+        assert attrs.size_str == "2.8T-A104B"
+        assert attrs.is_chat is True
+        assert attrs.is_vl is True
+        assert get_recommended_renderer_names("moonshotai/Kimi-K3.1-Pro") == [
+            "kimi_k31_pro_max_reasoning",
+            "kimi_k31_pro_high_reasoning",
+            "kimi_k31_pro_low_reasoning",
+            "kimi_k31_pro_disable_thinking",
+            "kimi_k31_pro_no_reasoning_effort",
+        ]
+
+
 class TestInkling:
     """Inkling models are rendered by the standalone tml-renderers package rather
     than a cookbook renderer, and are the only lineup members taking audio input."""
@@ -209,7 +254,9 @@ class TestInkling:
         assert attrs.is_chat is True
         assert attrs.is_vl is True
         assert attrs.is_audio_in is True
-        assert get_recommended_renderer_names("thinkingmachines/Inkling") == ["tml_v0"]
+        assert get_recommended_renderer_names("thinkingmachines/Inkling") == [
+            "tml_v0",
+        ]
 
     def test_inkling_small_uses_tml_v0_renderer(self):
         assert get_recommended_renderer_name("thinkingmachines/Inkling-Small") == "tml_v0"
@@ -227,18 +274,32 @@ class TestInkling:
         assert attrs.is_chat is True
         assert attrs.is_vl is True
         assert attrs.is_audio_in is True
-        assert get_recommended_renderer_names("thinkingmachines/Inkling-Small") == ["tml_v0"]
+        assert get_recommended_renderer_names("thinkingmachines/Inkling-Small") == [
+            "tml_v0",
+        ]
+
+    @pytest.mark.parametrize("suffix", ["", ":peft:262144"])
+    def test_inkling_2_small_capabilities(self, suffix: str):
+        attrs = get_model_attributes("thinkingmachines/Inkling-2-Small" + suffix)
+        assert attrs.version_str == "2"
+        assert attrs.is_chat and attrs.is_vl
+        assert not attrs.is_audio_in
+        assert (
+            get_recommended_renderer_name("thinkingmachines/Inkling-2-Small" + suffix) == "tml_v0"
+        )
 
     def test_untabled_inkling_id_falls_back_to_prefix_defaults(self):
         """An Inkling id with no table entry still resolves, so a later addition
         to the lineup works before it is tabled instead of raising.
         """
-        attrs = get_model_attributes("thinkingmachines/Inkling-2")
+        attrs = get_model_attributes("thinkingmachines/Inkling-Untabled")
         assert attrs.organization == "thinkingmachines"
         assert attrs.is_chat is True
         assert attrs.is_vl is True
         assert attrs.is_audio_in is True
-        assert get_recommended_renderer_names("thinkingmachines/Inkling-2") == ["tml_v0"]
+        assert get_recommended_renderer_names("thinkingmachines/Inkling-Untabled") == [
+            "tml_v0",
+        ]
 
 
 class TestWarnIfRendererNotRecommended:

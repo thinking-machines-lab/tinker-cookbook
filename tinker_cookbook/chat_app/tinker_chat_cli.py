@@ -79,7 +79,7 @@ class ChatSession:
             )
 
             # Generate response
-            response = await self.sampling_client.sample_async(
+            response = await self.sampling_client.sample(
                 prompt=model_input, num_samples=1, sampling_params=sampling_params
             )
 
@@ -114,7 +114,7 @@ async def main(config: Config):
         sampling_client = service_client.create_sampling_client(
             base_model=config.base_model,
             model_path=config.model_path if config.model_path else None,
-        )
+        ).result()
 
         # Get tokenizer and renderer
         tokenizer = get_tokenizer(config.base_model)

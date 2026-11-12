@@ -203,9 +203,11 @@ async def run_eval(
         sampling_client = service_client.create_sampling_client(
             model_path=config.checkpoint_url,
             base_model=config.model_name,
-        )
+        ).result()
     else:
-        sampling_client = service_client.create_sampling_client(base_model=config.model_name)
+        sampling_client = service_client.create_sampling_client(
+            base_model=config.model_name
+        ).result()
 
     tokenizer = tokenizer_utils.get_tokenizer(config.model_name)
     renderer_name = config.renderer_name or model_info.get_recommended_renderer_name(

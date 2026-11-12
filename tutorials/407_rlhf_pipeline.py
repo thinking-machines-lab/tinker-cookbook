@@ -385,12 +385,12 @@ async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
     service = tinker.ServiceClient()
 
     # Base model (no fine-tuning)
-    base_sampler = await service.create_sampling_client_async(base_model=BASE_MODEL)
+    base_sampler = await service.create_sampling_client(base_model=BASE_MODEL)
 
     # RLHF model (load RL checkpoint)
     rl_ckpt = checkpoint_utils.get_last_checkpoint(rl_log_path)
     assert rl_ckpt is not None
-    rlhf_sampler = await service.create_sampling_client_async(
+    rlhf_sampler = await service.create_sampling_client(
         model_path=rl_ckpt.sampler_path,
         base_model=BASE_MODEL,
     )
@@ -409,10 +409,10 @@ async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
         max_tokens=200, temperature=0.7, stop=renderer_eval.get_stop_sequences()
     )
 
-    base_result = await base_sampler.sample_async(
+    base_result = await base_sampler.sample(
         prompt=prompt_tokens, sampling_params=params, num_samples=1
     )
-    rlhf_result = await rlhf_sampler.sample_async(
+    rlhf_result = await rlhf_sampler.sample(
         prompt=prompt_tokens, sampling_params=params, num_samples=1
     )
 

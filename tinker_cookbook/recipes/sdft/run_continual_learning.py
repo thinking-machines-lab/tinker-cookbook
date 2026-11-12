@@ -76,6 +76,9 @@ class ExperimentConfig:
     # Logging
     log_root: str = cli_utils.runs_path("sdft-continual")
     wandb_project: str | None = None
+    # Prefix for Tinker session display names; each run appends its stage and method.
+    # When unset, the run ID is used.
+    session_name: str | None = None
     base_url: str | None = None
 
     # Control
@@ -103,6 +106,7 @@ async def run_sft_stage(
     renderer_name: str,
     log_path: str,
     wandb_name: str | None = None,
+    session_name: str | None = None,
     load_checkpoint_path: str | None = None,
 ) -> str | None:
     """Run SFT training on a task and return the checkpoint path."""
@@ -143,6 +147,7 @@ async def run_sft_stage(
         log_path=log_path,
         wandb_project=config.wandb_project,
         wandb_name=wandb_name,
+        session_name=session_name,
         base_url=config.base_url,
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
@@ -171,6 +176,7 @@ async def run_sdft_stage(
     log_path: str,
     topk: int,
     wandb_name: str | None = None,
+    session_name: str | None = None,
     load_checkpoint_path: str | None = None,
 ) -> str | None:
     """Run SDFT training on a task and return the checkpoint path."""
@@ -215,6 +221,7 @@ async def run_sdft_stage(
         log_path=log_path,
         wandb_project=config.wandb_project,
         wandb_name=wandb_name,
+        session_name=session_name,
         load_checkpoint_path=load_checkpoint_path,
     )
 
@@ -245,6 +252,7 @@ async def run_single(
     log_path = f"{config.log_root}/{run_id}"
 
     task = "tooluse" if stage == 1 else "science"
+    session_name = f"{config.session_name}-stage{stage}-{method}" if config.session_name else run_id
 
     # For stage 2, load from stage 1 checkpoint
     load_checkpoint_path = None
@@ -275,6 +283,7 @@ async def run_single(
             renderer_name,
             log_path,
             wandb_name=run_id,
+            session_name=session_name,
             load_checkpoint_path=load_checkpoint_path,
         )
     elif method == "sdft_is":
@@ -286,6 +295,7 @@ async def run_single(
             log_path,
             topk=0,
             wandb_name=run_id,
+            session_name=session_name,
             load_checkpoint_path=load_checkpoint_path,
         )
     elif method in ("sdft_topk", "sdft_hybrid"):
@@ -297,6 +307,7 @@ async def run_single(
             log_path,
             topk=config.topk,
             wandb_name=run_id,
+            session_name=session_name,
             load_checkpoint_path=load_checkpoint_path,
         )
     else:

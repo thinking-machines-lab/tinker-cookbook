@@ -70,11 +70,11 @@ class _DeepSeekV3BaseRenderer(Renderer):
         self.system_role_as_user = system_role_as_user
         self.strip_thinking_from_history = strip_thinking_from_history
 
-        if transformers.__version__ == "5.3.0":
+        if transformers.__version__ == "5.3.0" or transformers.__version__.startswith("5.6."):
             warnings.warn(
-                "transformers 5.3.0 has a known bug with the DeepSeek tokenizer that "
-                "strips spaces during decode, which will produce incorrect outputs. "
-                "Please upgrade to transformers>=5.3.1 or downgrade to transformers<5.3.0. "
+                f"transformers {transformers.__version__} has a known bug with the DeepSeek "
+                "tokenizer that strips spaces during decode, which will produce incorrect "
+                "outputs. Please upgrade to transformers>=5.7.0. "
                 "See https://github.com/huggingface/transformers/pull/44801",
                 stacklevel=2,
             )

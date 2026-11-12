@@ -23,6 +23,7 @@ from tinker_cookbook.utils.format_colorized import format_colorized
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.lr_scheduling import LRSchedule, compute_schedule_lr_multiplier
 from tinker_cookbook.utils.misc_utils import iteration_dir
+from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,9 @@ class Config:
         adam_eps (float): Adam optimizer epsilon.
         wandb_project (str | None): Weights & Biases project name.
         wandb_name (str | None): Weights & Biases run name.
+        session_name (str | None): Human-readable ``display_name`` for the
+            Tinker session, shown in the Tinker console. When ``None``, falls
+            back to ``wandb_name`` if set, otherwise no display name is sent.
         enable_trace (bool): Whether to record timing traces.
         span_chart_every (int): Save a Gantt timing chart every N steps
             (0 = disabled).
@@ -131,6 +135,8 @@ class Config:
     # Logging parameters
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set.
+    session_name: str | None = None
 
     # Profiling
     enable_trace: bool = False
@@ -180,7 +186,7 @@ def create_dpo_clients(
         )
         training_client = service_client.create_training_client_from_state_with_optimizer(
             resume_info.state_path, user_metadata=user_metadata
-        )
+        ).result()
         logger.info(f"Resumed DPO training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
         # Starting fresh DPO from checkpoint - load weights only (fresh optimizer)
@@ -189,14 +195,14 @@ def create_dpo_clients(
         )
         training_client = service_client.create_training_client_from_state(
             config.load_checkpoint_path, user_metadata=user_metadata
-        )
+        ).result()
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
         training_client = service_client.create_lora_training_client(
             base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
-        )
+        ).result()
     # Create a sampling client for the reference model from the training client
-    reference_client = training_client.save_weights_and_get_sampling_client()
+    reference_client = training_client.save_weights_and_get_sampling_client().result()
     return training_client, reference_client
 
 
@@ -376,7 +382,7 @@ def do_update(
             # Compute reference log probabilities in parallel
             async def compute_all_ref_logprobs():
                 return await asyncio.gather(
-                    *[reference_client.compute_logprobs_async(seq) for seq in full_sequences]
+                    *[reference_client.compute_logprobs(seq).coroutine() for seq in full_sequences]
                 )
 
             all_ref_logprobs = asyncio.run(compute_all_ref_logprobs())
@@ -500,9 +506,16 @@ def main(config: Config):
         )
         trace.trace_init(output_file=trace_events_path)
 
+    session_display_name = resolve_session_display_name(
+        session_name=config.session_name,
+        wandb_name=config.wandb_name,
+    )
+    if session_display_name is not None:
+        logger.info(f"Tinker session display name: {session_display_name}")
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata(config.recipe_name),
+        display_name=session_display_name,
     )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():

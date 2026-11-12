@@ -110,7 +110,7 @@ async def _sample_at_effort(
 ) -> SampleResult:
     prompt = renderer.build_generation_prompt(messages, effort=effort)
     max_tokens = cfg.max_tokens if cfg.max_tokens is not None else _default_max_tokens(effort)
-    response = await sampling_client.sample_async(
+    response = await sampling_client.sample(
         prompt=prompt,
         num_samples=1,
         sampling_params=tinker.SamplingParams(
@@ -142,7 +142,7 @@ async def async_main(cfg: Config) -> None:
     renderer = TmlV0Renderer(get_tokenizer(cfg.model_name))
     messages = [Message(role="user", content=prompt)]
     service_client = tinker.ServiceClient(base_url=cfg.base_url)
-    sampling_client = await service_client.create_sampling_client_async(base_model=cfg.model_name)
+    sampling_client = await service_client.create_sampling_client(base_model=cfg.model_name)
 
     results = await asyncio.gather(
         *(

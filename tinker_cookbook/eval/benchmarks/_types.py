@@ -202,6 +202,12 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "context_window": 262144,
         "timeout_seconds": 1800,
     },
+    # DeepSeek V4.1 Flash 1017 (256K) — Hybrid (thinking), 256K context
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017:peft:262144": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
     # Kimi — Reasoning, 32K context
     "moonshotai/Kimi-K2.6": {"max_tokens": 32768, "context_window": 32768, "timeout_seconds": 1800},
     "moonshotai/Kimi-K2.6:peft:131072": {
@@ -216,6 +222,37 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "timeout_seconds": 1800,
     },
     "zai-org/GLM-5.3-Flash:peft:262144": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
+    # Inkling — Hybrid (thinking effort), 64K and 256K context
+    "thinkingmachines/Inkling": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "thinkingmachines/Inkling:peft:262144": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
+    "thinkingmachines/Inkling-Small": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "thinkingmachines/Inkling-Small:peft:262144": {
+        "max_tokens": 262144,
+        "context_window": 262144,
+        "timeout_seconds": 1800,
+    },
+    "thinkingmachines/Inkling-2-Small": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
+    "thinkingmachines/Inkling-2-Small:peft:262144": {
         "max_tokens": 262144,
         "context_window": 262144,
         "timeout_seconds": 1800,

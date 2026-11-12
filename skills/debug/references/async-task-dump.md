@@ -185,7 +185,7 @@ _run_main_with_aiomonitor(main(config))
 
 ### Healthy training (no stalls)
 
-You should see both `[main]` and `[holder]` task dumps every second, and the holder thread should cycle through `_forward_backward_async` / `_optim_step_async` / `_result_async` tasks as work is submitted and completed.
+You should see both `[main]` and `[holder]` task dumps every second, and the holder thread should cycle through `_run_async` / `_optim_step_async` / `_result_async` tasks as work is submitted and completed.
 
 ### Client-side stall
 

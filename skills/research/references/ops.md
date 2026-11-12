@@ -20,7 +20,7 @@ Consolidated reference for training lifecycle operations: checkpoint management,
 ```python
 tc.save_state(name="step_100", ttl_seconds=None)
 tc.save_weights_for_sampler(name="step_100_sampler", ttl_seconds=None)
-sc = tc.save_weights_and_get_sampling_client()  # Ephemeral, not persistently saved
+sc = tc.save_weights_and_get_sampling_client().result()  # Ephemeral, not persistently saved
 ```
 
 ### CheckpointRecord
@@ -66,17 +66,19 @@ record = checkpoint_utils.get_last_checkpoint(log_path, required_key="state_path
 behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"  # "ask", "delete", "resume"
 
 if config.load_checkpoint_path:
-    tc = svc.create_training_client_from_state_with_optimizer(config.load_checkpoint_path)
+    tc = svc.create_training_client_from_state_with_optimizer(config.load_checkpoint_path).result()
 ```
 
 ### REST API / CLI management
 
 ```python
-rest = ServiceClient().create_rest_client()
-checkpoints = rest.list_user_checkpoints(limit=100)
-rest.publish_checkpoint_from_tinker_path("tinker://...")
-rest.set_checkpoint_ttl_from_tinker_path("tinker://...", ttl_seconds=86400)
-rest.delete_checkpoint_from_tinker_path("tinker://...")
+from tinker import RestClient
+
+rest = RestClient()
+checkpoints = rest.list_user_checkpoints(limit=100).result()
+rest.publish_checkpoint_from_tinker_path("tinker://...").result()
+rest.set_checkpoint_ttl_from_tinker_path("tinker://...", ttl_seconds=86400).result()
+rest.delete_checkpoint_from_tinker_path("tinker://...").result()
 ```
 
 ```bash
@@ -103,7 +105,7 @@ tinker checkpoint delete <TINKER_PATH>
 from tinker_cookbook import weights
 
 adapter_dir = weights.download(
-    tinker_path="tinker://run-id/sampler_weights/final",
+    tinker_path="tinker://run-id/external_weights/final",
     output_dir="./adapter",
     base_url=None,
 )
@@ -152,7 +154,7 @@ from tinker_cookbook import weights
 
 # Step 1: Download adapter
 adapter_dir = weights.download(
-    tinker_path="tinker://run-id/sampler_weights/final",
+    tinker_path="tinker://run-id/external_weights/final",
     output_dir="./adapter",
 )
 
@@ -174,7 +176,7 @@ url = weights.publish_to_hf_hub(
 
 ### Pitfalls
 
-- `download()` expects `tinker://` path from `save_weights_for_sampler`, not `save_state`
+- `download()` accepts external weights paths (from `save_weights_external`) or training checkpoints (from `save_state`), not sampler checkpoints (from `save_weights_for_sampler`)
 - `build_hf_model()` requires the base model to be downloadable from HuggingFace
 - Set `HF_TOKEN` for private models and publishing
 - `dtype="bfloat16"` is recommended for most models
@@ -317,7 +319,7 @@ for i_batch in range(n_batches):
 ```python
 @trace.scope
 async def my_training_step(tc, batch):
-    result = await tc.forward_backward_async(data=batch, loss_fn="cross_entropy")
+    result = tc.forward_backward(data=batch, loss_fn="cross_entropy")
     return result
 
 async with trace.scope_span("data_prep"):
@@ -399,7 +401,7 @@ See `tinker_cookbook/recipes/chat_sl/train.py` for a working example with GSM8K 
 ```python
 async def eval_math(sampling_client: SamplingClient) -> dict[str, float]:
     async def evaluate_one(problem):
-        response = await sampling_client.sample_async(
+        response = await sampling_client.sample(
             prompt=problem.prompt, num_samples=1,
             sampling_params=SamplingParams(max_tokens=256, temperature=0.0),
         )

@@ -57,6 +57,7 @@ from tinker_cookbook.supervised.types import SupervisedDataset, SupervisedDatase
 from tinker_cookbook.utils import ml_log, trace
 from tinker_cookbook.utils.git_rev import recipe_user_metadata
 from tinker_cookbook.utils.misc_utils import safezip
+from tinker_cookbook.utils.session_naming import resolve_session_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,8 @@ class Config:
     log_path: str = chz.field(munger=lambda _, s: str(Path(s).expanduser()))
     wandb_project: str | None = None
     wandb_name: str | None = None
+    # Display name for the Tinker session; defaults to wandb_name when set.
+    session_name: str | None = None
     base_url: str | None = None
     ttl_seconds: int | None = 604800
     """Server-side checkpoint retention (seconds). None = keep indefinitely."""
@@ -167,7 +170,7 @@ async def _collect_topk_for_datum(
     last_target = int(original_targets[-1].item())
     full_sequence = datum.model_input.append_int(last_target)
 
-    response = await teacher_client.sample_async(
+    response = await teacher_client.sample(
         prompt=full_sequence,
         num_samples=1,
         sampling_params=tinker.SamplingParams(max_tokens=1),
@@ -354,9 +357,16 @@ async def main(config: Config) -> None:
     resume_info = checkpoint_utils.get_last_checkpoint(config.log_path)
     start_batch = resume_info.batch if resume_info else 0
 
+    session_display_name = resolve_session_display_name(
+        session_name=config.session_name,
+        wandb_name=config.wandb_name,
+    )
+    if session_display_name is not None:
+        logger.info(f"Tinker session display name: {session_display_name}")
     service_client = tinker.ServiceClient(
         base_url=config.base_url,
         user_metadata=recipe_user_metadata(config.recipe_name),
+        display_name=session_display_name,
     )
     user_metadata: dict[str, str] = {}
     if wandb_link := ml_logger.get_logger_url():
@@ -371,22 +381,20 @@ async def main(config: Config) -> None:
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, resume_info.state_path, renderer_name
         )
-        training_client = (
-            await service_client.create_training_client_from_state_with_optimizer_async(
-                resume_info.state_path, user_metadata=user_metadata
-            )
+        training_client = await service_client.create_training_client_from_state_with_optimizer(
+            resume_info.state_path, user_metadata=user_metadata
         )
         logger.info(f"Resumed training from {resume_info.state_path}")
     elif config.load_checkpoint_path:
         await checkpoint_utils.check_renderer_name_for_checkpoint_async(
             service_client, config.load_checkpoint_path, renderer_name
         )
-        training_client = await service_client.create_training_client_from_state_async(
+        training_client = await service_client.create_training_client_from_state(
             config.load_checkpoint_path, user_metadata=user_metadata
         )
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
-        training_client = await service_client.create_lora_training_client_async(
+        training_client = await service_client.create_lora_training_client(
             config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         )
 
@@ -398,9 +406,9 @@ async def main(config: Config) -> None:
         if tc.load_checkpoint_path:
             client = service_client.create_sampling_client(
                 base_model=tc.base_model, model_path=tc.load_checkpoint_path
-            )
+            ).result()
         else:
-            client = service_client.create_sampling_client(base_model=tc.base_model)
+            client = service_client.create_sampling_client(base_model=tc.base_model).result()
         teacher_clients.append(client)
         logger.info(f"Teacher: {tc.base_model} (checkpoint: {tc.load_checkpoint_path})")
 
@@ -439,7 +447,7 @@ async def main(config: Config) -> None:
 
         if config.eval_every > 0 and i_batch % config.eval_every == 0 and evaluators:
             if sampling_client is None:
-                sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+                sampling_client = await training_client.save_weights_and_get_sampling_client()
             for evaluator in evaluators:
                 eval_metrics = await evaluator(sampling_client)
                 metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
@@ -457,14 +465,12 @@ async def main(config: Config) -> None:
             datum_teacher_clients, datums, config.n_teacher_targets, config.teacher_concurrency
         )
 
-        fwd_bwd_future = await training_client.forward_backward_async(
-            topk_datums, loss_fn="cross_entropy"
-        )
-        optim_future = await training_client.optim_step_async(
+        fwd_bwd_future = training_client.forward_backward(topk_datums, loss_fn="cross_entropy")
+        optim_future = training_client.optim_step(
             tinker.AdamParams(learning_rate=config.learning_rate)
         )
-        train_result = await fwd_bwd_future.result_async()
-        await optim_future.result_async()
+        train_result = await fwd_bwd_future
+        await optim_future
         if train_result.metrics:
             metrics.update({f"train/{k}": v for k, v in train_result.metrics.items()})
 
@@ -472,7 +478,9 @@ async def main(config: Config) -> None:
             path_dict = await checkpoint_mgr.save_periodic_async(
                 step=i_batch, loop_state={"batch": i_batch}
             )
-            sampling_client = training_client.create_sampling_client(path_dict["sampler_path"])
+            sampling_client = training_client.create_sampling_client(
+                path_dict["sampler_path"]
+            ).result()
         else:
             # Invalidate; will be lazily created if needed for eval
             sampling_client = None

@@ -48,8 +48,7 @@ Alternatively, you can try notebooks online in [molab](https://molab.marimo.io/n
 | 201 | [Rendering](201_rendering.py) | Renderers, tokenization, vision inputs, TrainOnWhat | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/201_rendering.py) |
 | 202 | [Loss Functions](202_loss_functions.py) | cross_entropy, IS, PPO, CISPO, custom loss | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/202_loss_functions.py) |
 | 203 | [Completers](203_completers.py) | TokenCompleter vs MessageCompleter, LLM-as-judge | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/203_completers.py) |
-| 204 | [Weights](204_weights.py) | Checkpoint lifecycle, save/load/download/TTL | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/204_weights.py) |
-| 205 | [Evaluations](205_evaluations.py) | Custom evaluators, NLL, Inspect AI | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/205_evaluations.py) |
+| 204 | [Evaluations](204_evaluations.py) | Custom evaluators, NLL, Inspect AI | [![Open in molab](https://marimo.io/molab-shield.svg)](https://molab.marimo.io/github/thinking-machines-lab/tinker-cookbook/blob/main/tutorials/204_evaluations.py) |
 
 ### Cookbook Abstractions (3xx)
 

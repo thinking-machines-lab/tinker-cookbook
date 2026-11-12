@@ -93,7 +93,7 @@ async def _(api_key, get_renderer, mo, tinker):
     base_model = "Qwen/Qwen3.5-9B-Base"
 
     service_client = tinker.ServiceClient()
-    training_client = await service_client.create_lora_training_client_async(
+    training_client = await service_client.create_lora_training_client(
         base_model=base_model, rank=32
     )
     tokenizer = training_client.get_tokenizer()
@@ -231,7 +231,7 @@ async def _(
         batch_rows = train_data.select(range(batch_start, batch_end))
 
         # 2. Save current weights and create a sampling client
-        sampling_client = await training_client.save_weights_and_get_sampling_client_async()
+        sampling_client = await training_client.save_weights_and_get_sampling_client()
 
         # 3. Submit all sampling requests concurrently
         prompts_P: list[tinker.ModelInput] = []
@@ -240,9 +240,9 @@ async def _(
             convo = [*fewshot_prefix, {"role": "user", "content": question + question_suffix}]
             prompt = renderer.build_generation_prompt(convo)
             _coros.append(
-                sampling_client.sample_async(
+                sampling_client.sample(
                     prompt=prompt, num_samples=group_size, sampling_params=sampling_params
-                )
+                ).coroutine()
             )
             prompts_P.append(prompt)
 
@@ -301,12 +301,12 @@ async def _(
 
         # 5. Training step
         if len(datums_D) > 0:
-            fwd_bwd_future = await training_client.forward_backward_async(
+            fwd_bwd_future = training_client.forward_backward(
                 datums_D, loss_fn="importance_sampling"
             )
-            optim_future = await training_client.optim_step_async(adam_params)
-            await fwd_bwd_future.result_async()
-            await optim_future.result_async()
+            optim_future = training_client.optim_step(adam_params)
+            await fwd_bwd_future
+            await optim_future
 
         mean_reward = sum(rewards_P) / len(rewards_P)
         frac_degenerate = n_degenerate / len(rewards_P)

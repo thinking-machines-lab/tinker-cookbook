@@ -173,7 +173,7 @@ def _(mo):
     from tinker.types import SamplingParams
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B")
+    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B").result()
 
     prompt = renderer.build_generation_prompt(messages[:-1])
     stop_sequences = renderer.get_stop_sequences()
@@ -279,6 +279,8 @@ def _(mo):
     | `nemotron3_ultra` | NVIDIA Nemotron 3 Ultra / 3.5 Lightning / 3.5 Super | Thinking enabled |
     | `kimi_k26` | Kimi K2.6 | Thinking enabled (default) |
     | `kimi_k26_disable_thinking` | Kimi K2.6 | Thinking disabled |
+    | `kimi_k31_pro_max_reasoning` | Kimi K3.1-Pro | Thinking enabled, reasoning effort max (default) |
+    | `kimi_k31_pro_disable_thinking` | Kimi K3.1-Pro | Thinking disabled |
 
     Each renderer produces the correct special tokens for its model family. The default renderers match HuggingFace's `apply_chat_template` output, so models trained with Tinker work with the OpenAI-compatible endpoint.
     """)

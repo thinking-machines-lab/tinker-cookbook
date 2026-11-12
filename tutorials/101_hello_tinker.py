@@ -82,7 +82,7 @@ async def _(api_key, mo, tinker):
     service_client = tinker.ServiceClient()
 
     # Check what models are available
-    capabilities = await service_client.get_server_capabilities_async()
+    capabilities = await tinker.RestClient().get_server_capabilities()
     print("Available models:")
     for model in capabilities.supported_models:
         print(f"  - {model.model_name}")
@@ -110,7 +110,7 @@ async def _(service_client):
     MODEL_NAME = "Qwen/Qwen3.5-9B-Base"
 
     # Create a sampling client -- this connects to a remote GPU worker
-    sampling_client = await service_client.create_sampling_client_async(base_model=MODEL_NAME)
+    sampling_client = await service_client.create_sampling_client(base_model=MODEL_NAME)
 
     # Get the tokenizer for encoding/decoding text
     tokenizer = sampling_client.get_tokenizer()
@@ -126,9 +126,7 @@ async def _(sampling_client, tokenizer, types):
 
     # Sample a completion
     params = types.SamplingParams(max_tokens=50, temperature=0.5)
-    result = await sampling_client.sample_async(
-        prompt=prompt, sampling_params=params, num_samples=1
-    )
+    result = await sampling_client.sample(prompt=prompt, sampling_params=params, num_samples=1)
 
     # Decode and print
     completion_tokens = result.sequences[0].tokens
@@ -170,7 +168,7 @@ def _(mo):
 
 @app.cell
 async def _(prompt, prompt_text, sampling_client, tokenizer, types):
-    result_1 = await sampling_client.sample_async(
+    result_1 = await sampling_client.sample(
         prompt=prompt,
         sampling_params=types.SamplingParams(max_tokens=50, temperature=0.7),
         num_samples=3,
