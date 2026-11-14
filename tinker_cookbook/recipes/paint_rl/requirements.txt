@@ -1,0 +1,36 @@
+# Environment for reproducing the paint_rl runs (Python 3.12).
+#
+#   pip install -r requirements.txt
+#   python -m playwright install --with-deps chromium
+#
+# The recipe imports itself as `tinker_cookbook.recipes.paint_rl`, so link this
+# directory into the installed cookbook:
+#
+#   ln -s "$PWD" "$(python -c 'import tinker_cookbook.recipes as r; print(r.__path__[0])')/paint_rl"
+#
+# then: python -m tinker_cookbook.recipes.paint_rl.train reward_mode=verifier log_path=/tmp/paint_rl/verifier
+
+# Training loop, renderers and the Tinker client. The runs used cookbook
+# 0.5.8.dev8, a pre-release snapshot of 0.5.8.
+tinker-cookbook==0.5.8
+tinker==0.36.0
+chz==0.4.0
+tml-renderers==0.2.1
+torch==2.14.1
+transformers==5.5.4
+numpy==2.5.4
+pillow==12.3.0
+
+# Reward models and the held-out evaluator.
+llm-verifier==0.3.0
+openai==2.54.0
+httpx==0.28.1
+
+# Headless sketch rendering.
+playwright==1.64.1
+
+# compare_runs.py plots.
+matplotlib>=3.7.0
+
+# Tests.
+pytest==9.1.1
