@@ -10,7 +10,7 @@ import io
 import logging
 import re
 import time
-from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Iterator, Sequence
 from concurrent.futures import Executor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -24,7 +24,7 @@ import chz
 import numpy as np
 import tinker
 import torch
-from tinker.types import LossFnType
+from tinker.types import LossFnType, SamplingClientKind
 from tqdm import tqdm
 
 from tinker_cookbook import checkpoint_utils, model_info
@@ -350,14 +350,45 @@ async def train_step(
             loss_fn="importance_sampling",
         )
     """
+    training_logprobs_D, _ = await _train_step_and_publish(
+        data_D,
+        training_client,
+        learning_rate,
+        num_substeps,
+        loss_fn,
+        loss_fn_config=loss_fn_config,
+        metrics=metrics,
+    )
+    return training_logprobs_D
+
+
+async def _train_step_and_publish(
+    data_D: list[tinker.Datum],
+    training_client: tinker.TrainingClient,
+    learning_rate: float,
+    num_substeps: int,
+    loss_fn: LossFnType,
+    loss_fn_config: dict[str, Any] | None = None,
+    metrics: dict[str, Any] | None = None,
+    publish_kind: SamplingClientKind | None = None,
+    record_stability_info: bool = False,
+) -> tuple[list[torch.Tensor], Awaitable[tinker.SamplingClient] | None]:
+    """:func:`train_step`, optionally publishing the updated weights.
+
+    With ``publish_kind`` set, the weights are saved for sampling right after
+    the final ``optim_step`` is submitted, before any results are awaited, so
+    the save lands on the same clock cycle. The returned future must be
+    awaited by the caller. With no data, nothing is trained or published.
+    """
     _check_provenance(data_D, loss_fn)
     batches = split_list(data_D, min(num_substeps, len(data_D)))
     if not batches:
-        return []
+        return [], None
 
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-8)
     training_logprobs_D: list[torch.Tensor] = []
     optim_result: tinker.OptimStepResponse | None = None
+    publish_future: Awaitable[tinker.SamplingClient] | None = None
 
     # Enqueue first batch
     fwd_bwd_future = training_client.forward_backward(
@@ -377,6 +408,12 @@ async def train_step(
         else:
             next_fwd_bwd_future = None
             next_optim_future = None
+        # The final optim_step is submitted at i == len(batches) - 2 (or at the
+        # start, with one batch): publish then, before awaiting results.
+        if publish_kind is not None and i == max(len(batches) - 2, 0):
+            publish_future = training_client.save_weights_and_get_sampling_client(
+                record_stability_info=record_stability_info, kind=publish_kind
+            )
         # Consume current results
         fwd_bwd_result = await fwd_bwd_future
         training_logprobs_D.extend(_training_logprobs_from_fwd_bwd(fwd_bwd_result))
@@ -389,7 +426,7 @@ async def train_step(
     if metrics is not None and optim_result is not None and optim_result.metrics:
         metrics.update(optim_result.metrics)
 
-    return training_logprobs_D
+    return training_logprobs_D, publish_future
 
 
 @chz.chz
@@ -422,15 +459,28 @@ class AsyncConfig:
     """Configuration for async RL training.
 
     In async mode, sampling and training run concurrently, so training data
-    can come from older weights ("stale" or off-policy data). At most
-    ``groups_per_batch * (max_steps_off_policy + 1)`` trajectory groups may be
-    started but not yet trained. Completed groups are never discarded for
-    staleness: each batch takes the groups sampled from the oldest weights
-    first, so a slow rollout is trained when it finishes, even if that makes
-    it more than ``max_steps_off_policy`` steps stale. With
-    ``max_steps_off_policy=0`` all data is on-policy. With streaming
-    minibatches, the cap uses ``StreamMinibatchConfig.groups_per_batch`` and
-    groups are trained in the order they finish.
+    can come from older weights ("stale" or off-policy data). Sampling is
+    bounded by a buffer of trajectory groups: at most ``group_buffer_size``
+    groups (each of ``group_size`` trajectories) may be started but not yet
+    trained, counting both groups still being sampled and finished groups
+    waiting to be trained. A group takes a buffer slot when its rollout starts
+    and frees it once it has been trained (or right away if it is filtered
+    out). Each step trains the oldest ``groups_per_batch`` completed groups,
+    taking the groups sampled from the oldest weights first. With streaming
+    minibatches, a step trains ``StreamMinibatchConfig.groups_per_batch``
+    groups instead, in the order they finish. Below, ``groups_per_step`` means
+    whichever of the two applies.
+
+    Nothing is discarded for staleness: while training continues, a slow
+    rollout is trained when it finishes, however many steps stale it is by
+    then. (Filtered groups are not trained, and rollouts still running when
+    training ends are cancelled.) ``group_buffer_size``
+    bounds how far sampling can run ahead, not staleness itself. While the
+    buffer stays full, typical staleness is about
+    ``group_buffer_size / groups_per_step - 1`` steps, but slow rollouts make
+    an unbounded tail. ``group_buffer_size == groups_per_step`` is on-policy
+    (staleness 0); ``group_buffer_size`` must be at least ``groups_per_step``
+    so a step can fill, and need not be a multiple of it.
 
     Training steps don't map one-to-one to dataset batches: each step trains
     ``groups_per_batch`` groups that survive filtering (such as
@@ -444,39 +494,87 @@ class AsyncConfig:
     prefer a clipped one such as ``ppo``: ``importance_sampling`` can become
     unstable on stale data.
 
-    A rollout that never finishes keeps its slot: training stalls once more
-    than ``groups_per_batch * max_steps_off_policy`` rollouts hang (with
-    ``max_steps_off_policy=0``, as in sync training, a single one), and the
-    run can't finish while a rollout whose group is still needed hangs. For
-    environments that can hang, set
+    A rollout that never finishes keeps its buffer slot: training stalls once
+    more than ``group_buffer_size - groups_per_step`` groups hang (with
+    ``group_buffer_size == groups_per_step``, as in sync training, a single
+    one), and the run can't finish while a rollout whose group is still needed
+    hangs. For environments that can hang, set
     ``rollout_error_tolerance=RetryOnFailure(per_rollout_timeout=...)``.
     Rollouts still running when training ends are cancelled (their env
     cleanup still finishes), except those in a rollout executor's threads or
     processes, which run to completion. Up to
-    ``groups_per_batch * (max_steps_off_policy + 1)`` rollouts run at once, so
-    size a rollout executor (and any sandbox pool) for that many.
+    ``group_buffer_size * group_size`` trajectories run at once, so size a
+    rollout executor (and any sandbox pool) for that many.
+
+    Every ``eval_every`` step and the final step are evaluated on that step's
+    weights. Evals run alongside training and each other, and never skip a
+    step, so with evals slower than ``eval_every`` steps, several run at once.
+    Evaluators must therefore be safe to call concurrently:
+    ``RLTestSetEvaluator`` gives each call its own copies of its env group
+    builders, and Inspect evals take turns.
+
+    With ``inflight_weight_updates`` (see
+    https://tinker-docs.thinkingmachines.ai/tinker/howto/inflight_sampling/), a
+    rollout's tokens can come from several weight versions; each group is
+    attributed to the oldest, so ``async/staleness_*``, ``sampling_client/step_*``
+    and ``optim/kl_sample_train_*`` are bounds or mixtures. It costs one extra
+    sampler save on each periodic-checkpoint step and one on each evaluated step
+    (evals run on a snapshot of that step's weights).
 
     Attributes:
-        max_steps_off_policy (int): How many training steps sampling may run
-            ahead of training. Typical staleness when sampling outpaces
-            training is about this many steps.
         groups_per_batch (int): Number of trajectory groups per training batch.
+        group_buffer_size (int | None): Maximum number of trajectory groups
+            (not individual trajectories) started but not yet trained, counting
+            groups still being sampled and finished groups waiting to be
+            trained. Must be at least the number of groups trained per step.
+            Three times that (about two steps of staleness) is a reasonable
+            place to start. Set exactly one of this and
+            ``max_steps_off_policy``.
+        max_steps_off_policy (int | None): Deprecated; use
+            ``group_buffer_size``. Despite its name, it doesn't cap
+            staleness (stale rollouts are no longer discarded): it sets
+            ``group_buffer_size`` to
+            ``groups_per_step * (max_steps_off_policy + 1)``.
         loss_fn (LossFnType): Loss function for async runs, used in place of
             ``Config.loss_fn``. An async run whose ``Config.loss_fn`` is set to
             something other than its default and this value raises a
             ``ConfigurationError``.
+        inflight_weight_updates (bool): Sample rollouts from inflight
+            sampling clients, so rollouts in progress pick up the weights each
+            training step publishes as the update propagates. Defaults to
+            True; False makes each rollout sample from the weights it started
+            with. No effect when ``group_buffer_size`` equals the groups
+            trained per step (on-policy), where no rollout runs during a
+            train step.
     """
 
-    max_steps_off_policy: int
     groups_per_batch: int
+    group_buffer_size: int | None = None
+    max_steps_off_policy: int | None = None
     loss_fn: LossFnType = "stable_reinforce"
+    inflight_weight_updates: bool = True
 
     @chz.validate
     def _check(self) -> None:
-        if self.max_steps_off_policy < 0 or self.groups_per_batch < 1:
+        if self.groups_per_batch < 1:
             raise ConfigurationError(
-                "AsyncConfig needs max_steps_off_policy >= 0 and groups_per_batch >= 1, got "
-                f"{self.max_steps_off_policy} and {self.groups_per_batch}."
+                f"AsyncConfig needs groups_per_batch >= 1, got {self.groups_per_batch}."
+            )
+        if self.group_buffer_size is not None and self.max_steps_off_policy is not None:
+            raise ConfigurationError(
+                "AsyncConfig: set group_buffer_size or the deprecated max_steps_off_policy, "
+                "not both."
+            )
+        if self.group_buffer_size is None and self.max_steps_off_policy is None:
+            raise ConfigurationError(
+                "AsyncConfig needs group_buffer_size: the maximum number of trajectory groups "
+                "started but not yet trained. Set it to the groups trained per step "
+                "(groups_per_batch, or StreamMinibatchConfig.groups_per_batch when streaming) "
+                "for on-policy training, or larger to let sampling run ahead of training."
+            )
+        if self.max_steps_off_policy is not None and self.max_steps_off_policy < 0:
+            raise ConfigurationError(
+                f"AsyncConfig needs max_steps_off_policy >= 0, got {self.max_steps_off_policy}."
             )
 
 
@@ -625,6 +723,68 @@ class Config:
     def records_stability_info(self) -> bool:
         """Whether sampling must record the information StableReinforce trains on."""
         return self.training_loss_fn() == "stable_reinforce"
+
+    def sampling_client_kind(self) -> SamplingClientKind:
+        """The kind of sampling client each training step publishes for rollouts:
+        ``"inflight"`` for async runs with ``inflight_weight_updates`` whose
+        group buffer holds more than one step's groups, ``"snapshot"``
+        otherwise. With an on-policy buffer no rollout runs during a train
+        step, so inflight clients would only add sampler saves."""
+        if (
+            self.async_config is not None
+            and self.async_config.inflight_weight_updates
+            and self.async_group_buffer_size() > self.async_groups_per_step()
+        ):
+            return "inflight"
+        return "snapshot"
+
+    def async_groups_per_step(self) -> int:
+        """Trajectory groups an async run trains per step:
+        ``stream_minibatch_config.groups_per_batch`` with streaming minibatches,
+        ``async_config.groups_per_batch`` otherwise."""
+        if self.async_config is None:
+            raise ConfigurationError("async_groups_per_step() requires async_config.")
+        if self.stream_minibatch_config is not None:
+            return self.stream_minibatch_config.groups_per_batch
+        return self.async_config.groups_per_batch
+
+    def async_group_buffer_size(self) -> int:
+        """The maximum number of trajectory groups an async run keeps started but
+        not yet trained: ``async_config.group_buffer_size``, or, from the deprecated
+        ``async_config.max_steps_off_policy`` K, ``groups_per_step * (K + 1)``.
+
+        Raises:
+            ConfigurationError: If the buffer is smaller than
+                :meth:`async_groups_per_step`, so a step could never fill.
+        """
+        if self.async_config is None:
+            raise ConfigurationError("async_group_buffer_size() requires async_config.")
+        groups_per_step = self.async_groups_per_step()
+        if self.async_config.group_buffer_size is not None:
+            size = self.async_config.group_buffer_size
+        else:
+            # AsyncConfig validation guarantees exactly one of the two is set.
+            assert self.async_config.max_steps_off_policy is not None
+            size = groups_per_step * (self.async_config.max_steps_off_policy + 1)
+        if size < groups_per_step:
+            step_source = (
+                "StreamMinibatchConfig.groups_per_batch"
+                if self.stream_minibatch_config is not None
+                else "AsyncConfig.groups_per_batch"
+            )
+            raise ConfigurationError(
+                f"AsyncConfig.group_buffer_size={size} is smaller than the {groups_per_step} "
+                f"trajectory groups each training step needs ({step_source}), so no step "
+                f"could ever fill. Set it to at least {groups_per_step} ({groups_per_step} is "
+                "on-policy; larger values let sampling run ahead of training)."
+            )
+        return size
+
+    @chz.validate
+    def _check_async_group_buffer(self) -> None:
+        if self.async_config is None:
+            return
+        self.async_group_buffer_size()  # raises if the buffer can't fill a step
 
     def effective_termination(self) -> TerminationRewardPolicy | None:
         """The termination policy this run trains with.
@@ -1181,7 +1341,7 @@ class _Shutdown:
     """Sentinel value to signal graceful shutdown through async queues.
 
     Used in the cascading shutdown protocol for async RL training:
-    dataloader -> workers -> training loop -> evaluation loop.
+    dataloader -> workers -> training loop.
     """
 
     pass
@@ -1219,7 +1379,7 @@ async def do_async_training(
 ):
     """Implement async off-policy training (see :class:`AsyncConfig`).
 
-    Launches four concurrent coroutine groups that communicate via async
+    Launches three concurrent coroutine groups that communicate via async
     queues:
 
     1. **Dataloader loop** -- feeds ``EnvGroupBuilder`` items into a queue.
@@ -1227,14 +1387,13 @@ async def do_async_training(
        slot, run a rollout, and push the ``WrappedTrajectoryGroup`` result.
     3. **Training loop** -- trains on batches of completed groups, oldest
        sampler version first (with streaming minibatches, in the order they
-       finish), and frees their slots after each step.
-    4. **Evaluation loop** -- runs evaluators whenever the sampling client is
-       updated.
+       finish), and frees their slots after each step. It starts a task for
+       each evaluated step's eval, which runs alongside training.
 
     If the dataset runs out, shutdown cascades from the dataloader through the
-    workers to training and evaluation via ``_Shutdown`` sentinels. When
-    training finishes, the dataloader and workers are cancelled, since nothing
-    they produce could be trained on anymore.
+    workers to training via ``_Shutdown`` sentinels. When training finishes,
+    the dataloader and workers are cancelled, since nothing they produce could
+    be trained on anymore, and the remaining evals run to completion.
 
     Args:
         start_batch (int): First training iteration index (inclusive).
@@ -1300,37 +1459,85 @@ async def do_async_training(
     # 2. Each trajectory worker receives its _Shutdown sentinel → exits and decrements
     #    worker_alive_counter. The last worker enqueues a _Shutdown into trajectory_groups_queue.
     # 3. Training loop receives _Shutdown from trajectory_groups_queue → trains any remaining
-    #    full batches, sets evaluation_loop_should_shutdown_event, and exits.
-    # 4. Eval loop sees evaluation_loop_should_shutdown_event → evaluates the final
-    #    weights if it hasn't already, then exits.
-    evaluation_loop_should_shutdown_event = asyncio.Event()
+    #    full batches, starts the final step's eval if it hasn't yet, and exits.
+    # 4. The dataloader and workers are cancelled, and the remaining evals run to completion.
     evaluation_end_step: int | None = end_batch if end_batch > start_batch else None
-    # A worker takes a slot before starting a rollout; the training loop frees it
-    # once the group has been trained (a worker frees it right away if its group
-    # is filtered out). This caps how far sampling can run ahead of training.
-    groups_per_step = (
-        config.stream_minibatch_config.groups_per_batch
-        if config.stream_minibatch_config is not None
-        else config.async_config.groups_per_batch
-    )
-    num_rollout_slots = groups_per_step * (config.async_config.max_steps_off_policy + 1)
+    # The group buffer: a worker takes a slot before starting a rollout; the
+    # training loop frees it once the group has been trained (a worker frees it
+    # right away if its group is filtered out). This caps how many groups are
+    # started but not yet trained, and so how far sampling can run ahead.
+    groups_per_step = config.async_groups_per_step()
+    num_rollout_slots = config.async_group_buffer_size()
     rollout_slots = asyncio.Semaphore(num_rollout_slots)
     # One worker per slot: with fewer workers than slots, the worker count rather
-    # than max_steps_off_policy would cap how far sampling runs ahead.
+    # than group_buffer_size would cap how far sampling runs ahead.
     num_rollout_workers = num_rollout_slots
     worker_alive_counter = _AsyncCounter(num_rollout_workers)
     rollout_workers_finished = asyncio.Event()
 
-    # This will be updated by the training loop
-    sampling_client = training_client.create_sampling_client(
-        path_dict["sampler_path"], record_stability_info=config.records_stability_info()
-    ).result()
+    inflight = config.sampling_client_kind() == "inflight"
+    # Each evaluated step's eval runs in its own task, alongside training and
+    # any other evals still running. How many overlap depends on eval_every.
+    eval_tasks: set[asyncio.Task[None]] = set()
+    last_eval_step: int | None = None
+    # The first eval failure. It cancels training so the run fails right away.
+    eval_failure: BaseException | None = None
+
+    def on_eval_done(task: asyncio.Task[None]) -> None:
+        nonlocal eval_failure
+        if not task.cancelled() and task.exception() is not None and eval_failure is None:
+            eval_failure = task.exception()
+            training_task.cancel()
+
+    def maybe_start_eval(
+        step: int,
+        rollout_client: tinker.SamplingClient,
+        coordinates: dict[str, float],
+        end_step: int | None,
+    ) -> None:
+        """Start an eval of ``step`` if it is due (see ``_should_run_evals``)
+        and not already started.
+
+        Must be called while the training client still holds ``step``'s
+        weights. A snapshot rollout client evaluates them as is. An inflight
+        one would drift to newer weights mid-eval, so this submits a snapshot
+        save of its own, queued before the next optim_step; the eval task
+        awaits it, so training doesn't wait for the save. ``coordinates``
+        (see ``snapshot_coordinates``) were taken when ``step`` was published
+        and are logged with its eval.
+        """
+        nonlocal last_eval_step
+        if step == last_eval_step or not _should_run_evals(
+            evaluators, config, step, end_step=end_step
+        ):
+            return
+        last_eval_step = step
+        snapshot_save = (
+            training_client.save_weights_and_get_sampling_client(
+                record_stability_info=False, kind="snapshot"
+            )
+            if inflight
+            else None
+        )
+        task = asyncio.create_task(
+            run_eval(step, rollout_client, coordinates, snapshot_save), name=f"eval_{step}"
+        )
+        task.add_done_callback(on_eval_done)
+        eval_tasks.add(task)
+
+    # These will be updated by the training loop
+    if inflight:
+        sampling_client = await training_client.save_weights_and_get_sampling_client(
+            record_stability_info=config.records_stability_info(), kind="inflight"
+        )
+    else:
+        sampling_client = training_client.create_sampling_client(
+            path_dict["sampler_path"], record_stability_info=config.records_stability_info()
+        ).result()
     sampling_client_step = start_batch
     sampling_client_coordinates = snapshot_coordinates(
         start_batch, cost_tracker.cumulative_metrics() if cost_tracker is not None else {}
     )
-    sampling_client_updated_event = asyncio.Event()
-    sampling_client_updated_event.set()
 
     @trace.scope
     async def dataloader_loop():
@@ -1441,9 +1648,14 @@ async def do_async_training(
             del completed_groups[:groups_per_batch]
             return batch
 
+        nonlocal sampling_client
+        nonlocal sampling_client_step
+        nonlocal sampling_client_coordinates
+        maybe_start_eval(
+            start_batch, sampling_client, sampling_client_coordinates, end_step=evaluation_end_step
+        )
         i_batch = start_batch
         train_step_metrics: dict[str, Any] = {}
-        nonlocal evaluation_end_step
         while i_batch < end_batch:
             completed_step = i_batch + 1
             metrics: dict[str, Any] = {
@@ -1452,9 +1664,6 @@ async def do_async_training(
                 "progress/done_frac": completed_step / num_batches,
             }
 
-            nonlocal sampling_client
-            nonlocal sampling_client_step
-            nonlocal sampling_client_coordinates
             reused_sampling_client = False
             if config.stream_minibatch_config is not None:
                 # Streaming minibatch: delegate queue consumption to the streaming function,
@@ -1485,7 +1694,6 @@ async def do_async_training(
                 ) = streaming_result
                 # The filter above skips dropped groups, so the step always trained.
                 assert new_sampling_client is not None
-                sampling_client = new_sampling_client
                 iter_dir = iteration_dir(config.log_path, i_batch)
                 _maybe_export_rollout_summary_jsonl(
                     config=config,
@@ -1529,7 +1737,7 @@ async def do_async_training(
                     # TODO: For proper checkpointing, we also need to save dataloader state and
                     # all queued trajectory groups that haven't been trained on yet
                     (
-                        sampling_client,
+                        new_sampling_client,
                         train_step_metrics,
                     ) = await do_train_step_and_get_sampling_client(
                         config,
@@ -1563,23 +1771,36 @@ async def do_async_training(
                     store=ml_logger.store,
                 )
                 trained_groups = wrapped_trajectory_groups
+            # With inflight weight updates, a group's sampling_client_step is the
+            # oldest weights its client could sample from (later tokens may come
+            # from newer weights), so these are upper bounds.
             staleness = [i_batch - g.sampling_client_step for g in trained_groups]
             metrics["async/staleness_max"] = max(staleness)
             metrics["async/staleness_min"] = min(staleness)
             metrics["async/staleness_mean"] = sum(staleness) / len(staleness)
             if not reused_sampling_client:
+                # Publish the new sampling client and its step, then free the trained
+                # groups' slots, with no await since the train step returned: rollouts
+                # started on these slots use the new weights and record their step.
+                sampling_client = new_sampling_client
                 sampling_client_step = completed_step
                 # Publish coordinates with their weights, before any await. A late
                 # evaluation must not read the cost of a newer optimizer update.
                 sampling_client_coordinates = snapshot_coordinates(
                     sampling_client_step, train_step_metrics
                 )
-                sampling_client_updated_event.set()
-            # Free the trained groups' slots only now that the new sampling client
-            # is in place (no await since the train step returned), so rollouts
-            # started on these slots use the new weights.
             for _ in trained_groups:
                 rollout_slots.release()
+            if not reused_sampling_client:
+                # Only this loop trains, so the weights are still this step's until the
+                # next train step; any eval snapshot taken here holds exactly them. (A
+                # reused client holds older weights, and its step is never evaluated.)
+                maybe_start_eval(
+                    sampling_client_step,
+                    sampling_client,
+                    sampling_client_coordinates,
+                    end_step=evaluation_end_step,
+                )
 
             # Rolling checkpoint (fire-and-forget, overlaps with next iteration)
             if checkpoint_mgr is not None:
@@ -1613,86 +1834,72 @@ async def do_async_training(
             )
 
         # Collection may reveal an earlier endpoint, but no update means no final eval.
-        evaluation_end_step = i_batch if i_batch > start_batch else None
-        if sampling_client_step < i_batch and _should_run_evals(
-            evaluators, config, i_batch, end_step=evaluation_end_step
+        if i_batch > start_batch and _should_run_evals(
+            evaluators, config, i_batch, end_step=i_batch
         ):
-            # Early data exhaustion can make an off-cadence drain step the final step.
-            sampling_client = await training_client.save_weights_and_get_sampling_client(
-                record_stability_info=config.records_stability_info()
+            if sampling_client_step < i_batch:
+                # The last steps reused an older client (no rollout needed their
+                # weights), and data ran out before a planned final step: publish
+                # the final weights for their evaluation. An inflight client gets
+                # its snapshot in maybe_start_eval.
+                if not inflight:
+                    sampling_client = await training_client.save_weights_and_get_sampling_client(
+                        record_stability_info=config.records_stability_info()
+                    )
+                sampling_client_step = i_batch
+                sampling_client_coordinates = snapshot_coordinates(i_batch, train_step_metrics)
+            # A no-op if the final step's eval already started in the loop.
+            maybe_start_eval(
+                i_batch, sampling_client, sampling_client_coordinates, end_step=i_batch
             )
-            sampling_client_step = i_batch
-            sampling_client_coordinates = snapshot_coordinates(i_batch, train_step_metrics)
-
-        # Signal evaluation loop to shut down
-        evaluation_loop_should_shutdown_event.set()
-        sampling_client_updated_event.set()
         logger.info("[training_loop] Terminated")
 
     @trace.scope
-    async def evaluation_loop():
-        """Runs evals periodically, matching the sync training eval pipeline."""
-        if not evaluators or config.eval_every <= 0:
-            return
+    async def run_eval(
+        eval_step: int,
+        rollout_client: tinker.SamplingClient,
+        coordinates: dict[str, float],
+        snapshot_save: Awaitable[tinker.SamplingClient] | None,
+    ) -> None:
+        """Evaluate ``eval_step`` and log the results as an event at that step,
+        with the client from ``snapshot_save`` if given, else ``rollout_client``.
 
-        last_eval_step: int | None = None
-        while True:
-            await sampling_client_updated_event.wait()
-            sampling_client_updated_event.clear()
-            # Read the flag before the step: the training loop sets it only after
-            # publishing its final sampling client, so seeing it means the client
-            # read below holds the final weights.
-            shutting_down = evaluation_loop_should_shutdown_event.is_set()
-
-            # Save a reference to the original values in case it changes
-            # while we're running the evals
-            sampling_client_eval_step = sampling_client_step
-            sampling_client_eval = sampling_client
-            coordinates = sampling_client_coordinates
-            # Always evaluate the final weights, even off the eval_every cadence
-            # or if an earlier eval was still running when training finished.
-            if sampling_client_eval_step != last_eval_step and _should_run_evals(
-                evaluators, config, sampling_client_eval_step, end_step=evaluation_end_step
-            ):
-                last_eval_step = sampling_client_eval_step
-                metrics: dict[str, Any] = {}
-                with trace.trace_iteration(step=sampling_client_eval_step) as window:
-                    eval_metrics = await run_evaluations_parallel(
-                        evaluators,
-                        sampling_client_eval,
-                        config,
-                        sampling_client_eval_step,
-                        store=ml_logger.store,
-                    )
-                    metrics.update(eval_metrics)
-                metrics.update(coordinates)
-                metrics["eval/completed_elapsed_seconds"] = time.monotonic() - training_started_at
-                metric_axes: dict[str, str] = {}
-                for axis, coordinate in (
-                    ("step", "eval/snapshot/training_step"),
-                    ("cost", "eval/snapshot/cumulative_cost_usd"),
-                    ("time", "eval/snapshot/elapsed_seconds"),
-                ):
-                    if coordinate in coordinates:
-                        for name, value in eval_metrics.items():
-                            alias = f"eval/by_{axis}/{name}"
-                            metrics[alias] = value
-                            metric_axes[alias] = coordinate
-                metrics.update(
-                    {
-                        f"eval/timing/{key}": value
-                        for key, value in window.get_timing_metrics().items()
-                    }
-                )
-                ml_logger.log_metrics_event(
-                    metrics,
-                    step=sampling_client_eval_step,
-                    step_metric="eval/snapshot/training_step",
-                    metric_axes=metric_axes,
-                )
-            if shutting_down:
-                break
-        logger.info("[evaluation_loop] Terminated")
+        Evals of different steps can run at the same time, so evaluators must be
+        safe to call concurrently (``RLTestSetEvaluator`` gives each call its own
+        env group builders).
+        """
+        metrics: dict[str, Any] = {}
+        with trace.trace_iteration(step=eval_step) as window:
+            eval_client = rollout_client
+            if snapshot_save is not None:
+                async with trace.scope_span("save_eval_snapshot"):
+                    eval_client = await snapshot_save
+            eval_metrics = await run_evaluations_parallel(
+                evaluators, eval_client, config, eval_step, store=ml_logger.store
+            )
+            metrics.update(eval_metrics)
+        metrics.update(coordinates)
+        metrics["eval/completed_elapsed_seconds"] = time.monotonic() - training_started_at
+        metric_axes: dict[str, str] = {}
+        for axis, coordinate in (
+            ("step", "eval/snapshot/training_step"),
+            ("cost", "eval/snapshot/cumulative_cost_usd"),
+            ("time", "eval/snapshot/elapsed_seconds"),
+        ):
+            if coordinate in coordinates:
+                for name, value in eval_metrics.items():
+                    alias = f"eval/by_{axis}/{name}"
+                    metrics[alias] = value
+                    metric_axes[alias] = coordinate
+        metrics.update(
+            {f"eval/timing/{key}": value for key, value in window.get_timing_metrics().items()}
+        )
+        ml_logger.log_metrics_event(
+            metrics,
+            step=eval_step,
+            step_metric="eval/snapshot/training_step",
+            metric_axes=metric_axes,
+        )
 
     producer_tasks = [
         asyncio.create_task(dataloader_loop(), name="dataloader_loop"),
@@ -1704,31 +1911,31 @@ async def do_async_training(
         ],
     ]
     training_task = asyncio.create_task(training_loop(), name="training_loop")
-    evaluation_task = asyncio.create_task(evaluation_loop(), name="evaluation_loop")
     # A task leaves `pending` when it finishes or when we cancel it, so each is
     # cancelled at most once and env cleanup is never interrupted by a second
     # cancellation.
-    pending = {*producer_tasks, training_task, evaluation_task}
+    pending = {*producer_tasks, training_task}
     try:
         # Run until every task is done, re-raising the first exception from any of them.
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if eval_failure is not None:
+                raise eval_failure
             for task in done:
                 task.result()
             if training_task in done:
                 # Nothing the dataloader and workers produce can be trained
-                # anymore; stop them while the last evaluation finishes.
+                # anymore; stop them while the remaining evals finish.
                 for task in producer_tasks:
                     task.cancel()
                 pending.difference_update(producer_tasks)
+        await asyncio.gather(*eval_tasks)
     finally:
         # Cancel whatever is still running (rollouts still in flight can never be
         # trained on) and wait for everything, so nothing outlives this call.
-        for task in pending:
+        for task in (*pending, *eval_tasks):
             task.cancel()
-        await asyncio.gather(
-            *producer_tasks, training_task, evaluation_task, return_exceptions=True
-        )
+        await asyncio.gather(*producer_tasks, training_task, *eval_tasks, return_exceptions=True)
 
 
 @trace.scope
@@ -1739,13 +1946,19 @@ async def save_checkpoint_and_get_sampling_client(
     start_batch: int = 0,
     record_stability_info: bool = False,
     cost_tracker: CostTracker | None = None,
+    sampling_client_kind: SamplingClientKind = "snapshot",
+    publish_future: Awaitable[tinker.SamplingClient] | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Save a checkpoint (if due) and return a fresh sampling client.
 
     When ``i_batch`` falls on the periodic checkpoint cadence, a full
     checkpoint (weights + optimizer state) is persisted via
     *checkpoint_mgr*. Otherwise a lightweight sampler-only snapshot is
-    created so that subsequent rollouts use the latest weights.
+    created so that subsequent rollouts use the latest weights. With
+    ``sampling_client_kind="inflight"``, the weights are published to the
+    training run's shared inflight target instead (on checkpoint steps too,
+    in addition to the checkpoint), and the returned client follows later
+    inflight saves.
 
     Args:
         training_client (tinker.TrainingClient): Client connected to the
@@ -1761,13 +1974,22 @@ async def save_checkpoint_and_get_sampling_client(
         cost_tracker (CostTracker | None): Its running token totals are
             stored in the checkpoint's ``loop_state`` so a resumed run
             continues them.
+        sampling_client_kind (SamplingClientKind): ``"snapshot"`` for a
+            client fixed to the latest weights, ``"inflight"`` for one that
+            follows later inflight saves. Defaults to ``"snapshot"``.
+        publish_future (Awaitable[tinker.SamplingClient] | None): A save of
+            these weights, of ``sampling_client_kind``, that was already
+            submitted (see :func:`_train_step_and_publish`). It's used instead
+            of a new save, and a due checkpoint is saved after it. Without
+            one, a snapshot checkpoint provides the sampler weights.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
         loaded with the latest weights, and a (possibly empty) metrics dict.
     """
     metrics: dict[str, Any] = {}
-    if i_batch > start_batch and checkpoint_mgr.should_save_periodic(i_batch):
+    checkpoint_due = i_batch > start_batch and checkpoint_mgr.should_save_periodic(i_batch)
+    if checkpoint_due and sampling_client_kind == "snapshot" and publish_future is None:
         path_dict = await checkpoint_mgr.save_periodic_async(
             step=i_batch, loop_state=_loop_state(i_batch, cost_tracker)
         )
@@ -1775,12 +1997,21 @@ async def save_checkpoint_and_get_sampling_client(
             path_dict["sampler_path"], record_stability_info=record_stability_info
         ).result()
         return sampling_client, metrics
-    else:
-        async with trace.scope_span("save_checkpoint"):
-            sampling_client = await training_client.save_weights_and_get_sampling_client(
-                record_stability_info=record_stability_info
+    async with trace.scope_span("save_checkpoint"):
+        if publish_future is None:
+            publish_future = training_client.save_weights_and_get_sampling_client(
+                record_stability_info=record_stability_info, kind=sampling_client_kind
             )
-            return sampling_client, metrics
+        sampling_client = await publish_future
+    if checkpoint_due:
+        # Here the checkpoint doesn't provide the sampler weights: they're
+        # inflight (a checkpoint's are a snapshot), or were published before
+        # the checkpoint came due. Publish first, so rollouts in progress don't
+        # wait for the full checkpoint save to get these weights.
+        await checkpoint_mgr.save_periodic_async(
+            step=i_batch, loop_state=_loop_state(i_batch, cost_tracker)
+        )
+    return sampling_client, metrics
 
 
 @trace.scope
@@ -1860,6 +2091,20 @@ class SamplingClientReuse:
     rollout_workers_finished: asyncio.Event
     reused: bool = False
 
+    def allowed(
+        self,
+        checkpoint_mgr: checkpoint_utils.CheckpointManager,
+        i_batch: int,
+        do_compute_post_kl: bool,
+    ) -> bool:
+        """Whether step ``i_batch`` can keep the old weights: nothing will
+        sample from new ones, and no checkpoint or post-update KL needs them."""
+        return (
+            self.rollout_workers_finished.is_set()
+            and not do_compute_post_kl
+            and not (i_batch > 0 and checkpoint_mgr.should_save_periodic(i_batch))
+        )
+
 
 @trace.scope
 async def compute_full_batch_metrics_and_get_sampling_client(
@@ -1873,6 +2118,8 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     usage: TokenUsage = TokenUsage(),
     cost_tracker: CostTracker | None = None,
     sampling_client_reuse: SamplingClientReuse | None = None,
+    sampling_client_kind: SamplingClientKind = "snapshot",
+    publish_future: Awaitable[tinker.SamplingClient] | None = None,
 ) -> tuple[tinker.SamplingClient, dict[str, Any]]:
     """Compute end-of-iteration metrics and export weights unless reuse is allowed.
 
@@ -1905,9 +2152,17 @@ async def compute_full_batch_metrics_and_get_sampling_client(
             is recorded once they return (:meth:`CostTracker.extend_step`):
             it is in this step's metrics and in every later checkpoint, but
             not in the one saved by this call.
+        sampling_client_kind (SamplingClientKind): Passed to
+            :func:`save_checkpoint_and_get_sampling_client`. Defaults to
+            ``"snapshot"``.
         sampling_client_reuse: Optional previous client and worker-finished event.
-            Checked after training; marks ``reused`` when returning old weights.
+            Checked here, after training, so a checkpoint that came due during
+            training still exports; marks ``reused`` when returning old weights.
             Periodic checkpoints and post-update KL always export.
+        publish_future (Awaitable[tinker.SamplingClient] | None): An
+            already-submitted save of the new weights, passed to
+            :func:`save_checkpoint_and_get_sampling_client`. Can't be combined
+            with ``sampling_client_reuse``, since it publishes the weights.
 
     Returns:
         tuple[tinker.SamplingClient, dict[str, Any]]: A sampling client
@@ -1925,11 +2180,9 @@ async def compute_full_batch_metrics_and_get_sampling_client(
     if cost_tracker is not None:
         metrics.update(cost_tracker.record_step(usage + training_usage(data_D)))
 
-    if (
-        sampling_client_reuse is not None
-        and sampling_client_reuse.rollout_workers_finished.is_set()
-        and not do_compute_post_kl
-        and not (i_batch > 0 and checkpoint_mgr.should_save_periodic(i_batch))
+    assert publish_future is None or sampling_client_reuse is None
+    if sampling_client_reuse is not None and sampling_client_reuse.allowed(
+        checkpoint_mgr, i_batch, do_compute_post_kl
     ):
         sampling_client_reuse.reused = True
         return sampling_client_reuse.sampling_client, metrics
@@ -1941,6 +2194,8 @@ async def compute_full_batch_metrics_and_get_sampling_client(
         i_batch,
         record_stability_info=record_stability_info,
         cost_tracker=cost_tracker,
+        sampling_client_kind=sampling_client_kind,
+        publish_future=publish_future,
     )
     metrics.update(checkpoint_metrics)
 
@@ -2148,6 +2403,7 @@ async def do_train_step_streaming_and_get_sampling_client(
         record_stability_info=config.records_stability_info(),
         usage=usage,
         cost_tracker=cost_tracker,
+        sampling_client_kind=config.sampling_client_kind(),
     )
     metrics.update(full_batch_metrics)
     return sampling_client, metrics, all_wrapped_trajectory_groups
@@ -2169,8 +2425,9 @@ async def do_train_step_and_get_sampling_client(
     """Prepare a minibatch, run one training step, and return updated weights.
 
     This is the standard (non-streaming) single-iteration training step. It
-    prepares data from trajectory groups, calls :func:`train_step`, computes
-    full-batch metrics, and checkpoints.
+    prepares data from trajectory groups, trains like :func:`train_step`
+    while submitting the new weights' publish early, computes full-batch
+    metrics, and checkpoints.
 
     Args:
         config (Config): RL training configuration.
@@ -2207,15 +2464,28 @@ async def do_train_step_and_get_sampling_client(
     )
     metrics.update(prepare_minibatch_metrics)
 
-    training_logprobs_D = await train_step(
-        data_D=data_D,
-        training_client=training_client,
-        learning_rate=config.learning_rate,
-        num_substeps=config.num_substeps,
-        loss_fn=config.training_loss_fn(),
-        loss_fn_config=config.loss_fn_config,
-        metrics=metrics,
+    # Publish the new weights as soon as the final optim_step is submitted,
+    # unless they won't be published at all (reuse) or a snapshot checkpoint
+    # will provide them. That checkpoint is saved after training, which costs
+    # a clock cycle on checkpoint steps but avoids saving the weights twice.
+    # Reuse is decided here, before training, and checked again after it.
+    kind = config.sampling_client_kind()
+    reuse = sampling_client_reuse is not None and sampling_client_reuse.allowed(
+        checkpoint_mgr, i_batch + 1, config.compute_post_kl
     )
+    snapshot_checkpoint = kind == "snapshot" and checkpoint_mgr.should_save_periodic(i_batch + 1)
+    async with trace.scope_span("train_step"):
+        training_logprobs_D, publish_future = await _train_step_and_publish(
+            data_D,
+            training_client,
+            config.learning_rate,
+            config.num_substeps,
+            config.training_loss_fn(),
+            loss_fn_config=config.loss_fn_config,
+            metrics=metrics,
+            publish_kind=None if reuse or snapshot_checkpoint else kind,
+            record_stability_info=config.records_stability_info(),
+        )
 
     sampling_client, full_batch_metrics = await compute_full_batch_metrics_and_get_sampling_client(
         training_client,
@@ -2228,7 +2498,9 @@ async def do_train_step_and_get_sampling_client(
         record_stability_info=config.records_stability_info(),
         usage=usage,
         cost_tracker=cost_tracker,
-        sampling_client_reuse=sampling_client_reuse,
+        sampling_client_reuse=sampling_client_reuse if reuse else None,
+        sampling_client_kind=kind,
+        publish_future=publish_future,
     )
     metrics.update(full_batch_metrics)
 
@@ -2514,9 +2786,19 @@ async def main(
         wandb_name=config.wandb_name,
     )
     store = ml_logger.store
+    if config.async_config is not None and config.async_config.max_steps_off_policy is not None:
+        # Logged rather than a DeprecationWarning, which Python hides by default
+        # outside __main__.
+        logger.warning(
+            "AsyncConfig.max_steps_off_policy is deprecated. Use "
+            f"group_buffer_size={config.async_group_buffer_size()} instead (groups_per_step * "
+            f"(max_steps_off_policy + 1) = {config.async_groups_per_step()} * "
+            f"({config.async_config.max_steps_off_policy} + 1)). It bounds the trajectory "
+            "groups started but not yet trained; it doesn't cap staleness."
+        )
     if (
         config.async_config is not None
-        and config.async_config.max_steps_off_policy > 0
+        and config.async_group_buffer_size() > config.async_groups_per_step()
         and config.training_loss_fn() in ("importance_sampling", "cispo")
     ):
         logger.warning(

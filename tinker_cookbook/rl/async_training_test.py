@@ -30,11 +30,11 @@ import chz
 import pytest
 import tinker
 import torch
-from tinker.types import LossFnType
+from tinker.types import LossFnType, SampledProvenanceSpan, SamplingClientKind
 
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
-from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.rl import train as train_module
 from tinker_cookbook.rl.rollout_strategy import MinViableGroup, RetryOnFailure, RolloutStrategy
 from tinker_cookbook.rl.train import (
     AsyncConfig,
@@ -96,6 +96,25 @@ class _Harness:
     step_started_at: dict[int, float] = field(default_factory=dict)
     # record_stability_info of every sampling client the training loop created
     record_stability_info: list[bool] = field(default_factory=list)
+    # and how each was made: "checkpoint" (from a saved sampler path), or the
+    # kind passed to save_weights_and_get_sampling_client ("snapshot"/"inflight")
+    client_sources: list[str] = field(default_factory=list)
+    # every sampling client the training loop created, in order
+    clients: list[_FakeSamplingClient] = field(default_factory=list)
+    # whether each sample_async call came from an inflight client
+    sampled_inflight: set[bool] = field(default_factory=set)
+    # (problem_id, client, version) of every sample_async call
+    samples: list[tuple[int, _FakeSamplingClient, int]] = field(default_factory=list)
+    # version of the weights last saved with kind="inflight"
+    inflight_version: int | None = None
+    # snapshot saves (kind="snapshot") in progress, and the version each rollout's
+    # first sample used if it happened during one
+    snapshot_saves_in_flight: int = 0
+    # optim_step calls made while a snapshot save was in flight
+    optim_steps_during_snapshot_save: int = 0
+    first_sample_during_snapshot_save: dict[int, int] = field(default_factory=dict)
+    # sequence ids named by the sampled provenance spans of each problem's trained data
+    trained_sequence_ids: dict[int, set[str]] = field(default_factory=dict)
     # loss_fn of every forward_backward call
     loss_fns: list[str] = field(default_factory=list)
     # how long each problem's EnvGroupBuilder.cleanup takes, and whose cleanup finished
@@ -108,6 +127,8 @@ class _Harness:
     # optim_step calls so far, and how many of them were applied before the last
     # publication of new sampler weights
     optim_steps: int = 0
+    # optim_steps behind each saved weight version (versions count saves of new weights)
+    version_optim_steps: dict[int, int] = field(default_factory=lambda: {0: 0})
     published_optim_steps: int = 0
 
 
@@ -158,11 +179,23 @@ class _FakeOptimResult:
 
 
 class _FakeSamplingClient:
-    """Sampling client stub whose sampled tokens encode its weight version."""
+    """Sampling client stub whose sampled tokens encode its weight version.
 
-    def __init__(self, version: int, harness: _Harness):
-        self.version = version
+    An inflight client samples from the latest inflight weights, like a real
+    inflight client once an update has propagated.
+    """
+
+    def __init__(self, version: int, harness: _Harness, inflight: bool = False):
+        self._version = version
         self.harness = harness
+        self.inflight = inflight
+
+    @property
+    def version(self) -> int:
+        if not self.inflight:
+            return self._version
+        assert self.harness.inflight_version is not None
+        return self.harness.inflight_version
 
     def sample(
         self, prompt: tinker.ModelInput, num_samples: int, sampling_params: tinker.SamplingParams
@@ -171,8 +204,12 @@ class _FakeSamplingClient:
         h = self.harness
         h.sample_counts[problem_id] = h.sample_counts.get(problem_id, 0) + 1
         h.sampled_versions.add(self.version)
+        h.sampled_inflight.add(self.inflight)
+        h.samples.append((problem_id, self, self.version))
         if problem_id not in h.started_problems:
             h.started_problems.add(problem_id)
+            if h.snapshot_saves_in_flight:
+                h.first_sample_during_snapshot_save[problem_id] = self.version
             done = h.trained_problems | (h.filtered_problems & h.finished_at.keys())
             h.max_outstanding = max(h.max_outstanding, len(h.started_problems - done))
         return _FakeFuture(
@@ -192,41 +229,74 @@ class _FakeSamplingClient:
 class _FakeTrainingClient:
     """Training client stub that records which (problem, version) pairs are trained.
 
-    The weight version is the number of sampling-client publications so far
-    (one per training iteration, regardless of num_substeps), matching the
-    training loop's ``sampling_client_step`` accounting.
+    The weight version is the number of sampler saves that followed an
+    optimizer step (one per training iteration, regardless of num_substeps),
+    matching the training loop's ``sampling_client_step`` accounting. Saving
+    again without an optimizer step in between saves the same version.
     """
 
-    def __init__(self, harness: _Harness, train_time_s: float = 0.005):
+    def __init__(self, harness: _Harness, train_time_s: float = 0.005, save_latency_s: float = 0.0):
         self.harness = harness
         self.train_time_s = train_time_s
+        self.save_latency_s = save_latency_s
         self.version = 0
+        self._optim_steps_at_save = 0
+
+    def _save(self) -> int:
+        if self.harness.optim_steps != self._optim_steps_at_save:
+            self._optim_steps_at_save = self.harness.optim_steps
+            self.version += 1
+            self.harness.version_optim_steps[self.version] = self.harness.optim_steps
+        return self.version
 
     def save_state(self, name: str, ttl_seconds: int | None = None) -> _FakeFuture:
         return _FakeFuture(_FakePath(path=f"mock://state/{name}"))
 
     def save_weights_for_sampler(self, name: str, ttl_seconds: int | None = None) -> _FakeFuture:
+        self._save()
         return _FakeFuture(_FakePath(path=f"mock://sampler/{name}"))
 
-    def _publish(self, version: int, record_stability_info: bool) -> _FakeSamplingClient:
-        self.harness.record_stability_info.append(record_stability_info)
-        self.harness.published_optim_steps = self.harness.optim_steps
-        self.version = version
-        self.harness.trained_problems |= self.harness.in_training_step
-        self.harness.in_training_step.clear()
-        return _FakeSamplingClient(self.version, self.harness)
+    def _publish(
+        self, version: int, record_stability_info: bool, source: str
+    ) -> _FakeSamplingClient:
+        h = self.harness
+        h.record_stability_info.append(record_stability_info)
+        h.client_sources.append(source)
+        h.published_optim_steps = h.optim_steps
+        h.trained_problems |= h.in_training_step
+        h.in_training_step.clear()
+        if source == "inflight":
+            h.inflight_version = version
+        client = _FakeSamplingClient(version, h, inflight=source == "inflight")
+        h.clients.append(client)
+        return client
 
     def save_weights_and_get_sampling_client(
-        self, record_stability_info: bool = False
-    ) -> _FakeFuture:
-        return _FakeFuture(self._publish(self.version + 1, record_stability_info))
+        self, record_stability_info: bool = False, kind: SamplingClientKind = "snapshot"
+    ) -> asyncio.Future[_FakeSamplingClient]:
+        # Like the SDK, the save is submitted when requested: it captures the
+        # weights then and takes a while, whether or not anyone awaits it yet.
+        return asyncio.ensure_future(self._finish_save(self._save(), record_stability_info, kind))
+
+    async def _finish_save(
+        self, version: int, record_stability_info: bool, kind: SamplingClientKind
+    ) -> _FakeSamplingClient:
+        is_snapshot = kind == "snapshot"
+        self.harness.snapshot_saves_in_flight += is_snapshot
+        try:
+            await asyncio.sleep(self.save_latency_s)
+        finally:
+            self.harness.snapshot_saves_in_flight -= is_snapshot
+        return self._publish(version, record_stability_info, kind)
 
     def create_sampling_client(self, path: str, record_stability_info: bool = False) -> _FakeFuture:
         # Checkpoints are named by step (f"{step:06d}"), so the sampler path
         # identifies the weight version. Periodic checkpoints (save_every > 0)
         # publish new weights through this path instead of
         # save_weights_and_get_sampling_client.
-        return _FakeFuture(self._publish(int(path.rsplit("/", 1)[-1]), record_stability_info))
+        return _FakeFuture(
+            self._publish(int(path.rsplit("/", 1)[-1]), record_stability_info, "checkpoint")
+        )
 
     def forward_backward(
         self,
@@ -245,6 +315,11 @@ class _FakeTrainingClient:
             )
             self.harness.in_training_step.add(problem_id)
             self.harness.pending_gradients.add(problem_id)
+            self.harness.trained_sequence_ids.setdefault(problem_id, set()).update(
+                span.sequence_id
+                for span in datum.loss_fn_input_spans or []
+                if isinstance(span, SampledProvenanceSpan)
+            )
         outputs = [
             {
                 "logprobs": tinker.TensorData.from_torch(
@@ -258,6 +333,7 @@ class _FakeTrainingClient:
     def optim_step(self, adam_params: tinker.AdamParams) -> _FakeFuture:
         h = self.harness
         h.optim_steps += 1
+        h.optim_steps_during_snapshot_save += h.snapshot_saves_in_flight > 0
         h.applied_problems |= h.pending_gradients
         h.pending_gradients.clear()
         return _FakeFuture(_FakeOptimResult())
@@ -275,13 +351,21 @@ class _SleepEnv(Env):
     """
 
     def __init__(
-        self, problem_id: int, latency_s: float, reward: float, harness: _Harness, fail: bool
+        self,
+        problem_id: int,
+        latency_s: float,
+        reward: float,
+        harness: _Harness,
+        fail: bool,
+        two_turns: bool = False,
     ):
         self.problem_id = problem_id
         self.latency_s = latency_s
         self.reward = reward
         self.harness = harness
         self.fail = fail
+        self.two_turns = two_turns
+        self.turn = 0
 
     async def initial_observation(self) -> tuple[Observation, list[int]]:
         return tinker.ModelInput.from_ints([self.problem_id]), []
@@ -300,6 +384,19 @@ class _SleepEnv(Env):
                 del h.running_envs[self.problem_id]
         if self.fail:
             raise RuntimeError(f"env for problem {self.problem_id} failed")
+        self.turn += 1
+        if self.two_turns and self.turn == 1:
+            # Wait for a newer inflight publication before the second turn, so the
+            # rollout's second sample runs on newer weights than its first.
+            first_version = int(action[-1]) - VERSION_BASE
+            while (h.inflight_version or 0) <= first_version:
+                await asyncio.sleep(0.005)
+            return StepResult(
+                reward=0.0,
+                episode_done=False,
+                next_observation=tinker.ModelInput.from_ints([self.problem_id, *action, 0]),
+                next_stop_condition=[],
+            )
         self.harness.finished_at[self.problem_id] = time.monotonic()
         return StepResult(
             reward=self.reward,
@@ -318,6 +415,7 @@ class _SleepEnvGroupBuilder(EnvGroupBuilder):
         harness: _Harness,
         constant_reward: bool = False,
         fail: bool = False,
+        two_turns: bool = False,
     ):
         self.problem_id = problem_id
         self.latency_s = latency_s
@@ -325,6 +423,7 @@ class _SleepEnvGroupBuilder(EnvGroupBuilder):
         self.harness = harness
         self.constant_reward = constant_reward
         self.fail = fail
+        self.two_turns = two_turns
 
     async def make_envs(self) -> Sequence[Env]:
         # Alternate rewards within the group (unless testing constant-reward
@@ -336,6 +435,7 @@ class _SleepEnvGroupBuilder(EnvGroupBuilder):
                 reward=0.0 if self.constant_reward else float(i % 2),
                 harness=self.harness,
                 fail=self.fail,
+                two_turns=self.two_turns,
             )
             for i in range(self.group_size)
         ]
@@ -348,6 +448,18 @@ class _SleepEnvGroupBuilder(EnvGroupBuilder):
 class _SlowEvaluator(SamplingClientEvaluator):
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         await asyncio.sleep(0.4)
+        return {}
+
+
+class _FailingEvaluator(SamplingClientEvaluator):
+    def __init__(self, failing_version: int) -> None:
+        self.failing_version = failing_version
+
+    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
+        version = cast(_FakeSamplingClient, sampling_client).version
+        await asyncio.sleep(0.01)
+        if version == self.failing_version:
+            raise RuntimeError(f"eval of version {version} failed")
         return {}
 
 
@@ -371,13 +483,27 @@ class _UnusedDatasetBuilder(RLDatasetBuilder):
 
 
 class _RecordingEvaluator(SamplingClientEvaluator):
-    def __init__(self) -> None:
+    def __init__(self, eval_time_s: float = 0.01) -> None:
+        self.eval_time_s = eval_time_s
         self.versions: list[int] = []
+        # weight versions at the end of each eval, and whether its client was inflight
+        self.end_versions: list[int] = []
+        self.inflight: list[bool] = []
+        self.clients: list[_FakeSamplingClient] = []
+        self.running = 0
+        self.max_running = 0
 
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
-        version = cast(_FakeSamplingClient, sampling_client).version
+        client = cast(_FakeSamplingClient, sampling_client)
+        version = client.version
+        self.running += 1
+        self.max_running = max(self.max_running, self.running)
         self.versions.append(version)
-        await asyncio.sleep(0.01)
+        self.inflight.append(client.inflight)
+        self.clients.append(client)
+        await asyncio.sleep(self.eval_time_s)
+        self.end_versions.append(client.version)
+        self.running -= 1
         return {"eval/version": float(version)}
 
 
@@ -398,7 +524,8 @@ async def _run_async_training(
     tmp_path: str,
     latencies: list[float],
     groups_per_batch: int,
-    max_steps_off_policy: int,
+    group_buffer_size: int | None = None,
+    max_steps_off_policy: int | None = None,
     group_size: int = 2,
     train_time_s: float = 0.005,
     extra_groups_per_batch: int = 0,
@@ -412,6 +539,9 @@ async def _run_async_training(
     eval_every: int = 0,
     evaluators: list[SamplingClientEvaluator] | None = None,
     loss_fn: LossFnType | None = None,
+    inflight_weight_updates: bool = False,
+    save_latency_s: float = 0.0,
+    two_turn_problem_ids: set[int] | None = None,
     cleanup_s: dict[int, float] | None = None,
     timeout_s: float = 30.0,
 ) -> _RunResult:
@@ -427,7 +557,9 @@ async def _run_async_training(
     harness = _Harness(
         filtered_problems=set(constant_reward_problem_ids), cleanup_s=cleanup_s or {}
     )
-    training_client = _FakeTrainingClient(harness, train_time_s=train_time_s)
+    training_client = _FakeTrainingClient(
+        harness, train_time_s=train_time_s, save_latency_s=save_latency_s
+    )
     # When resuming, the initial sampler weights correspond to iteration start_batch.
     training_client.version = start_batch
 
@@ -441,6 +573,7 @@ async def _run_async_training(
             harness=harness,
             constant_reward=i in constant_reward_problem_ids,
             fail=i in failing_problem_ids,
+            two_turns=i in (two_turn_problem_ids or set()),
         )
         for i, latency in enumerate(latencies)
     ]
@@ -465,13 +598,18 @@ async def _run_async_training(
         stream_minibatch_config=stream_minibatch_config,
         async_config=(
             AsyncConfig(
-                max_steps_off_policy=max_steps_off_policy, groups_per_batch=groups_per_batch
+                group_buffer_size=group_buffer_size,
+                max_steps_off_policy=max_steps_off_policy,
+                groups_per_batch=groups_per_batch,
+                inflight_weight_updates=inflight_weight_updates,
             )
             if loss_fn is None
             else AsyncConfig(
+                group_buffer_size=group_buffer_size,
                 max_steps_off_policy=max_steps_off_policy,
                 groups_per_batch=groups_per_batch,
                 loss_fn=loss_fn,
+                inflight_weight_updates=inflight_weight_updates,
             )
         ),
     )
@@ -551,6 +689,16 @@ def _assert_every_update_applied_and_published(
     assert h.published_optim_steps == h.optim_steps
 
 
+def _assert_every_update_applied(result: _RunResult, problem_ids: Sequence[int]) -> None:
+    """Exactly ``problem_ids`` were trained and every gradient was applied by an
+    optim_step. Once every rollout worker has exited, steps nothing samples from
+    or evaluates reuse the previous sampling client (#533), so the last updates
+    need not be published."""
+    h = result.harness
+    assert h.pending_gradients == set()
+    assert h.applied_problems == set(problem_ids)
+
+
 def _metric_rows(result: _RunResult) -> list[dict[str, Any]]:
     """Training rows of metrics.jsonl (eval rows carry no staleness metrics)."""
     with open(f"{result.log_dir}/metrics.jsonl") as f:
@@ -580,16 +728,20 @@ class TestAsyncSemantics:
         latencies[1] = 1.0  # ~100x slower than the rest, spans many steps
         result = asyncio.run(
             _run_async_training(
-                tmp_path, latencies, groups_per_batch=groups_per_batch, max_steps_off_policy=1
+                tmp_path,
+                latencies,
+                groups_per_batch=groups_per_batch,
+                group_buffer_size=2 * groups_per_batch,
             )
         )
         staleness = _assert_trained_exactly_once(result)
         # The slow rollout was trained even though it is far more than one step stale.
         assert max(staleness[1]) > 1
 
-    @pytest.mark.parametrize("max_steps_off_policy", [0, 1, 3])
-    def test_admission_cap_holds(self, tmp_path, max_steps_off_policy):
-        """At most groups_per_batch * (max_steps_off_policy + 1) groups are ever outstanding."""
+    @pytest.mark.parametrize("group_buffer_size", [3, 5, 6, 12])
+    def test_admission_cap_holds(self, tmp_path, group_buffer_size):
+        """At most group_buffer_size groups are ever outstanding, including sizes that
+        aren't a multiple of groups_per_batch."""
         groups_per_batch = 3
         # Fast sampling and slow training, so sampling would race ahead without the cap.
         latencies = [0.001] * (groups_per_batch * 8)
@@ -598,27 +750,24 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=max_steps_off_policy,
+                group_buffer_size=group_buffer_size,
                 train_time_s=0.03,
             )
         )
         _assert_trained_exactly_once(result)
-        assert result.harness.max_outstanding == groups_per_batch * (max_steps_off_policy + 1)
+        assert result.harness.max_outstanding == group_buffer_size
 
-    @pytest.mark.parametrize("max_steps_off_policy", [0, 1, 3])
+    @pytest.mark.parametrize("group_buffer_size", [2, 4, 8])
     @pytest.mark.parametrize("streaming", [False, True])
-    def test_rollouts_run_concurrently_up_to_the_cap(
-        self, tmp_path, max_steps_off_policy, streaming
-    ):
-        """Slow rollouts fill every slot at once, not just groups_per_batch of them."""
+    def test_rollouts_run_concurrently_up_to_the_cap(self, tmp_path, group_buffer_size, streaming):
+        """Slow rollouts fill every buffer slot at once, not just groups_per_batch of them."""
         groups_per_batch = 2
-        cap = groups_per_batch * (max_steps_off_policy + 1)
         result = asyncio.run(
             _run_async_training(
                 tmp_path,
-                [0.1] * (cap * 2),
+                [0.1] * (group_buffer_size * 2),
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=max_steps_off_policy,
+                group_buffer_size=group_buffer_size,
                 stream_minibatch_config=(
                     StreamMinibatchConfig(groups_per_batch=groups_per_batch, num_minibatches=1)
                     if streaming
@@ -627,7 +776,30 @@ class TestAsyncSemantics:
             )
         )
         _assert_trained_exactly_once(result)
-        assert result.harness.max_running == cap
+        assert result.harness.max_running == group_buffer_size
+
+    @pytest.mark.parametrize("streaming", [False, True])
+    def test_deprecated_max_steps_off_policy_sizes_the_buffer(self, tmp_path, streaming):
+        """max_steps_off_policy=K still works: the buffer holds groups_per_step * (K + 1)
+        groups, where groups_per_step is the streaming batch size when streaming."""
+        # With streaming, each step trains 4 groups rather than groups_per_batch=2.
+        groups_per_step = 4 if streaming else 2
+        expected_buffer = groups_per_step * 2
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.1] * (expected_buffer * 2),
+                groups_per_batch=2,
+                max_steps_off_policy=1,
+                stream_minibatch_config=(
+                    StreamMinibatchConfig(groups_per_batch=4, num_minibatches=1)
+                    if streaming
+                    else None
+                ),
+            )
+        )
+        _assert_trained_exactly_once(result)
+        assert result.harness.max_running == expected_buffer
 
     @pytest.mark.parametrize("groups_per_batch", [1, 2])
     def test_streaming_trains_groups_in_the_order_they_finish(self, tmp_path, groups_per_batch):
@@ -639,7 +811,7 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=1,
+                group_buffer_size=2 * groups_per_batch,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=groups_per_batch, num_minibatches=1
                 ),
@@ -651,26 +823,18 @@ class TestAsyncSemantics:
         steps = [trained_step[p] for p in by_finish]
         assert steps == sorted(steps)
 
-    @pytest.mark.parametrize(
-        "max_steps_off_policy, groups_per_batch", [(-1, 2), (0, 0)], ids=["negative_k", "no_groups"]
-    )
-    def test_invalid_async_config_is_rejected(self, max_steps_off_policy, groups_per_batch):
-        with pytest.raises(ConfigurationError, match="max_steps_off_policy"):
-            AsyncConfig(
-                max_steps_off_policy=max_steps_off_policy, groups_per_batch=groups_per_batch
-            )
-
-    def test_zero_steps_off_policy_is_on_policy(self, tmp_path):
+    def test_buffer_of_one_step_is_on_policy(self, tmp_path):
         latencies = [0.02, 0.1] * 6
         result = asyncio.run(
-            _run_async_training(tmp_path, latencies, groups_per_batch=2, max_steps_off_policy=0)
+            _run_async_training(tmp_path, latencies, groups_per_batch=2, group_buffer_size=2)
         )
         staleness = _assert_trained_exactly_once(result)
         assert all(v == 0 for values in staleness.values() for v in values)
 
-    @pytest.mark.parametrize("max_steps_off_policy", [1, 2])
-    def test_typical_staleness_tracks_max_steps_off_policy(self, tmp_path, max_steps_off_policy):
-        """With fast, uniform rollouts the pipeline fills up: staleness settles at K."""
+    @pytest.mark.parametrize("steps_ahead", [1, 2])
+    def test_typical_staleness_tracks_the_buffer(self, tmp_path, steps_ahead):
+        """With fast, uniform rollouts the pipeline fills up: staleness settles at
+        group_buffer_size / groups_per_batch - 1 steps."""
         groups_per_batch = 3
         n_batches = 10
         latencies = [0.001] * (groups_per_batch * n_batches)
@@ -679,17 +843,22 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=max_steps_off_policy,
+                group_buffer_size=groups_per_batch * (steps_ahead + 1),
                 train_time_s=0.02,
             )
         )
         _assert_trained_exactly_once(result)
         rows = _metric_rows(result)
-        assert all(r["async/staleness_max"] <= max_steps_off_policy for r in rows)
-        steady = [r for r in rows if r["training_client/step"] >= max_steps_off_policy + 1]
-        assert steady and all(
-            r["async/staleness_mean"] >= max_steps_off_policy - 0.5 for r in steady
+        assert all(r["async/staleness_max"] <= steps_ahead for r in rows)
+        steady = [r for r in rows if r["training_client/step"] >= steps_ahead + 1]
+        assert steady and all(r["async/staleness_mean"] >= steps_ahead - 0.5 for r in steady)
+
+    def test_each_step_logs_its_train_step_time(self, tmp_path):
+        result = asyncio.run(
+            _run_async_training(tmp_path, [0.001] * 6, groups_per_batch=3, group_buffer_size=6)
         )
+        rows = _metric_rows(result)
+        assert rows and all("time/train_step" in r for r in rows)
 
     def test_batches_take_the_oldest_completed_groups_first(self, tmp_path):
         """Whenever a step trains, no older group that had already finished is left waiting.
@@ -704,7 +873,7 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=3,
+                group_buffer_size=4 * groups_per_batch,
                 train_time_s=0.03,
             )
         )
@@ -738,7 +907,7 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=1,
+                group_buffer_size=2 * groups_per_batch,
                 constant_reward_problem_ids=filtered,
             )
         )
@@ -750,7 +919,7 @@ class TestAsyncSemantics:
     def test_logged_staleness_matches_trained_data(self, tmp_path):
         latencies = [0.01, 0.3, 0.01, 0.05] * 5
         result = asyncio.run(
-            _run_async_training(tmp_path, latencies, groups_per_batch=4, max_steps_off_policy=1)
+            _run_async_training(tmp_path, latencies, groups_per_batch=4, group_buffer_size=8)
         )
         _assert_trained_exactly_once(result)
         by_step: dict[int, list[int]] = {}
@@ -783,7 +952,7 @@ class TestAsyncLiveness:
                 latencies,
                 groups_per_batch=4,
                 extra_groups_per_batch=1,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 timeout_s=5.0,
             )
             assert _other_tasks() == []
@@ -804,7 +973,7 @@ class TestAsyncLiveness:
                     tmp_path,
                     latencies,
                     groups_per_batch=4,
-                    max_steps_off_policy=2,
+                    group_buffer_size=12,
                     failing_problem_ids={5},
                     timeout_s=5.0,
                 )
@@ -821,7 +990,7 @@ class TestAsyncLiveness:
 
         async def _test() -> None:
             run = asyncio.create_task(
-                _run_async_training(tmp_path, latencies, groups_per_batch=4, max_steps_off_policy=1)
+                _run_async_training(tmp_path, latencies, groups_per_batch=4, group_buffer_size=8)
             )
             await asyncio.sleep(0.2)
             run.cancel()
@@ -850,7 +1019,7 @@ class TestAsyncLiveness:
                 latencies,
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                max_steps_off_policy=3,
+                group_buffer_size=8,
                 strategy=strategy,
                 timeout_s=5.0,
             )
@@ -870,7 +1039,7 @@ class TestAsyncLiveness:
                 tmp_path,
                 latencies,
                 groups_per_batch=4,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 strategy=RetryOnFailure(max_retries=0, per_rollout_timeout=0.2),
                 timeout_s=10.0,
             )
@@ -889,7 +1058,7 @@ class TestAsyncLiveness:
                 [0.01, 0.01, 0.15, 0.15],
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                max_steps_off_policy=1,
+                group_buffer_size=4,
                 failing_problem_ids={2},
                 eval_every=1,
                 evaluators=[_SlowEvaluator()],
@@ -907,7 +1076,7 @@ class TestAsyncLiveness:
                 [0.01, 0.01, HANG, HANG],
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                max_steps_off_policy=1,
+                group_buffer_size=4,
                 eval_every=1,
                 evaluators=[_SlowEvaluator()],
                 cleanup_s={2: 0.01, 3: 0.1},
@@ -924,7 +1093,7 @@ class TestAsyncLiveness:
                 [0.01, 0.01, HANG, HANG],
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                max_steps_off_policy=1,
+                group_buffer_size=4,
                 eval_every=1,
                 evaluators=[_SlowEvaluator()],
                 cleanup_s={2: 0.01, 3: 1.0},
@@ -943,7 +1112,7 @@ class TestAsyncIntegrationPaths:
         latencies = [0.01, 0.01, 0.2, 0.01] * 5
         result = asyncio.run(
             _run_async_training(
-                tmp_path, latencies, groups_per_batch=4, max_steps_off_policy=1, num_substeps=2
+                tmp_path, latencies, groups_per_batch=4, group_buffer_size=8, num_substeps=2
             )
         )
         _assert_trained_exactly_once(result)
@@ -957,7 +1126,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=0,
+                group_buffer_size=groups_per_batch,
                 start_batch=start_batch,
             )
         )
@@ -973,7 +1142,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 latencies,
                 groups_per_batch=4,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=4, num_minibatches=2
                 ),
@@ -990,7 +1159,7 @@ class TestAsyncIntegrationPaths:
                 [0.0] * 8,
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                max_steps_off_policy=0,
+                group_buffer_size=4,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=4, num_minibatches=1
                 ),
@@ -1009,7 +1178,7 @@ class TestAsyncIntegrationPaths:
                 latencies,
                 groups_per_batch=4,
                 extra_groups_per_batch=2,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 # Interleaved with unfiltered groups, so they land mid-minibatch.
                 constant_reward_problem_ids={0, 2, 4, 6, 8, 10},
                 stream_minibatch_config=StreamMinibatchConfig(
@@ -1022,7 +1191,8 @@ class TestAsyncIntegrationPaths:
             trained_per_step.setdefault(step, set()).add(problem_id)
         assert [len(p) for _, p in sorted(trained_per_step.items())] == [4, 4, 4, 4]
 
-    def test_streaming_step_cut_short_by_shutdown_is_published(self, tmp_path):
+    @pytest.mark.parametrize("inflight", [False, True], ids=["snapshot", "inflight"])
+    def test_streaming_step_cut_short_by_shutdown_is_published(self, tmp_path, inflight):
         """If the data runs out after a step's first optimizer substep, that update is
         still published (new weights, metrics) rather than silently dropped."""
         # 6 groups, 4 per streamed step in 2 substeps: step 1 applies its first
@@ -1032,8 +1202,10 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 6,
                 groups_per_batch=2,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 num_substeps=2,
+                inflight_weight_updates=inflight,
+                save_latency_s=0.01 if inflight else 0.0,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=4, num_minibatches=1
                 ),
@@ -1045,8 +1217,10 @@ class TestAsyncIntegrationPaths:
         assert h.in_training_step == set()
         assert h.trained_problems == set(range(6))
         assert [r["training_client/step"] for r in _metric_rows(result)] == [0, 1]
+        assert result.harness.sampled_inflight == {inflight}
 
-    def test_streaming_step_cut_short_mid_substep_is_published(self, tmp_path):
+    @pytest.mark.parametrize("inflight", [False, True], ids=["snapshot", "inflight"])
+    def test_streaming_step_cut_short_mid_substep_is_published(self, tmp_path, inflight):
         """Two steps of two substeps with one filtered group: the last substep is
         short a group when the data runs out, and is still applied and published."""
         result = asyncio.run(
@@ -1054,9 +1228,11 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 8,
                 groups_per_batch=4,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 num_substeps=2,
                 constant_reward_problem_ids={5},
+                inflight_weight_updates=inflight,
+                save_latency_s=0.01 if inflight else 0.0,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=4, num_minibatches=1
                 ),
@@ -1066,8 +1242,10 @@ class TestAsyncIntegrationPaths:
         _assert_every_update_applied_and_published(result, trained)
         assert result.harness.optim_steps == 4
         assert [r["training_client/step"] for r in _metric_rows(result)] == [0, 1]
+        assert result.harness.sampled_inflight == {inflight}
 
-    def test_streaming_partial_minibatch_at_shutdown_is_trained(self, tmp_path):
+    @pytest.mark.parametrize("inflight", [False, True], ids=["snapshot", "inflight"])
+    def test_streaming_partial_minibatch_at_shutdown_is_trained(self, tmp_path, inflight):
         """A minibatch the data runs out before filling is trained, not dropped."""
         # Two dataset batches of 4 with three groups filtered: step 0 trains 4 in two
         # minibatches of 2; step 1 has a single group when the data runs out.
@@ -1076,8 +1254,10 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 8,
                 groups_per_batch=4,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 constant_reward_problem_ids={2, 5, 6},
+                inflight_weight_updates=inflight,
+                save_latency_s=0.01 if inflight else 0.0,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=4, num_minibatches=2
                 ),
@@ -1086,6 +1266,7 @@ class TestAsyncIntegrationPaths:
         _assert_every_update_applied_and_published(result, [0, 1, 3, 4, 7])
         assert result.harness.optim_steps == 2
         assert [r["training_client/step"] for r in _metric_rows(result)] == [0, 1]
+        assert result.harness.sampled_inflight == {inflight}
 
     def test_groups_left_when_the_data_runs_out_are_trained(self, tmp_path):
         """Four groups offered two per step with one filtered: the leftover group is
@@ -1095,7 +1276,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 4,
                 groups_per_batch=2,
-                max_steps_off_policy=1,
+                group_buffer_size=4,
                 constant_reward_problem_ids={1},
                 eval_every=1,
                 evaluators=[_RecordingEvaluator()],
@@ -1114,7 +1295,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * (n_steps * groups_per_batch),
                 groups_per_batch=groups_per_batch,
-                max_steps_off_policy=1,
+                group_buffer_size=2 * groups_per_batch,
                 num_substeps=num_substeps,
                 eval_every=1,
                 evaluators=[_RecordingEvaluator()],
@@ -1129,7 +1310,7 @@ class TestAsyncIntegrationPaths:
     def test_single_group_per_batch(self, tmp_path):
         latencies = [0.01, 0.2, 0.01, 0.01, 0.15, 0.01] * 2
         result = asyncio.run(
-            _run_async_training(tmp_path, latencies, groups_per_batch=1, max_steps_off_policy=2)
+            _run_async_training(tmp_path, latencies, groups_per_batch=1, group_buffer_size=3)
         )
         _assert_trained_exactly_once(result)
         assert result.harness.max_outstanding <= 3
@@ -1139,7 +1320,7 @@ class TestAsyncIntegrationPaths:
         latencies = [0.01, 0.01, 0.01, 0.2] * 6
         result = asyncio.run(
             _run_async_training(
-                tmp_path, latencies, groups_per_batch=4, max_steps_off_policy=1, save_every=2
+                tmp_path, latencies, groups_per_batch=4, group_buffer_size=8, save_every=2
             )
         )
         _assert_trained_exactly_once(result)
@@ -1153,7 +1334,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 latencies,
                 groups_per_batch=4,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 eval_every=1,
                 evaluators=[evaluator],
             )
@@ -1196,7 +1377,7 @@ class TestAsyncDefaultLoss:
                 tmp_path,
                 [0.01, 0.05, 0.01, 0.1] * 4,
                 groups_per_batch=4,
-                max_steps_off_policy=1,
+                group_buffer_size=8,
                 loss_fn=loss_fn,
                 save_every=save_every,
                 stream_minibatch_config=(
@@ -1212,3 +1393,338 @@ class TestAsyncDefaultLoss:
         assert set(h.loss_fns) == {expected_loss_fn}
         assert h.record_stability_info
         assert all(r == (expected_loss_fn == "stable_reinforce") for r in h.record_stability_info)
+
+
+# ---------------------------------------------------------------------------
+# Inflight weight updates
+# ---------------------------------------------------------------------------
+
+
+def _eval_rows(result: _RunResult) -> list[dict[str, Any]]:
+    with open(f"{result.log_dir}/metrics.jsonl") as f:
+        rows = [json.loads(line) for line in f]
+    return [r for r in rows if "eval/version" in r]
+
+
+_STREAMING = StreamMinibatchConfig(groups_per_batch=4, num_minibatches=2)
+# Gives the fake's sampler saves real latency, so other loops run during them.
+_SAVE_LATENCY_S = 0.02
+
+
+class TestAsyncInflightWeights:
+    @pytest.mark.parametrize("save_every", [0, 2])
+    def test_flag_off_publishes_snapshots(self, tmp_path, save_every):
+        """With the flag off, every client is a snapshot, one per step plus the
+        initial one, and evals use those same clients (no extra saves)."""
+        n_steps = 4
+        evaluator = _RecordingEvaluator()
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01, 0.05, 0.01, 0.02] * n_steps,
+                groups_per_batch=4,
+                group_buffer_size=8,
+                save_every=save_every,
+                eval_every=2,
+                evaluators=[evaluator],
+                save_latency_s=_SAVE_LATENCY_S,
+                inflight_weight_updates=False,
+            )
+        )
+        _assert_trained_exactly_once(result)
+        h = result.harness
+        assert h.sampled_inflight == {False}
+        expected_sources = ["checkpoint"] + [
+            "checkpoint" if save_every and step % save_every == 0 else "snapshot"
+            for step in range(1, n_steps + 1)
+        ]
+        assert h.client_sources == expected_sources
+        # Each eval ran on the very client published for its step's rollouts.
+        assert evaluator.versions == [0, 2, 4]
+        assert all(any(c is e for c in h.clients) for e in evaluator.clients)
+
+    @pytest.mark.parametrize(
+        "streaming, save_every, start_batch, loss_fn",
+        [
+            (False, 0, 0, None),
+            (False, 2, 0, None),
+            (True, 0, 0, None),
+            (True, 2, 0, None),
+            (False, 2, 2, None),
+            (False, 2, 0, "ppo"),
+        ],
+        ids=["batched", "checkpoints", "streaming", "streaming_checkpoints", "resume", "ppo"],
+    )
+    def test_rollouts_sample_from_inflight_weights(
+        self, tmp_path, streaming, save_every, start_batch, loss_fn
+    ):
+        """With the flag, the initial client and the client published by every
+        step (checkpoint steps included) are inflight, recording stability info
+        exactly when the loss needs it."""
+        n_steps = 5
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01, 0.05, 0.01, 0.1] * (n_steps + start_batch),
+                groups_per_batch=4,
+                group_buffer_size=8,
+                save_every=save_every,
+                start_batch=start_batch,
+                stream_minibatch_config=_STREAMING if streaming else None,
+                loss_fn=loss_fn,
+                inflight_weight_updates=True,
+                save_latency_s=_SAVE_LATENCY_S,
+            )
+        )
+        trained = range(4 * start_batch, 4 * (n_steps + start_batch))
+        _assert_trained_exactly_once(result, trained)
+        _assert_every_update_applied(result, trained)
+        h = result.harness
+        assert h.sampled_inflight == {True}
+        # No evaluators, so no snapshot clients, not even from checkpoints: the
+        # initial client, then one per step until the rollout workers have exited.
+        assert set(h.client_sources) == {"inflight"}
+        assert 1 + n_steps - 2 <= len(h.client_sources) <= n_steps + 1
+        assert set(h.record_stability_info) == {loss_fn is None}
+
+    def test_multi_turn_rollout_moves_to_newer_weights(self, tmp_path):
+        """A rollout whose second turn starts after new weights are published
+        samples both turns through the same client (one session), the second on
+        the newer weights, and its trained datum names both sampled sequences."""
+        two_turn = {4, 5}
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01] * 8,
+                groups_per_batch=2,
+                group_buffer_size=6,
+                two_turn_problem_ids=two_turn,
+                inflight_weight_updates=True,
+                save_latency_s=_SAVE_LATENCY_S,
+            )
+        )
+        h = result.harness
+        _assert_every_update_applied(result, range(8))
+        for problem_id in two_turn:
+            samples = [(c, v) for p, c, v in h.samples if p == problem_id]
+            # group_size samples per turn
+            assert len(samples) == 2 * result.group_size
+            first, second = samples[: result.group_size], samples[result.group_size :]
+            assert len({id(c) for c, _ in samples}) == 1
+            assert max(v for _, v in first) < min(v for _, v in second)
+            # The trained data ends with the second turn's sampled token...
+            trained_versions = {v for p, v, _ in h.trained_records if p == problem_id}
+            assert trained_versions == {v for _, v in second}
+            # ...and its provenance names both turns' sequences of every trajectory.
+            assert len(h.trained_sequence_ids[problem_id]) == 2 * result.group_size
+
+    @pytest.mark.parametrize(
+        "streaming, save_every, start_batch",
+        [(False, 0, 0), (False, 3, 0), (True, 0, 0), (True, 3, 0), (False, 0, 2)],
+        ids=["batched", "checkpoints", "streaming", "streaming_checkpoints", "resume"],
+    )
+    def test_evals_use_snapshots_of_the_reported_step(
+        self, tmp_path, streaming, save_every, start_batch
+    ):
+        """Every eval runs on fixed weights of exactly the step it is logged at,
+        including the final step off the eval cadence. With evals faster than
+        training no cadence step is skipped, and each snapshot saved is evaluated."""
+        n_steps, eval_every = 5, 2
+        # Slow enough that an inflight client would move to newer weights mid-eval.
+        evaluator = _RecordingEvaluator(eval_time_s=0.05)
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01, 0.03, 0.01, 0.02] * (n_steps + start_batch),
+                groups_per_batch=4,
+                group_buffer_size=8,
+                train_time_s=0.05,
+                save_every=save_every,
+                start_batch=start_batch,
+                eval_every=eval_every,
+                evaluators=[evaluator],
+                stream_minibatch_config=_STREAMING if streaming else None,
+                inflight_weight_updates=True,
+                save_latency_s=_SAVE_LATENCY_S,
+            )
+        )
+        h = result.harness
+        end = start_batch + n_steps
+        assert h.sampled_inflight == {True}
+        assert not any(evaluator.inflight)
+        assert evaluator.end_versions == evaluator.versions
+        rows = _eval_rows(result)
+        assert [r["eval/version"] for r in rows] == [float(r["step"]) for r in rows]
+        expected = sorted({s for s in range(start_batch, end + 1) if s % eval_every == 0} | {end})
+        assert sorted(r["step"] for r in rows) == expected
+        # One snapshot save per evaluated step, the starting step included.
+        assert h.client_sources.count("snapshot") == len(expected)
+        assert h.client_sources.count("checkpoint") == 0
+        assert h.client_sources.count("inflight") == n_steps + 1
+        # Only the rollout clients record stability info.
+        assert h.record_stability_info == [src == "inflight" for src in h.client_sources]
+        # Each eval logs its snapshot save's time with its results.
+        assert all("eval/timing/time/save_eval_snapshot" in r for r in rows)
+
+    def test_slow_evals_overlap_and_none_are_skipped(self, tmp_path):
+        """With evals slower than training, evals of different steps run at the
+        same time instead of skipping cadence steps, and each evaluates its own
+        step's snapshot."""
+        n_steps = 8
+        evaluator = _RecordingEvaluator(eval_time_s=0.3)
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01] * (4 * n_steps),
+                groups_per_batch=4,
+                group_buffer_size=8,
+                eval_every=1,
+                evaluators=[evaluator],
+                inflight_weight_updates=True,
+                save_latency_s=_SAVE_LATENCY_S,
+            )
+        )
+        h = result.harness
+        rows = _eval_rows(result)
+        assert sorted(int(r["step"]) for r in rows) == list(range(n_steps + 1))
+        assert [r["eval/version"] for r in rows] == [float(r["step"]) for r in rows]
+        # One snapshot save per step, each evaluated on weights that stay fixed.
+        assert h.client_sources.count("snapshot") == n_steps + 1
+        assert not any(evaluator.inflight)
+        assert evaluator.end_versions == evaluator.versions
+        assert evaluator.max_running > 1
+
+    def test_training_continues_while_an_eval_snapshot_saves(self, tmp_path):
+        """An eval's snapshot save is submitted before the next optim_step, so it
+        holds that step's weights, but the eval task waits for it: training keeps
+        going in the meantime."""
+        n_steps = 4
+        evaluator = _RecordingEvaluator()
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01] * (4 * n_steps),
+                groups_per_batch=4,
+                group_buffer_size=8,
+                eval_every=1,
+                evaluators=[evaluator],
+                inflight_weight_updates=True,
+                save_latency_s=0.2,
+            )
+        )
+        h = result.harness
+        assert h.optim_steps_during_snapshot_save > 0
+        rows = _eval_rows(result)
+        assert [r["eval/version"] for r in rows] == [float(r["step"]) for r in rows]
+        assert evaluator.end_versions == evaluator.versions
+
+    def test_rollouts_started_during_an_eval_snapshot_save_get_the_new_step(
+        self, tmp_path, monkeypatch
+    ):
+        """The training loop publishes a step's client and step and frees its slots
+        before saving that step's eval snapshot. Rollouts that start during the
+        save, including on slots freed by filtered groups finishing then, record
+        the step whose weights their inflight client already serves."""
+        labels: dict[int, int] = {}
+        export = train_module._maybe_export_rollout_summary_jsonl
+
+        def record_labels(**kwargs: Any) -> None:
+            for group in kwargs["groups_P"]:
+                first_ob = group.trajectory_group.trajectories_G[0].transitions[0].ob
+                labels[first_ob.to_ints()[0]] = group.sampling_client_step
+            export(**kwargs)
+
+        monkeypatch.setattr(train_module, "_maybe_export_rollout_summary_jsonl", record_labels)
+        n_problems = 36
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01, 0.03, 0.06] * (n_problems // 3),
+                groups_per_batch=2,
+                group_buffer_size=4,
+                extra_groups_per_batch=1,
+                constant_reward_problem_ids=set(range(2, n_problems, 3)),
+                eval_every=1,
+                evaluators=[_RecordingEvaluator()],
+                inflight_weight_updates=True,
+                save_latency_s=0.1,
+            )
+        )
+        started = result.harness.first_sample_during_snapshot_save
+        trained_started = {p: v for p, v in started.items() if p in labels}
+        assert trained_started, "no trained rollout started during an eval snapshot save"
+        assert {p: labels[p] for p in trained_started} == trained_started
+
+    def test_final_off_cadence_step_is_evaluated_after_a_slow_save(self, tmp_path):
+        """The final step is evaluated even when saving its snapshot takes a while."""
+        evaluator = _RecordingEvaluator()
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01] * 12,
+                groups_per_batch=4,
+                group_buffer_size=8,
+                eval_every=2,
+                evaluators=[evaluator],
+                inflight_weight_updates=True,
+                save_latency_s=0.2,
+            )
+        )
+        assert [int(r["step"]) for r in _eval_rows(result)] == [0, 2, 3]
+        assert evaluator.versions == [0, 2, 3]
+
+    def test_drain_steps_reuse_clients_and_early_final_is_evaluated(self, tmp_path):
+        """Once the rollout workers have exited, off-cadence steps reuse the previous
+        inflight client and start no eval; when data runs out early, the last trained
+        step is still evaluated on a snapshot of exactly its weights."""
+        evaluator = _RecordingEvaluator()
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.01] * 12,
+                groups_per_batch=2,
+                group_buffer_size=6,
+                # Two filtered groups leave 5 trainable steps of the 6 planned.
+                constant_reward_problem_ids={10, 11},
+                eval_every=2,
+                evaluators=[evaluator],
+                inflight_weight_updates=True,
+                save_latency_s=_SAVE_LATENCY_S,
+            )
+        )
+        rows = _eval_rows(result)
+        assert [int(r["step"]) for r in rows] == [0, 2, 4, 5]
+        # Drain steps skip saves, so weight versions lag steps; map them back.
+        steps_of = result.harness.version_optim_steps
+        assert [steps_of[v] for v in evaluator.versions] == [0, 2, 4, 5]
+        assert evaluator.end_versions == evaluator.versions
+        assert not any(evaluator.inflight)
+        h = result.harness
+        # Fewer inflight publishes than steps: the drain steps reused the client.
+        assert h.client_sources.count("inflight") < 1 + 5
+
+    @pytest.mark.parametrize("failing_step", [0, 8], ids=["during_training", "final"])
+    def test_eval_failure_fails_the_run(self, tmp_path, failing_step):
+        """An eval that fails while training runs stops the run right away; a
+        failing final eval fails the run once training is done."""
+        n_steps = 8
+        with pytest.raises(RuntimeError, match=f"eval of version {failing_step} failed"):
+            asyncio.run(
+                _run_async_training(
+                    tmp_path,
+                    [0.01] * (4 * n_steps),
+                    groups_per_batch=4,
+                    group_buffer_size=8,
+                    train_time_s=0.05,
+                    eval_every=1,
+                    evaluators=[_FailingEvaluator(failing_version=failing_step)],
+                    inflight_weight_updates=True,
+                    save_latency_s=_SAVE_LATENCY_S,
+                )
+            )
+        metrics_path = tmp_path / "metrics.jsonl"
+        rows = (
+            map(json.loads, metrics_path.read_text().splitlines()) if metrics_path.exists() else []
+        )
+        logged_steps = [r["step"] for r in rows if "training_client/step" in r]
+        assert (len(logged_steps) < n_steps) == (failing_step < n_steps)

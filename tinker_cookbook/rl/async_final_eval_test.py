@@ -30,6 +30,7 @@ def _run(
     *,
     end_batch: int,
     eval_every: int,
+    start_batch: int = 0,
     ml_logger: ml_log.Logger | None = None,
     delay_eval: bool = False,
     deterministic_clock: bool = False,
@@ -64,7 +65,7 @@ def _run(
 
     async def fake_run_evals(evaluators, sampling_client, config, step, **kwargs: Any):
         eval_steps.append(step)
-        if step > 0:
+        if step > start_batch:
             assert sampling_client._mock_name == f"sampling_client_{step}"
         if delay_eval and step == delayed_step:
             evaluation_started.set()
@@ -88,12 +89,17 @@ def _run(
         max_tokens=16,
         log_path=str(tmp_path),
         eval_every=eval_every,
-        async_config=train.AsyncConfig(max_steps_off_policy=2, groups_per_batch=GROUPS_PER_BATCH),
+        # Evals run on the rollout client published for their step (snapshot clients).
+        async_config=train.AsyncConfig(
+            group_buffer_size=3 * GROUPS_PER_BATCH,
+            groups_per_batch=GROUPS_PER_BATCH,
+            inflight_weight_updates=False,
+        ),
     )
 
     asyncio.run(
         train.do_async_training(
-            start_batch=0,
+            start_batch=start_batch,
             end_batch=end_batch,
             num_batches=end_batch,
             config=config,
@@ -127,9 +133,10 @@ def test_async_training_streams_before_initial_eval_finishes(tmp_path, monkeypat
     logger = ml_log.WandbLogger(project="test")
 
     def assert_streamed():
+        # Training and the later evals keep logging while the initial eval is held.
         rows = [call.args[0] for call in fake_wandb.log.call_args_list]
-        assert [r["training/step"] for r in rows] == [0, 1, 2, 3]
-        assert all("eval/score" not in r for r in rows)
+        assert [r["training/step"] for r in rows if "training/step" in r] == [0, 1, 2, 3]
+        assert all(r.get("eval/snapshot/training_step") != 0 for r in rows)
 
     evaluated = _run(
         tmp_path,
@@ -143,9 +150,10 @@ def test_async_training_streams_before_initial_eval_finishes(tmp_path, monkeypat
     )
     rows = [call.args[0] for call in fake_wandb.log.call_args_list]
     eval_rows = [r for r in rows if "eval/score" in r]
-    assert [r["eval/snapshot/training_step"] for r in eval_rows] == evaluated
+    assert sorted(r["eval/snapshot/training_step"] for r in eval_rows) == sorted(evaluated)
     assert all("training/step" not in r for r in eval_rows)
-    assert "eval/snapshot/cumulative_cost_usd" not in eval_rows[0]
+    initial = next(r for r in eval_rows if r["eval/snapshot/training_step"] == 0)
+    assert "eval/snapshot/cumulative_cost_usd" not in initial
     logger.log_metrics({"cost/final": 2.0}, step=4)
     assert fake_wandb.log.call_args_list[-1].args[0] == {"cost/final": 2.0, "training/step": 4}
     assert all(call.kwargs == {"commit": True} for call in fake_wandb.log.call_args_list)
@@ -191,3 +199,38 @@ def test_delayed_eval_keeps_published_weight_cost_and_time(tmp_path, monkeypatch
         assert snapshot[f"eval/by_{axis}/eval/score"] == 1.0
     assert rows[4]["eval/snapshot/cumulative_cost_usd"] == 8.0
     assert rows[4]["eval/snapshot/elapsed_seconds"] == 40.0
+
+
+def test_async_restart_reuses_history_without_resume_options(tmp_path, monkeypatch):
+    fake_wandb = MagicMock()
+    fake_wandb.init.return_value.id = "original"
+    fake_wandb.init.return_value.project = "test"
+    fake_wandb.init.return_value.entity = "team"
+    fake_wandb.init.return_value.settings.mode = "online"
+    monkeypatch.delenv("WANDB_ENTITY", raising=False)
+    monkeypatch.delenv("WANDB_RUN_ID", raising=False)
+    monkeypatch.setattr(ml_log, "wandb", fake_wandb)
+    monkeypatch.setattr(ml_log, "_wandb_available", True)
+    for start_batch, end_batch in [(0, 3), (1, 4)]:
+        logger = ml_log.setup_logging(
+            str(tmp_path),
+            wandb_project="test",
+            wandb_name="training",
+            do_configure_logging_module=False,
+        )
+        _run(
+            tmp_path,
+            monkeypatch,
+            start_batch=start_batch,
+            end_batch=end_batch,
+            eval_every=1,
+            ml_logger=logger,
+        )
+        logger.close()
+    assert fake_wandb.init.call_args.kwargs["id"] == "original"
+    assert fake_wandb.init.call_args.kwargs["resume"] == "allow"
+    rows = [call.args[0] for call in fake_wandb.log.call_args_list]
+    assert [row["training/step"] for row in rows if "train/score" in row] == [0, 1, 2, 1, 2, 3]
+    eval_rows = [row for row in rows if "eval/score" in row]
+    assert all(row["eval/snapshot/training_step"] == row["eval/score"] for row in eval_rows)
+    assert all(call.kwargs == {"commit": True} for call in fake_wandb.log.call_args_list)

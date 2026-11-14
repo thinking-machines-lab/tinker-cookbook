@@ -56,7 +56,7 @@ def get_image_processor(model_name: str) -> ImageProcessor:
 
 
 def image_to_data_uri(image: Any) -> str:
-    """Materialize a local image into a base64 JPEG ``data:`` URI.
+    """Materialize a local image into a base64 ``data:`` URI: PNG if it has transparency, else JPEG.
 
     Accepts a ``PIL.Image.Image``, a ``data:`` URI (returned unchanged), or a local file
     path / ``file://`` URI. Remote URLs (``http(s)``, ``gs``, ``s3``, ...) are refused:
@@ -89,9 +89,12 @@ def image_to_data_uri(image: Any) -> str:
     else:
         raise TypeError(f"image must be a PIL.Image.Image or str; got {type(image)!r}")
 
-    if pil_image.mode in ("RGBA", "LA", "P"):
-        pil_image = pil_image.convert("RGB")
     buf = io.BytesIO()
+    if pil_image.has_transparency_data:
+        pil_image.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    if pil_image.mode == "P":
+        pil_image = pil_image.convert("RGB")
     pil_image.save(buf, format="JPEG")
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 

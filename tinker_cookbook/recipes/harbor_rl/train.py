@@ -58,7 +58,9 @@ class CLIConfig:
     base_url: str | None = None
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
-    # Async rollout configuration
+    # Setting this enables async training; see AsyncConfig.group_buffer_size.
+    group_buffer_size: int | None = None
+    # Deprecated; use group_buffer_size.
     max_steps_off_policy: int | None = None
 
     max_steps: int | None = None
@@ -124,10 +126,11 @@ async def cli_main(
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
         async_config=AsyncConfig(
+            group_buffer_size=cli_config.group_buffer_size,
             max_steps_off_policy=cli_config.max_steps_off_policy,
             groups_per_batch=cli_config.groups_per_batch,
         )
-        if cli_config.max_steps_off_policy is not None
+        if cli_config.group_buffer_size is not None or cli_config.max_steps_off_policy is not None
         else None,
         max_steps=cli_config.max_steps,
     )

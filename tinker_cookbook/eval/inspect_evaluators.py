@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import weakref
 
 import chz
 import tinker
@@ -13,6 +15,17 @@ from tinker_cookbook.exceptions import ConfigurationError
 
 # Set up logger
 logger = logging.getLogger(__name__)
+
+# inspect_ai allows one eval_async call at a time per process and raises on a
+# second. Evaluations can overlap (async RL runs one per evaluated step), so
+# they take turns. Asyncio locks belong to one event loop, hence one per loop.
+_eval_async_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _eval_async_lock() -> asyncio.Lock:
+    return _eval_async_locks.setdefault(asyncio.get_running_loop(), asyncio.Lock())
 
 
 @chz.chz
@@ -109,24 +122,25 @@ class InspectEvaluator(SamplingClientEvaluator):
         )
 
         # Run evaluation
-        results = await eval_async(
-            tasks=self.config.tasks,
-            model=[model],
-            limit=self.config.limit,
-            debug_errors=self.config.debug_errors,
-            # Never retry - the tinker SDK is doing this for us already
-            retry_on_error=0,
-            # Although Tinker sampling tries very hard to only throw unrecoverable failures,
-            # the inspect evaluation can still fail if e.g. the parser returns an error for
-            # a given sample.
-            fail_on_error=False,
-            log_dir=self.config.log_dir or cli_utils.runs_path("inspect-logs"),
-            max_connections=self.config.max_connections,
-            log_level=self.config.log_level,
-            log_realtime=False,
-            log_buffer=1000,
-            metadata=self.config.metadata,
-        )
+        async with _eval_async_lock():
+            results = await eval_async(
+                tasks=self.config.tasks,
+                model=[model],
+                limit=self.config.limit,
+                debug_errors=self.config.debug_errors,
+                # Never retry - the tinker SDK is doing this for us already
+                retry_on_error=0,
+                # Although Tinker sampling tries very hard to only throw unrecoverable failures,
+                # the inspect evaluation can still fail if e.g. the parser returns an error for
+                # a given sample.
+                fail_on_error=False,
+                log_dir=self.config.log_dir or cli_utils.runs_path("inspect-logs"),
+                max_connections=self.config.max_connections,
+                log_level=self.config.log_level,
+                log_realtime=False,
+                log_buffer=1000,
+                metadata=self.config.metadata,
+            )
 
         # Extract metrics from results
         metrics = {}

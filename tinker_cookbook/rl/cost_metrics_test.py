@@ -331,6 +331,7 @@ def test_streaming_step_sums_the_usage_of_its_minibatches(monkeypatch):
         loss_fn_config=None,
         training_loss_fn=lambda: "importance_sampling",
         records_stability_info=lambda: False,
+        sampling_client_kind=lambda: "snapshot",
     )
     queue: asyncio.Queue[Any] = asyncio.Queue()
     for i in range(4):

@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from tinker_cookbook.exceptions import ConfigurationError
+from tinker_cookbook.stores.storage import storage_from_uri
 from tinker_cookbook.utils.code_state import code_state
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,12 @@ def _rich_console_use_logger(console: Console):
     # ^^^ add a leading newline so things like table formatting work properly
 
 
+def _local_log_dir(log_dir: str | Path | None) -> str | None:
+    if not log_dir or ("://" in str(log_dir) and not str(log_dir).startswith("file://")):
+        return None
+    return str(Path(str(log_dir).removeprefix("file://")).expanduser())
+
+
 class WandbLogger(Logger):
     """Logger that streams metrics and config to Weights & Biases.
 
@@ -329,6 +336,14 @@ class WandbLogger(Logger):
         config (Any | None): Initial configuration to log.
         log_dir (str | Path | None): Local directory for W&B files.
         wandb_name (str | None): Display name for the W&B run.
+
+    Event logging saves the online W&B identity in ``log_dir`` and subsequent
+    starts reuse it automatically. A new directory starts a new history. Older
+    directories without identity start one new segment. The directory must have
+    one logging process. Resumed config and name reflect the latest invocation;
+    replayed training steps remain separate events with repeated x values.
+    A saved event history keeps event logging even if the caller later uses a
+    synchronous training loop, so checkpoint replays are not discarded.
 
     Raises:
         ImportError: If ``wandb`` is not installed.
@@ -352,16 +367,50 @@ class WandbLogger(Logger):
         self._event_steps = False
         self._event_metric_axes: set[tuple[str, str]] = set()
 
+        self._resume_storage = storage_from_uri(str(log_dir)) if log_dir else None
+        resume_storage = self._resume_storage
+        identity: dict[str, str] = {}
+        if resume_storage is not None and resume_storage.exists("wandb_run.json"):
+            try:
+                identity = json.loads(resume_storage.read("wandb_run.json"))
+                if not isinstance(identity, dict) or any(
+                    not isinstance(identity.get(key), str) or not identity[key]
+                    for key in ("id", "project", "entity")
+                ):
+                    raise ValueError("expected nonempty id, project and entity")
+            except (ValueError, TypeError) as e:
+                raise ConfigurationError(f"Invalid W&B run identity in wandb_run.json: {e}") from e
+            if (
+                project != identity["project"]
+                or os.environ.get("WANDB_ENTITY", identity["entity"]) != identity["entity"]
+                or os.environ.get("WANDB_RUN_ID", identity["id"]) != identity["id"]
+            ):
+                raise ConfigurationError(
+                    "W&B run identity conflicts with wandb_run.json. Use the original project, "
+                    "WANDB_ENTITY and WANDB_RUN_ID, or a new log directory for a new run."
+                )
+
+        self._resuming = bool(identity)
         # Initialize wandb run
         assert wandb is not None  # For type checker
         try:
             self.run = wandb.init(
                 project=project,
                 config=dump_config(config) if config else None,
-                dir=str(log_dir) if log_dir else None,
+                dir=_local_log_dir(log_dir),
                 name=wandb_name,
+                id=identity.get("id"),
+                entity=identity.get("entity"),
+                resume="allow" if identity else None,
             )
         except Exception as e:
+            if identity:
+                raise ConfigurationError(
+                    f"Failed to resume W&B run {identity['entity']}/{project}/{identity['id']} "
+                    f"from wandb_run.json: {type(e).__name__}: {e}\n"
+                    "Check access to the saved run. To start a new W&B history, remove "
+                    "wandb_run.json from the log directory; training checkpoints are unchanged."
+                ) from e
             raise ConfigurationError(
                 f"Failed to initialize W&B run for project {project!r}: "
                 f"{type(e).__name__}: {e}\n"
@@ -371,11 +420,22 @@ class WandbLogger(Logger):
                 "  - leave wandb_project unset to disable W&B logging."
             ) from e
 
+        if identity:
+            self.enable_event_steps()
+
     def enable_event_steps(self) -> None:
         if self.run and not self._event_steps:
             self.run.define_metric("training/step")
             self.run.define_metric("*", step_metric="training/step", step_sync=False)
             self._event_steps = True
+            if self._resume_storage is not None and self.run.settings.mode == "online":
+                self._resume_storage.write(
+                    "wandb_run.json",
+                    json.dumps(
+                        {"id": self.run.id, "project": self.run.project, "entity": self.run.entity}
+                    ).encode(),
+                )
+                self._resume_storage.flush()
 
     def log_metrics_event(
         self,
@@ -402,7 +462,10 @@ class WandbLogger(Logger):
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
         if self.run and wandb is not None:
-            wandb.config.update(dump_config(config))
+            if self._resuming:
+                wandb.config.update(dump_config(config), allow_val_change=True)
+            else:
+                wandb.config.update(dump_config(config))
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
@@ -656,8 +719,7 @@ def setup_logging(
     """
     # Cloud URIs (s3://, gs://, az://) go through FsspecStorage; file:// and
     # bare paths are local.  Third-party loggers need a local directory.
-    is_cloud = "://" in log_dir and not log_dir.startswith("file://")
-    local_log_dir: str | None = None if is_cloud else str(Path(log_dir).expanduser())
+    local_log_dir = _local_log_dir(log_dir)
 
     # Initialize loggers
     loggers = []
@@ -677,7 +739,7 @@ def setup_logging(
                 WandbLogger(
                     project=wandb_project,
                     config=config,
-                    log_dir=local_log_dir,
+                    log_dir=log_dir,
                     wandb_name=wandb_name,
                 )
             )

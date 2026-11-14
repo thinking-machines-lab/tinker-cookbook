@@ -57,6 +57,9 @@ class CLIConfig:
 
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
+    # Setting this enables async training; see AsyncConfig.group_buffer_size.
+    group_buffer_size: int | None = None
+    # Deprecated; use group_buffer_size.
     max_steps_off_policy: int | None = None
     loss_fn: LossFnType = "stable_reinforce"
 
@@ -138,11 +141,12 @@ async def cli_main(cli_config: CLIConfig):
         eval_every=cli_config.eval_every,
         save_every=cli_config.save_every,
         async_config=AsyncConfig(
+            group_buffer_size=cli_config.group_buffer_size,
             max_steps_off_policy=cli_config.max_steps_off_policy,
             groups_per_batch=cli_config.groups_per_batch,
             loss_fn=cli_config.loss_fn,
         )
-        if cli_config.max_steps_off_policy is not None
+        if cli_config.group_buffer_size is not None or cli_config.max_steps_off_policy is not None
         else None,
         loss_fn=cli_config.loss_fn,
         max_steps=cli_config.max_steps,

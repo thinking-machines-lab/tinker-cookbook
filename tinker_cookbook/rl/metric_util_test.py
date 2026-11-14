@@ -1,14 +1,21 @@
-"""Tests for RLTestSetEvaluator.last_result (BenchmarkResult integration)."""
+"""Tests for RLTestSetEvaluator: last_result (BenchmarkResult integration) and
+isolation between overlapping evaluations."""
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
 import tinker
 
-from tinker_cookbook.completers import TokensWithLogprobs
+from tinker_cookbook.completers import StopCondition, TokenCompleter, TokensWithLogprobs
 from tinker_cookbook.eval.benchmarks._types import BenchmarkResult
 from tinker_cookbook.rl.metric_util import RLTestSetEvaluator
 from tinker_cookbook.rl.types import (
+    Env,
     EnvGroupBuilder,
+    RLDataset,
+    StepResult,
     Trajectory,
     TrajectoryGroup,
     Transition,
@@ -150,3 +157,106 @@ class TestLastResult:
         assert isinstance(result, BenchmarkResult)
         assert result.num_examples == 2  # 2 groups, not 4 trajectories
         assert result.num_correct == 1  # first group has reward > 0
+
+
+class _Sandbox:
+    def __init__(self) -> None:
+        self.alive = True
+
+
+class _SandboxEnv(Env):
+    """Records whether its sandbox was still alive when it stepped."""
+
+    def __init__(self, sandbox: _Sandbox, alive_at_step: list[bool]) -> None:
+        self.sandbox = sandbox
+        self.alive_at_step = alive_at_step
+
+    async def initial_observation(self) -> tuple[tinker.ModelInput, list[int]]:
+        return tinker.ModelInput.from_ints([1]), []
+
+    async def step(self, action: list[int], *, extra: object = None) -> StepResult:
+        self.alive_at_step.append(self.sandbox.alive)
+        return StepResult(
+            reward=1.0,
+            episode_done=True,
+            next_observation=tinker.ModelInput.empty(),
+            next_stop_condition=[],
+        )
+
+
+class _SandboxBuilder(EnvGroupBuilder):
+    """Keeps the sandboxes its make_envs creates on the builder for cleanup,
+    like HarborEnvGroupBuilder."""
+
+    def __init__(self, alive_at_step: list[bool]) -> None:
+        self.alive_at_step = alive_at_step
+        self.created: list[_Sandbox] = []
+        self._sandboxes: list[_Sandbox] = []
+
+    async def make_envs(self) -> list[Env]:
+        self._sandboxes = [_Sandbox()]
+        self.created.extend(self._sandboxes)
+        return [_SandboxEnv(sandbox, self.alive_at_step) for sandbox in self._sandboxes]
+
+    async def cleanup(self) -> None:
+        for sandbox in self._sandboxes:
+            sandbox.alive = False
+        self._sandboxes.clear()
+
+
+class _CachedDataset(RLDataset):
+    """Returns the same builder objects on every call, like HarborDataset."""
+
+    def __init__(self, builders: list[EnvGroupBuilder]) -> None:
+        self.builders = builders
+
+    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+        return self.builders
+
+    def __len__(self) -> int:
+        return 1
+
+
+class _GatedPolicy(TokenCompleter):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(
+        self, model_input: tinker.ModelInput, stop: StopCondition, *, max_tokens: int | None = None
+    ) -> TokensWithLogprobs:
+        self.started.set()
+        await self.release.wait()
+        return TokensWithLogprobs(tokens=[2], maybe_logprobs=[0.0])
+
+
+@pytest.mark.parametrize("first_eval_ends_by", ["finishing", "cancellation"])
+def test_overlapping_evals_keep_their_own_sandboxes(first_eval_ends_by: str):
+    """Async training can run evals of different steps at once. When the first
+    one ends, its cleanup must not destroy the sandboxes the second is using."""
+    alive_at_step: list[bool] = []
+    builder = _SandboxBuilder(alive_at_step)
+    evaluator = RLTestSetEvaluator(_CachedDataset([builder]), max_tokens=4)
+
+    async def run() -> None:
+        first_policy, second_policy = _GatedPolicy(), _GatedPolicy()
+        first = asyncio.create_task(evaluator.eval_token_completer(first_policy))
+        await first_policy.started.wait()
+        second = asyncio.create_task(evaluator.eval_token_completer(second_policy))
+        await second_policy.started.wait()
+        if first_eval_ends_by == "finishing":
+            first_policy.release.set()
+            await first
+        else:
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+        second_policy.release.set()
+        await second
+
+    asyncio.run(run())
+    # The second eval's sandbox was alive when it stepped (the first eval's
+    # step comes first if it finished), and every sandbox was cleaned up.
+    assert alive_at_step == ([True, True] if first_eval_ends_by == "finishing" else [True])
+    assert len(builder.created) == 2
+    assert not any(sandbox.alive for sandbox in builder.created)

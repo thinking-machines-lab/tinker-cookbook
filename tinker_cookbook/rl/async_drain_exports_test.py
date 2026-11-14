@@ -22,16 +22,18 @@ class _Sampler:
 @pytest.mark.parametrize(
     "eval_every,save_every,post_kl,groups,hold_workers,has_evaluators,expected_exports",
     [
-        (0, 0, False, 6, False, True, []),
-        (2, 0, False, 6, False, False, []),
-        (2, 0, False, 5, False, False, []),
-        (0, 0, False, 6, True, True, [1]),
-        (2, 0, False, 6, False, True, [2, 4, 6]),
-        (4, 0, False, 6, False, True, [4, 6]),
-        (0, 2, False, 6, False, True, [2, 4, 6]),
+        # Reuse is decided before training, so the step during which the
+        # workers finish (step 1, or 2 with hold_workers) still exports.
+        (0, 0, False, 6, False, True, [1]),
+        (2, 0, False, 6, False, False, [1]),
+        (2, 0, False, 5, False, False, [1]),
+        (0, 0, False, 6, True, True, [1, 2]),
+        (2, 0, False, 6, False, True, [1, 2, 4, 6]),
+        (4, 0, False, 6, False, True, [1, 4, 6]),
+        (0, 2, False, 6, False, True, [1, 2, 4, 6]),
         (0, 0, True, 6, False, True, [1, 2, 3, 4, 5, 6]),
-        (2, 2, False, 6, False, True, [2, 4, 6]),
-        (2, 0, False, 5, False, True, [2, 4, 5]),
+        (2, 2, False, 6, False, True, [1, 2, 4, 6]),
+        (2, 0, False, 5, False, True, [1, 2, 4, 5]),
         (2, 0, False, 0, False, True, []),
     ],
 )
@@ -70,7 +72,7 @@ def test_completed_workers_only_export_for_consumers(
         def __len__(self):
             return 6
 
-    async def train_step(**kwargs):
+    async def train_step_and_publish(*args, publish_kind=None, **kwargs):
         nonlocal completed_step
         if completed_step == 0:
             assert not workers_finished.is_set()
@@ -79,10 +81,12 @@ def test_completed_workers_only_export_for_consumers(
             await workers_finished.wait()
         completed_step += 1
         await asyncio.sleep(0)
-        return []
+        return [], asyncio.create_task(export()) if publish_kind else None
 
     async def export(**kwargs):
-        assert workers_finished.is_set() is not hold_workers
+        # Held workers finish only after step 1's export; every other export
+        # comes after the workers have finished.
+        assert workers_finished.is_set() is (not hold_workers or completed_step > 1)
         first_export.set()
         exports.append(completed_step)
         return _Sampler(completed_step)
@@ -123,7 +127,7 @@ def test_completed_workers_only_export_for_consumers(
     )
     monkeypatch.setattr(train, "do_group_rollout_and_filter_constant_reward", rollout)
     monkeypatch.setattr(train, "prepare_minibatch", AsyncMock(return_value=([], {}, TokenUsage())))
-    monkeypatch.setattr(train, "train_step", train_step)
+    monkeypatch.setattr(train, "_train_step_and_publish", train_step_and_publish)
     monkeypatch.setattr(train, "compute_kl_sample_train", lambda *args: {})
     monkeypatch.setattr(train, "compute_post_kl", compute_post_kl)
     monkeypatch.setattr(train, "compute_sampling_client_metrics", lambda *args: {})
@@ -147,7 +151,10 @@ def test_completed_workers_only_export_for_consumers(
         log_path=str(tmp_path),
         eval_every=eval_every,
         compute_post_kl=post_kl,
-        async_config=train.AsyncConfig(max_steps_off_policy=8, groups_per_batch=1),
+        # Snapshot clients: the expected exports count every snapshot publish.
+        async_config=train.AsyncConfig(
+            group_buffer_size=9, groups_per_batch=1, inflight_weight_updates=False
+        ),
     )
     asyncio.run(
         train.do_async_training(

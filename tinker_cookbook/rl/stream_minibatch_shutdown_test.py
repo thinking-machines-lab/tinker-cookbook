@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import Future
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from tinker.lib.public_interfaces.api_future import AwaitableConcurrentFuture
@@ -64,7 +64,8 @@ def _run(tmp_path, monkeypatch: pytest.MonkeyPatch, num_batches: int, groups_per
         log_path=str(tmp_path),
         eval_every=0,
         async_config=train.AsyncConfig(
-            max_steps_off_policy=num_batches, groups_per_batch=groups_per_batch
+            group_buffer_size=groups_per_batch * (num_batches + 1),
+            groups_per_batch=groups_per_batch,
         ),
         stream_minibatch_config=train.StreamMinibatchConfig(
             groups_per_batch=groups_per_batch, num_minibatches=1
@@ -75,6 +76,7 @@ def _run(tmp_path, monkeypatch: pytest.MonkeyPatch, num_batches: int, groups_per
     training_client = MagicMock()
     training_client.forward_backward = MagicMock(return_value=AwaitableConcurrentFuture(future))
     training_client.optim_step = MagicMock(return_value=AwaitableConcurrentFuture(future))
+    training_client.save_weights_and_get_sampling_client = AsyncMock()
 
     asyncio.run(
         train.do_async_training(

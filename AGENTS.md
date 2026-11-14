@@ -107,7 +107,7 @@ Defaults to follow when launching training runs for a user. Deviating from any o
 - Authenticate (`wandb login`).
 - Set `wandb_project` and `wandb_name` in the training config.
 - Use one project per experiment, with consistent run names, so sweep runs overlay cleanly.
-- Make sure the logged config includes the model, initialization, dataset and split, LR, batch and group sizes, seed, and `max_steps_off_policy`.
+- Make sure the logged config includes the model, initialization, dataset and split, LR, batch and group sizes, seed, and `group_buffer_size`.
 - Confirm the first few rows reach W&B before leaving the run unattended.
 - Keep training metrics (`env/...`) and held-out metrics (the evaluator's prefix, e.g. `test/env/...`) visually separate.
 - Plot held-out reward against step, cumulative cost and wall-clock time.
@@ -120,7 +120,7 @@ Defaults to follow when launching training runs for a user. Deviating from any o
 5. **Format or validity rate**, if the environment logs one (env-specific keys under `env/all/`). Falling validity is usually the first sign of a collapse.
 6. **Sampling entropy**, `optim/entropy`. A steady fall toward zero is a warning to inspect output diversity, reward and transcripts. On its own it doesn't prove collapse; deterministic correct answers are legitimate.
 7. **Sampler/trainer mismatch**, `optim/kl_sample_train_v1` and `optim/kl_sample_train_v2`. These measure the logprob gap between sampler and trainer on the same tokens, not how far the model has drifted from its starting point. Large values point to a rendering or prompt-encoding problem, or to stale data.
-8. **Staleness**, `async/staleness_mean` and `async/staleness_max` (async runs). These show how old the sampled data actually is relative to `max_steps_off_policy`.
+8. **Staleness**, `async/staleness_mean` and `async/staleness_max` (async runs). These show how old the sampled data actually is; with a full buffer expect about `group_buffer_size / groups_per_batch - 1`.
 9. **Cost**, `cost/cumulative_usd` and `cost/step_usd`. These are estimates, not a bill. Use them as the x-axis for reward-per-dollar comparisons.
 10. **Time and progress**, `time/total` (seconds per step), the per-phase `time/<span>` timings the tracer logs, and `progress/done_frac`. Use them to find the bottleneck and estimate time to completion. Derive throughput yourself: completed updates, rollouts, or `tokens/sampled` per elapsed second. Keep per-step counts separate from cumulative ones (e.g. `tokens/cumulative/sampled`).
 
@@ -130,12 +130,12 @@ Defaults to follow when launching training runs for a user. Deviating from any o
 
 3. **Capture all rollouts.** Log every group's transcripts by default rather than a representative sample, and verify the actual coverage. If full capture is too expensive, discuss the tradeoff first.
 
-4. **Use async RL with `stable_reinforce`** by default, including for small diagnostics. Size concurrency from the SDK's capacity instead of inventing small caps. Keep off-policyness bounded: async should overlap sampling with training, not sample the whole dataset from the initial weights. `AsyncConfig.max_steps_off_policy` (call it `m`) admits at most `groups_per_batch * (m + 1)` groups that are started but not yet trained. It controls admission and doesn't cap sample age, since slow rollouts are still trained when they finish.
+4. **Use async RL with `stable_reinforce`** by default, including for small diagnostics. Size concurrency from the SDK's capacity instead of inventing small caps. Keep off-policyness bounded: async should overlap sampling with training, not sample the whole dataset from the initial weights. `AsyncConfig.group_buffer_size` is the maximum number of trajectory groups started but not yet trained (`groups_per_batch` is on-policy). It controls admission and doesn't cap sample age, since slow rollouts are still trained when they finish.
    - Default to a high pipeline depth: as large as the service and workload can usefully keep busy, so sampling and training overlap fully.
-   - The one constraint: the window `groups_per_batch * (m + 1)` should stay small next to the number of training groups in a pass, so the weights get refreshed many times over the pass. Never let it sample the whole dataset from the initial weights.
-   - Pick the starting `m` from the dataset size, rollout latency, and service capacity, not from a fixed number.
+   - The one constraint: `group_buffer_size` should stay small next to the number of training groups in a pass, so the weights get refreshed many times over the pass. Never let it sample the whole dataset from the initial weights.
+   - Pick the starting `group_buffer_size` from the dataset size, rollout latency, and service capacity, not from a fixed number.
    - Increase it until wall-clock throughput plateaus, or until measured staleness starts to hurt held-out reward or validity.
-   - Measure actual data age (`async/staleness_mean` and `async/staleness_max`) and wall-clock time, rather than assuming the age equals `m`.
+   - Measure actual data age (`async/staleness_mean` and `async/staleness_max`) and wall-clock time, rather than inferring the age from `group_buffer_size`.
 
 5. **Use precise units.** Distinguish groups per batch, `group_size`, and total datums per update; step index vs. completed updates; per-batch vs. cumulative values. Always include average decode tokens per turn in training metrics.
 

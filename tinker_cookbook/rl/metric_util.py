@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import itertools
 import logging
 from collections import defaultdict
@@ -168,6 +169,12 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
     both direct ``TokenCompleter`` evaluation and executor-dispatched
     evaluation via a ``SamplingClient``.
 
+    Evaluations can overlap, since async training runs one per evaluated step.
+    Each runs on its own shallow copy of the env group builders, so state that
+    ``make_envs`` assigns for ``cleanup`` (such as sandboxes) is separate per
+    evaluation. State that ``make_envs`` mutates in place on a shared object
+    is not.
+
     Example::
 
         eval_dataset = my_dataset_builder.build_test()
@@ -199,7 +206,8 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
         self.num_groups_to_log = num_groups_to_log
         self.strategy = strategy
         self.last_result: BenchmarkResult | None = None
-        """Most recent :class:`BenchmarkResult`, populated after each evaluation."""
+        """:class:`BenchmarkResult` of the evaluation that finished last. When
+        evaluations overlap, that need not be the newest step's."""
 
     async def eval_token_completer(
         self,
@@ -221,6 +229,8 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
             dict[str, float]: Metric dictionary with keys prefixed by
                 ``self.name``.
         """
+
+        builders_P = self._fresh_env_group_builders()
 
         async def run_group_rollout(
             builder: EnvGroupBuilder, group_idx: int
@@ -244,10 +254,7 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
             return result
 
         results = await asyncio.gather(
-            *[
-                run_group_rollout(builder, group_idx)
-                for group_idx, builder in enumerate(self.env_group_builders_P)
-            ]
+            *[run_group_rollout(builder, group_idx) for group_idx, builder in enumerate(builders_P)]
         )
         return self._collect_eval_metrics(results, rollout_summary_export, store=store)
 
@@ -306,10 +313,15 @@ class RLTestSetEvaluator(SamplingClientEvaluator):
                     enable_logging=i < self.num_groups_to_log,
                     strategy=self.strategy,
                 )
-                for i, builder in enumerate(self.env_group_builders_P)
+                for i, builder in enumerate(self._fresh_env_group_builders())
             ]
         )
         return self._collect_eval_metrics(results, rollout_summary_export, store=store)
+
+    def _fresh_env_group_builders(self) -> list[EnvGroupBuilder]:
+        """Copies of the test set's builders for one evaluation, so its rollouts'
+        state and cleanup are separate from any other evaluation's."""
+        return [copy.copy(builder) for builder in self.env_group_builders_P]
 
     def _collect_eval_metrics(
         self,

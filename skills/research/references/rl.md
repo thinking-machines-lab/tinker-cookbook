@@ -306,13 +306,19 @@ if __name__ == "__main__":
 from tinker_cookbook.rl.train import AsyncConfig
 config = Config(
     ...,
-    # Sampling runs at most max_steps_off_policy steps ahead of training. Nothing is
-    # discarded; AsyncConfig.loss_fn (default "stable_reinforce") stays stable on the stale data.
-    async_config=AsyncConfig(max_steps_off_policy=1, groups_per_batch=8),
+    # At most group_buffer_size trajectory GROUPS are started but not yet trained
+    # (sampling or waiting); each step trains the oldest groups_per_batch finished ones.
+    # Nothing is discarded; AsyncConfig.loss_fn (default "stable_reinforce") stays stable
+    # on the stale data.
+    async_config=AsyncConfig(group_buffer_size=16, groups_per_batch=8),
 )
 ```
 
-A rollout that never finishes holds one slot forever; for environments that can hang, bound rollouts with `rollout_error_tolerance=RetryOnFailure(per_rollout_timeout=...)`.
+`group_buffer_size` bounds the buffer, not staleness: while the buffer stays full, typical staleness is about `group_buffer_size / groups_per_batch - 1` steps (here 1), with an unbounded tail from slow rollouts. `group_buffer_size == groups_per_batch` is on-policy. Up to `group_buffer_size * group_size` trajectories run at once, so size executors and sandbox pools for that. (`max_steps_off_policy=K` is the deprecated spelling of `group_buffer_size = groups_per_batch * (K + 1)`.)
+
+By default (`AsyncConfig.inflight_weight_updates=True`), rollouts in progress can pick up each step's new weights mid-generation as the update propagates (inflight sampling); evals still run on a fixed snapshot of the evaluated step. Set it to `False` to have each rollout finish on the weights it started with.
+
+A rollout that never finishes holds its group's buffer slot forever; for environments that can hang, bound rollouts with `rollout_error_tolerance=RetryOnFailure(per_rollout_timeout=...)`.
 
 **Cleanup resources:** Override `cleanup()` on EnvGroupBuilder for sandboxes, DB connections, etc.
 

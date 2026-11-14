@@ -28,7 +28,7 @@ def test_math_rl_async():
             "groups_per_batch=8",
             "group_size=4",
             "max_tokens=5",
-            "max_steps_off_policy=2",
+            "group_buffer_size=24",
             "behavior_if_log_dir_exists=delete",
         ],
     )

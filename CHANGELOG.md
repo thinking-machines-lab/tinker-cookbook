@@ -13,6 +13,24 @@ Each entry includes:
 
 ---
 
+### [cookbook] Async RL: `max_steps_off_policy` is now `group_buffer_size`
+**Date:** 2026-11-04
+**Type:** improvement
+**Tags:** rl
+
+`AsyncConfig.max_steps_off_policy` is deprecated in favor of `AsyncConfig.group_buffer_size`, the maximum number of trajectory groups started but not yet trained. `max_steps_off_policy=K` still works as `group_buffer_size = groups_per_batch * (K + 1)`, with a deprecation warning. The math_rl, code_rl, rubric and harbor_rl recipes take `group_buffer_size` and keep `max_steps_off_policy` as an alias.
+
+---
+
+### [cookbook] Inflight weight updates for async RL, on by default
+**Date:** 2026-11-03
+**Type:** new
+**Tags:** rl
+
+Async RL now uses [inflight weight updates](https://tinker-docs.thinkingmachines.ai/tinker/howto/inflight_sampling/) by default: rollouts in progress pick up each training step's new weights mid-generation instead of finishing on the weights they started with. Set `AsyncConfig.inflight_weight_updates=False` for the previous behavior. Evals run on each evaluated step's weights, alongside training and each other, and never skip a step, so custom evaluators must be safe to call concurrently.
+
+---
+
 ### [cookbook] Async RL trains on every rollout and defaults to StableReinforce
 **Date:** 2026-10-28
 **Type:** improvement

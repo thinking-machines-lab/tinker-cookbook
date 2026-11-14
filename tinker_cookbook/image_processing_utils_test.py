@@ -1,3 +1,5 @@
+import base64
+import io
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
@@ -72,6 +74,21 @@ def test_image_to_data_uri_closes_local_file_handles(mock_open: MagicMock) -> No
 
     assert result.startswith("data:image/jpeg;base64,")
     opened.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("mode", "pixels"), [("RGBA", [(0, 0, 0, 0), (0, 0, 0, 255)]), ("LA", [(0, 0), (0, 255)])]
+)
+def test_image_to_data_uri_keeps_transparency(mode: str, pixels: list[tuple[int, ...]]) -> None:
+    image = Image.new(mode, (2, 1))
+    image.putdata(pixels)
+
+    header, payload = image_to_data_uri(image).split(",", 1)
+
+    assert header == "data:image/png;base64"
+    decoded = Image.open(io.BytesIO(base64.b64decode(payload)))
+    assert decoded.mode == mode
+    assert decoded.getchannel("A").tobytes() == bytes([0, 255])
 
 
 @patch("transformers.models.auto.image_processing_auto.AutoImageProcessor")
