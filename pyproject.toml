@@ -64,6 +64,12 @@ modal = [
 multiplayer-rl = [
     "textarena>=0.7.4",
 ]
+paint-rl = [
+    "llm-verifier>=0.2.0",
+    "matplotlib>=3.7.0",
+    "openai>=1.0.0",
+    "playwright>=1.40.0",
+]
 tutorials = [
     "marimo>=0.23.8",
     "matplotlib>=3.7.0",
