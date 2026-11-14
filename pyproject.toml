@@ -66,6 +66,7 @@ multiplayer-rl = [
 ]
 paint-rl = [
     "llm-verifier>=0.2.0",
+    "matplotlib>=3.7.0",
     "openai>=1.0.0",
     "playwright>=1.40.0",
 ]

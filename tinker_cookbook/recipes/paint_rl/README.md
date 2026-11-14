@@ -6,14 +6,11 @@ This repository contains the code for training `thinkingmachines/Inkling-Small` 
 
 ## Setup
 
-Requires Python 3.12. Run the following commands from the repository directory:
+Run the following commands from the repository root:
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[paint-rl]"
 python -m playwright install --with-deps chromium
-
-# Link this folder into the installed cookbook
-ln -s "$PWD" "$(python -c 'import tinker_cookbook.recipes as r; print(r.__path__[0])')/paint_rl"
 
 # API key
 export TINKER_API_KEY=...
