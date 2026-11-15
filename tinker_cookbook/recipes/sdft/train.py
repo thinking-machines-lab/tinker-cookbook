@@ -35,6 +35,7 @@ import chz
 
 from tinker_cookbook import checkpoint_utils, cli_utils
 from tinker_cookbook.distillation import sdft
+from tinker_cookbook.distillation.datasets import PromptOnlyDataset
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,19 @@ async def cli_main(cli_config: CLIConfig) -> None:
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
 
-    await sdft.main(config, train_dataset, test_dataset)
+    rl_test_dataset = (
+        PromptOnlyDataset(
+            prompts=test_dataset.questions,
+            batch_size=test_dataset.batch_size,
+            group_size=test_dataset.group_size,
+            renderer=test_dataset.renderer,
+            tokenizer=test_dataset.renderer.tokenizer,
+            dataset_name=test_dataset.dataset_name,
+        )
+        if test_dataset is not None
+        else None
+    )
+    await sdft.main(config, train_dataset, rl_test_dataset)
 
 
 if __name__ == "__main__":
