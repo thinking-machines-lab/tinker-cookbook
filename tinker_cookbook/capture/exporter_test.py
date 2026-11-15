@@ -361,6 +361,40 @@ def test_exporter_reinitializes_after_fork() -> None:
     exporter.shutdown()
 
 
+@pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(), reason="platform without fork"
+)
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_exporter_fork_with_queue_mutex_held() -> None:
+    """Fork during a queue operation must not deadlock the child's at-fork hook."""
+    sink = CollectingSink()
+    exporter = CaptureExporter(sink, flush_interval_sec=60.0)
+    exporter.enqueue({"kind": "parent"})
+
+    def child() -> None:
+        exporter.enqueue({"kind": "child"})
+        flushed = exporter.force_flush(timeout=2.0)
+        exporter.shutdown()
+        os._exit(0 if flushed and sink.records == [{"kind": "child"}] else 17)
+
+    process = multiprocessing.get_context("fork").Process(target=child)
+    try:
+        # Reproduce the lock state of a producer/flusher inside a queue
+        # operation at fork time; the child cannot inherit its owner's work.
+        with exporter._queue.mutex:
+            process.start()
+        process.join(timeout=5.0)
+        assert process.exitcode == 0, "child hung during exporter reinitialization"
+        assert exporter.force_flush(timeout=5.0)
+        assert sink.records == [{"kind": "parent"}]
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5.0)
+        process.close()
+        exporter.shutdown()
+
+
 def test_shutdown_warns_on_nonzero_loss_counters(caplog: pytest.LogCaptureFixture) -> None:
     """Shutdown emits exactly one warning summarizing losses when any counter
     is nonzero, and stays silent on a clean run."""
