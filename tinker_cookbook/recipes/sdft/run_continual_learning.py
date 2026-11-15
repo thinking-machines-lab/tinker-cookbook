@@ -238,6 +238,11 @@ async def run_sdft_stage(
 # ---------------------------------------------------------------------------
 
 
+def _learning_rate_slug(learning_rate: float) -> str:
+    rounded = f"{learning_rate:.0e}".replace("+", "")
+    return rounded if float(rounded) == learning_rate else repr(learning_rate)
+
+
 async def run_single(
     config: ExperimentConfig,
     method: Method,
@@ -247,7 +252,7 @@ async def run_single(
     stage1_checkpoints: dict[str, str | None],
 ) -> dict:
     """Run a single (method, lr, stage) configuration and return results."""
-    lr_str = f"{learning_rate:.0e}".replace("+", "")
+    lr_str = _learning_rate_slug(learning_rate)
     run_id = f"stage{stage}_{method}_lr{lr_str}"
     log_path = f"{config.log_root}/{run_id}"
 
@@ -368,7 +373,7 @@ async def cli_main(config: ExperimentConfig) -> None:
                     renderer_name=renderer_name,
                     stage1_checkpoints={},
                 )
-                lr_str = f"{lr:.0e}".replace("+", "")
+                lr_str = _learning_rate_slug(lr)
                 key = f"stage1_{method}_lr{lr_str}"
                 stage1_checkpoints[key] = result.get("checkpoint_path")
 
