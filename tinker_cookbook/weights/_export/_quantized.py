@@ -185,7 +185,9 @@ _SKIP_SUFFIXES = (".rotary_emb.inv_freq",)
 _SKIP_LAYER_INDICES = frozenset({61})
 
 
-def _should_skip_checkpoint_key(key: str) -> bool:
+def _should_skip_checkpoint_key(
+    key: str, skip_layers: frozenset[int] = _SKIP_LAYER_INDICES
+) -> bool:
     """Check if a checkpoint key should be excluded from merge planning."""
     if any(key.endswith(s) for s in _SKIP_SUFFIXES):
         return True
@@ -195,7 +197,7 @@ def _should_skip_checkpoint_key(key: str) -> bool:
         if part == "layers" and i + 1 < len(parts):
             try:
                 layer_idx = int(parts[i + 1])
-                if layer_idx in _SKIP_LAYER_INDICES:
+                if layer_idx in skip_layers:
                     return True
             except ValueError:
                 pass
@@ -460,6 +462,7 @@ class FP8BlockFormat:
     ) -> None:
         self._serving_format = serving_format
         self._device = torch.device(device)
+        self._skip_layers = _SKIP_LAYER_INDICES if is_deepseek_config(config_dict) else frozenset()
 
         # Native FP8 handling
         self._is_native_fp8 = _has_native_fp8_quantization(config_dict)
@@ -478,7 +481,9 @@ class FP8BlockFormat:
 
     def should_skip_output_key(self, key: str) -> bool:
         """Skip checkpoint keys and native scale tensors in output."""
-        return _should_skip_checkpoint_key(key) or key.endswith(".weight_scale_inv")
+        return _should_skip_checkpoint_key(key, self._skip_layers) or key.endswith(
+            ".weight_scale_inv"
+        )
 
     def filter_model_keys(self, keys: set[str]) -> set[str]:
         """Exclude keys that shouldn't be merge targets.
