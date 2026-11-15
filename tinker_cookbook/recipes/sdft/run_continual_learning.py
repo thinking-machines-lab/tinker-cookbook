@@ -372,10 +372,11 @@ async def cli_main(config: ExperimentConfig) -> None:
                 key = f"stage1_{method}_lr{lr_str}"
                 stage1_checkpoints[key] = result.get("checkpoint_path")
 
-        # Save stage 1 checkpoint map
-        Path(config.log_root).mkdir(parents=True, exist_ok=True)
-        with open(f"{config.log_root}/stage1_checkpoints.json", "w") as f:
-            json.dump(stage1_checkpoints, f, indent=2)
+        # Dry runs have no new checkpoints and must preserve prior experiment state.
+        if not config.dry_run:
+            Path(config.log_root).mkdir(parents=True, exist_ok=True)
+            with open(f"{config.log_root}/stage1_checkpoints.json", "w") as f:
+                json.dump(stage1_checkpoints, f, indent=2)
         logger.info(f"Stage 1 checkpoints: {json.dumps(stage1_checkpoints, indent=2)}")
 
     # Load stage 1 checkpoints if we're only running stage 2
