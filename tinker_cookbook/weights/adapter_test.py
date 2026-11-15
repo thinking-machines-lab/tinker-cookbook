@@ -1081,3 +1081,43 @@ class TestValidation:
 
         weights, _ = _load_peft_output(output_dir)
         assert "base_model.model.lm_head.lora_A.weight" in weights
+
+    @pytest.mark.parametrize(
+        ("config_dict", "state_dict"),
+        [(_DENSE_CONFIG, _DENSE_STATE_DICT), (_QWEN35_CONFIG, _QWEN35_STATE_DICT)],
+        ids=["dense", "qwen3_5"],
+    )
+    def test_unembed_tokens_remapped_to_lm_head_with_tied_embeddings(
+        self, tmp_path: Path, config_dict: dict, state_dict: dict[str, torch.Tensor]
+    ) -> None:
+        """Tied checkpoints (e.g. Qwen3-4B-Instruct-2507, Qwen3.5-4B) store no
+        lm_head.weight, but the LM head is still a module that PEFT can target.
+        On embed_tokens, PEFT expects lora_embedding_A/B and ignores these keys."""
+        model_dir = tmp_path / "model"
+        adapter_dir = tmp_path / "adapter"
+        output_dir = tmp_path / "output"
+
+        tied_state_dict = {k: v for k, v in state_dict.items() if k != "lm_head.weight"}
+        _create_synthetic_model(
+            model_dir, {**config_dict, "tie_word_embeddings": True}, tied_state_dict
+        )
+        _create_adapter(
+            adapter_dir,
+            {
+                "base_model.model.model.unembed_tokens.lora_A.weight": torch.ones(RANK, HIDDEN),
+                "base_model.model.model.unembed_tokens.lora_B.weight": torch.ones(100, RANK),
+            },
+        )
+
+        build_lora_adapter(
+            base_model=str(model_dir),
+            adapter_path=str(adapter_dir),
+            output_path=str(output_dir),
+        )
+
+        weights, config = _load_peft_output(output_dir)
+        assert set(weights) == {
+            "base_model.model.lm_head.lora_A.weight",
+            "base_model.model.lm_head.lora_B.weight",
+        }
+        assert config["target_modules"] == ["lm_head"]

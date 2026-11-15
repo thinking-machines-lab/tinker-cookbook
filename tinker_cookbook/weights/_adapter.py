@@ -254,10 +254,13 @@ def _convert_adapter(
     """
     adapter_weight_names = extract_adapter_weight_names(adapter_weights)
 
+    # PEFT targets modules, not parameters: with tied embeddings the LM head
+    # has no lm_head.weight on disk but is still the module that the
+    # unembedding LoRA applies to.
     if profile.split_qkv_projections:
-        name_remaps = build_qwen3_5_name_remaps(profile, model_state_keys)
+        name_remaps = build_qwen3_5_name_remaps(profile, model_state_keys, unembed_to_lm_head=True)
     else:
-        name_remaps = build_name_remaps(profile, model_state_keys)
+        name_remaps = build_name_remaps(profile, model_state_keys, unembed_to_lm_head=True)
 
     # Build lookup for fused projection merging: component_name → fused_target_name.
     fused_component_to_target: dict[str, str] = {}

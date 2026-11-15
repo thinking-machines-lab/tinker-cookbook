@@ -89,6 +89,8 @@ def extract_adapter_weight_names(adapter_weights: dict[str, torch.Tensor]) -> li
 def build_name_remaps(
     profile: MergeProfile,
     model_state_keys: set[str],
+    *,
+    unembed_to_lm_head: bool = False,
 ) -> list[tuple[str, str]]:
     """Build the standard name remap list for adapter → model key mapping.
 
@@ -98,6 +100,10 @@ def build_name_remaps(
     Args:
         profile (MergeProfile): Model-specific merge configuration.
         model_state_keys (set[str]): Set of weight key names in the base model.
+        unembed_to_lm_head (bool): Always map ``unembed_tokens`` to the
+            ``lm_head`` module, even when tied embeddings leave no
+            ``lm_head.weight`` in the checkpoint. PEFT adapters target modules,
+            and the LM head is still its own module in tied models.
 
     Returns:
         list[tuple[str, str]]: Ordered list of ``(old, new)`` string
@@ -108,8 +114,10 @@ def build_name_remaps(
     ]
     # Map unembed_tokens to lm_head if it exists as a separate parameter,
     # otherwise to model.embed_tokens (models with tied embeddings).
-    has_lm_head = "lm_head.weight" in model_state_keys or any(
-        k.endswith(".lm_head.weight") for k in model_state_keys
+    has_lm_head = (
+        unembed_to_lm_head
+        or "lm_head.weight" in model_state_keys
+        or any(k.endswith(".lm_head.weight") for k in model_state_keys)
     )
     if has_lm_head:
         remaps.append(("model.unembed_tokens", "lm_head"))

@@ -110,7 +110,7 @@ Qwen3.5 and Qwen3.6 linear attention layers use a fused `in_proj_qkv` weight, bu
 | Remap | Applies to | Why |
 |---|---|---|
 | `base_model.model.` prefix strip | All models | Tinker adapter prefix → HF parameter names |
-| `unembed_tokens` → `lm_head` (or `embed_tokens`) | All models | Tinker naming → HF naming; tied embeddings use `embed_tokens` |
+| `unembed_tokens` → `lm_head` (or `embed_tokens`) | All models | Tinker naming → HF naming; tied embeddings merge into `embed_tokens` (PEFT adapters target the `lm_head` module) |
 | `model.*` → `model.language_model.*` | Qwen3.5/Qwen3.6 VL | Inner `language_model` prefix for standard VL models |
 | `model.*` → `language_model.model.*` | Kimi-K2.6 | Outer `language_model.` prefix (different from Qwen pattern) |
 | `.attn` → `.self_attn` | GPT-OSS | Tinker internal naming → HF naming |
