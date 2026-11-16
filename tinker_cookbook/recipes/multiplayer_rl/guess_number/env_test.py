@@ -30,7 +30,7 @@ class GuessNumberEnvTest(unittest.IsolatedAsyncioTestCase):
     async def test_multiple_turns_keep_the_parsed_assistant_message(self) -> None:
         first: Message = {
             "role": "assistant",
-            "content": [{"type": "text", "text": "Guess: 3"}],
+            "content": "Guess: 3",
         }
         renderer = StrictRenderer(first)
         env = GuessNumberEnv(gold_answer=5, renderer=cast(Renderer, renderer))
