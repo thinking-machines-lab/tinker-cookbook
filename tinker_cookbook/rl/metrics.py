@@ -82,6 +82,10 @@ def compute_kl_sample_train(
         dict[str, float]: Dictionary with keys:
             - ``optim/kl_sample_train_v1``: Mean logprob difference (first-order KL estimate).
             - ``optim/kl_sample_train_v2``: Half mean squared logprob difference (second-order KL).
+            - ``optim/sample_train_mismatch_frac``: Fraction of action tokens whose sampling
+              and training logprobs differ at all. Exactly 0 when the sampler and trainer are
+              bitwise matched, even where the KL estimates round to 0 but are not.
+            - ``optim/sample_train_max_abs_diff``: Largest absolute logprob difference.
             - ``optim/entropy``: Estimated entropy of the sampling distribution.
     """
     all_diffs: list[torch.Tensor] = []
@@ -110,6 +114,8 @@ def compute_kl_sample_train(
     return {
         "optim/kl_sample_train_v1": kl_sample_train_v1,
         "optim/kl_sample_train_v2": kl_sample_train_v2,
+        "optim/sample_train_mismatch_frac": (flat_diffs != 0).float().mean().item(),
+        "optim/sample_train_max_abs_diff": flat_diffs.abs().max().item(),
         "optim/entropy": entropy_sample,
     }
 

@@ -6,21 +6,45 @@ before training never saturate.
 
 ### What to look for
 
-The RL training loop logs `optim/kl_sample_train_v1` and `optim/kl_sample_train_v2` every step.
-`kl_sample_train_v1` is the mean, over generated tokens, of the log-probability the sampler
-assigned to each token minus the log-probability the trainer computes for it: a first-order
-estimate of the KL between the sampler and the trainer. `kl_sample_train_v2` is half the mean
-squared difference.
+Every step, the RL training loop compares the log-probability the sampler assigned to each
+generated token with the log-probability the trainer computes for it, and logs:
 
-![KL per step in healthy training, and KL by context depth with and without a bug](kl.png)
+- `optim/kl_sample_train_v1`: the mean difference, a first-order estimate of the KL between the
+  sampler and the trainer.
+- `optim/kl_sample_train_v2`: half the mean squared difference.
+- `optim/sample_train_mismatch_frac`: the fraction of generated tokens whose two
+  log-probabilities differ at all.
+- `optim/sample_train_max_abs_diff`: the largest difference.
 
-`kl_sample_train` depends on the model, and `kl_sample_train_v1` is typically ~10x higher for
-MoE models compared to dense models. For example, in our healthy training runs, we observed
-`kl_sample_train_v1` for Qwen3.6-35B-A3B around 0.001-0.002 and Qwen3.6-27B around 0.0002.
+What a healthy run looks like depends on whether Tinker serves the model with KL0, meaning the
+sampler and the trainer compute bitwise-identical log-probabilities. The trainer still computes
+its log-probabilities independently of the sampler; with KL0, the two agree exactly.
 
-In one long-context related bug this check caught, GLM-5.3's `kl_sample_train_v1` at step 0 was
-about 0.09, rising from 0.02 in the first 8K tokens to 0.16 past 64K. On the healthy trainer it
-was under 0.011 at every depth.
+**Models served with KL0**: all four metrics should be exactly 0 at every step. Which models
+Tinker serves with KL0 changes over time. As of November 12, 2026, some KL0 models include
+Qwen3.6-35B-A3B and GLM-5.3.
+
+**Models not served with KL0**: the log-probabilities differ slightly, by an amount that depends
+on the model, and `kl_sample_train_v1` is typically ~10x higher for MoE models than for dense
+models. For example, in our healthy runs below, `kl_sample_train_v1` was around 0.003-0.0045
+for DeepSeek-V4.1-Flash (MoE). For Qwen3.5-4B (dense), it was around 0.0002 at step 0 and fell
+below 0.00003 as the model's sampling entropy dropped. KL well above the model's usual level,
+or KL that grows with training or with context depth, points to a numerics bug. As of November
+12, 2026, some non-KL0 models include DeepSeek-V4.1-Flash and Qwen3.5-4B.
+
+The comparison is exact only on-policy, where the trainer scores tokens with the same weights
+that sampled them. The recipe trains on-policy, with one optimizer step per batch, so that the
+comparison is exact. That isn't the setup we recommend for a real RL run, where async training
+with `stable_reinforce` is usually faster because sampling overlaps with training. Two changes
+make the metrics nonzero even with KL0: `num_substeps > 1`, where later substeps are scored after
+an optimizer step, and async training with stale samples, which come from older weights.
+
+Bugs often appear only at some context depths, or only once training has changed the weights, so
+look at every step, not just step 0. In one long-context bug this check caught, before GLM-5.3
+was served with KL0, its `kl_sample_train_v1` at step 0 was about 0.09, rising from 0.02 in the
+first 8K tokens to 0.16 past 64K. On the healthy trainer it was under 0.011 at every depth.
+
+![KL per step in healthy training for KL0 and non-KL0 models, and GLM-5.3 KL by context depth before KL0, with and without a bug](kl.png)
 
 ### The task
 
@@ -46,7 +70,7 @@ GLM-5.3 and Qwen3.6, and an episode takes 29-37 turns.
 Use the defaults: the prompt states the word and the number of pages, so nothing is hidden and
 the model only has to read every page and count. Rewards still start low, because counting a word
 across 30+ pages is hard, and climb steadily with training, so the check covers many real policy
-updates. The healthy curves above used 8 groups of 8 rollouts per step:
+updates. Our runs used 8 groups of 8 rollouts per step:
 
 ```bash
 python -m tinker_cookbook.recipes.rl_numerics_check.train \

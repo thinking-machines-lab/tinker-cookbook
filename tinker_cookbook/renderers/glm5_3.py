@@ -89,6 +89,7 @@ from tinker_cookbook.renderers.base import (
     ToolSpec,
     TrainOnWhat,
     UnparsedToolCall,
+    detect_unterminated_tool_block,
     parse_content_blocks,
 )
 from tinker_cookbook.tokenizer_utils import Tokenizer
@@ -638,6 +639,10 @@ class Glm5_3Renderer(Renderer):
                 message["tool_calls"] = tool_calls
             if unparsed:
                 message["unparsed_tool_calls"] = unparsed
+
+        dangling = detect_unterminated_tool_block(content, "<tool_call>", "</tool_call>")
+        if dangling is not None:
+            message["unparsed_tool_calls"] = [*message.get("unparsed_tool_calls", []), dangling]
 
         return message, termination
 

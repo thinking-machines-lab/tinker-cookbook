@@ -219,7 +219,7 @@ url = weights.publish_to_hf_hub(
 
 **Progress:** `progress/batch`, `progress/done_frac`
 **RL rewards:** `env/all/reward/total`, `env/all/<metric>`
-**Health:** `entropy`, `kl_sample_train_v1` (< 0.01), `optim/lr`
+**Health:** `entropy`, `kl_sample_train_v1` (< 0.01), `sample_train_mismatch_frac` (exactly 0 on-policy for models served with KL0), `optim/lr`
 **Timing:** `time/total`, `time/<name>`, `time/<name>:total`, `time/<name>:mean`
 
 ### Rollout analysis

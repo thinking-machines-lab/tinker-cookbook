@@ -34,9 +34,12 @@ from tinker_cookbook.renderers import (
     get_text_content,
 )
 from tinker_cookbook.renderers.base import (
+    UNTERMINATED_TOOL_BLOCK_ERROR,
+    ParseFailureKind,
     StreamingMessageHeader,
     StreamingTextDelta,
     StreamingThinkingDelta,
+    classify_parse_failure,
     ensure_list,
 )
 from tinker_cookbook.renderers.glm5_3 import (
@@ -1233,3 +1236,15 @@ def test_extension_property_flags(glm_tokenizer):
     assert not Glm5_3Renderer(
         glm_tokenizer, strip_thinking_from_history=True
     ).has_extension_property
+
+
+def test_unterminated_tool_block_is_content_failure(glm_tokenizer, glm_renderer):
+    text = "</think>Let me search.<tool_call>search<arg_key>q</arg_key><arg_value>x</arg_value>"
+    response = glm_tokenizer.encode(text, add_special_tokens=False)
+    response.append(glm_renderer.get_stop_sequences()[0])
+    message, termination = glm_renderer.parse_response(response)
+    assert termination.is_clean
+    failure = classify_parse_failure(message, termination)
+    assert failure is not None
+    assert failure[0] == ParseFailureKind.CONTENT
+    assert UNTERMINATED_TOOL_BLOCK_ERROR in failure[1]
