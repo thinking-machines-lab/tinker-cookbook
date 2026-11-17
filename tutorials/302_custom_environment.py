@@ -353,8 +353,9 @@ async def _(MODEL_NAME, service_client, tinker):
     MAX_TOKENS = 256
     TEMPERATURE = 1.0
     N_STEPS = 4
-    # For Qwen3.5-4B with LoRA rank 32, a learning rate around 5e-4 works well.
-    # You can use tinker_cookbook.hyperparam_utils.get_lr(model_name) for supported models.
+    # Deliberately high so this 4-step demo shows the reward move. For a real RL run on
+    # more data, we recommend starting near 0.1 * hyperparam_utils.get_lr(MODEL_NAME)
+    # and sweeping from there.
     lr = 5e-4
     adam_params = tinker.AdamParams(learning_rate=lr, beta1=0.9, beta2=0.95)
 

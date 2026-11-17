@@ -20,7 +20,7 @@ def json_already_exists(log_path: str) -> bool:
 GROUPS_PER_BATCH = 16
 
 
-def build_rl_basic_config(group_buffer_size: int, name: str) -> rl_train.Config:
+def build_rl_basic_config(sampling_steps_ahead: int, name: str) -> rl_train.Config:
     model_name = "Qwen/Qwen3.5-9B-Base"
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     builder = Gsm8kDatasetBuilder(
@@ -39,10 +39,10 @@ def build_rl_basic_config(group_buffer_size: int, name: str) -> rl_train.Config:
         max_tokens=256,
         eval_every=2,
         async_config=rl_train.AsyncConfig(
-            group_buffer_size=group_buffer_size,
+            sampling_steps_ahead=sampling_steps_ahead,
             groups_per_batch=GROUPS_PER_BATCH,
         )
-        if group_buffer_size > GROUPS_PER_BATCH
+        if sampling_steps_ahead > 0
         else None,
         enable_trace=True,
     )
@@ -58,15 +58,14 @@ def async_rl_sweep():
 
     log_relpath_base = "async_rl_sweep"
     job_specs = []
-    # Buffers of 1, 2, 3, 5, 9 and 17 batches' worth of trajectory groups; a buffer
-    # of one batch is on-policy, so that run uses sync training.
-    for buffer_batches in [1, 2, 3, 5, 9, 17]:
-        group_buffer_size = GROUPS_PER_BATCH * buffer_batches
+    # Sampling 0, 1, 2, 4, 8 and 16 steps ahead of training; 0 is on-policy, so that
+    # run uses sync training.
+    for sampling_steps_ahead in [0, 1, 2, 4, 8, 16]:
         tmux_window_name = (
-            f"group_buffer_{group_buffer_size}" if buffer_batches > 1 else "on_policy"
+            f"steps_ahead_{sampling_steps_ahead}" if sampling_steps_ahead > 0 else "on_policy"
         )
         rl_config = build_rl_basic_config(
-            group_buffer_size=group_buffer_size,
+            sampling_steps_ahead=sampling_steps_ahead,
             name=tmux_window_name,
         )
         log_relpath = f"{log_relpath_base}/{tmux_window_name}"

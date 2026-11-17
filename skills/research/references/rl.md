@@ -306,15 +306,17 @@ if __name__ == "__main__":
 from tinker_cookbook.rl.train import AsyncConfig
 config = Config(
     ...,
-    # At most group_buffer_size trajectory GROUPS are started but not yet trained
-    # (sampling or waiting); each step trains the oldest groups_per_batch finished ones.
+    # Sampling runs up to sampling_steps_ahead steps ahead of training: at most
+    # groups_per_batch * (sampling_steps_ahead + 1) trajectory GROUPS are started but not
+    # yet trained (sampling or waiting); each step trains the oldest groups_per_batch
+    # finished ones.
     # Nothing is discarded; AsyncConfig.loss_fn (default "stable_reinforce") stays stable
     # on the stale data.
-    async_config=AsyncConfig(group_buffer_size=16, groups_per_batch=8),
+    async_config=AsyncConfig(sampling_steps_ahead=1, groups_per_batch=8),
 )
 ```
 
-`group_buffer_size` bounds the buffer, not staleness: while the buffer stays full, typical staleness is about `group_buffer_size / groups_per_batch - 1` steps (here 1), with an unbounded tail from slow rollouts. `group_buffer_size == groups_per_batch` is on-policy. Up to `group_buffer_size * group_size` trajectories run at once, so size executors and sandbox pools for that. (`max_steps_off_policy=K` is the deprecated spelling of `group_buffer_size = groups_per_batch * (K + 1)`.)
+`sampling_steps_ahead` bounds how far sampling runs ahead, not staleness: while the buffer stays full, typical staleness is about `sampling_steps_ahead` steps (here 1), with an unbounded tail from slow rollouts. `sampling_steps_ahead=0` is on-policy. Up to `groups_per_batch * (sampling_steps_ahead + 1) * group_size` trajectories run at once, so size executors and sandbox pools for that. (`max_steps_off_policy` is the deprecated name for `sampling_steps_ahead`.)
 
 By default (`AsyncConfig.inflight_weight_updates=True`), rollouts in progress can pick up each step's new weights mid-generation as the update propagates (inflight sampling); evals still run on a fixed snapshot of the evaluated step. Set it to `False` to have each rollout finish on the weights it started with.
 

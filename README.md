@@ -133,7 +133,7 @@ For the full Tinker documentation, visit [tinker-docs.thinkingmachines.ai](https
 
 Tinker Cookbook also provides reusable building blocks:
 - [`renderers`](tinker_cookbook/renderers/) — bidirectional conversion between token sequences and structured chat messages
-- [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) — learning rate and hyperparameter scaling for LoRA training
+- [`hyperparam_utils`](tinker_cookbook/hyperparam_utils.py) — calibrated per-model LoRA learning rates and LoRA parameter counts
 - [`eval`](tinker_cookbook/eval/) — benchmark framework and inline training evaluators (see [Evaluation](#evaluation-experimental) above)
 
 ## Claude Code Skills

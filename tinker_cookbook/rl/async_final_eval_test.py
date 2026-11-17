@@ -91,7 +91,7 @@ def _run(
         eval_every=eval_every,
         # Evals run on the rollout client published for their step (snapshot clients).
         async_config=train.AsyncConfig(
-            group_buffer_size=3 * GROUPS_PER_BATCH,
+            sampling_steps_ahead=2,
             groups_per_batch=GROUPS_PER_BATCH,
             inflight_weight_updates=False,
         ),

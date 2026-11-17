@@ -153,7 +153,7 @@ def test_completed_workers_only_export_for_consumers(
         compute_post_kl=post_kl,
         # Snapshot clients: the expected exports count every snapshot publish.
         async_config=train.AsyncConfig(
-            group_buffer_size=9, groups_per_batch=1, inflight_weight_updates=False
+            sampling_steps_ahead=8, groups_per_batch=1, inflight_weight_updates=False
         ),
     )
     asyncio.run(

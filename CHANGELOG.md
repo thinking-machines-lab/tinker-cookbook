@@ -13,12 +13,23 @@ Each entry includes:
 
 ---
 
-### [cookbook] Async RL: `max_steps_off_policy` is now `group_buffer_size`
-**Date:** 2026-11-04
+### [cookbook] Calibrated per-model learning rates and a new LR guide (PR pending)
+**Date:** pending
+**Type:** improvement
+**Tags:** hyperparams, supervised
+
+`get_lr` now returns calibrated per-model starting LRs for general-purpose LoRA training instead of the old width formula, and the new `transfer_lr` moves a tuned LR between models. The LR guidance is rewritten in [Hyperparameter Selection](skills/research/references/hyperparams.md).
+
+**Behavior changes.** LR values change. Models without a calibrated entry raise `ConfigurationError`, the full-fine-tuning helpers are removed, and `get_lr(is_lora=...)` is deprecated; `is_lora=False` raises `ConfigurationError`.
+
+---
+
+### [cookbook] Async RL: `max_steps_off_policy` is now `sampling_steps_ahead`
+**Date:** 2026-11-17
 **Type:** improvement
 **Tags:** rl
 
-`AsyncConfig.max_steps_off_policy` is deprecated in favor of `AsyncConfig.group_buffer_size`, the maximum number of trajectory groups started but not yet trained. `max_steps_off_policy=K` still works as `group_buffer_size = groups_per_batch * (K + 1)`, with a deprecation warning. The math_rl, code_rl, rubric and harbor_rl recipes take `group_buffer_size` and keep `max_steps_off_policy` as an alias.
+`AsyncConfig.max_steps_off_policy` is deprecated in favor of `AsyncConfig.sampling_steps_ahead`, which means the same thing: how many training steps sampling may run ahead of training (0 is on-policy). It is about the typical staleness in steps, not a cap on it, since slow rollouts are still trained when they finish. `max_steps_off_policy` still works, with a deprecation warning. The math_rl, code_rl, rubric and harbor_rl recipes take `sampling_steps_ahead` and keep `max_steps_off_policy` as an alias.
 
 ---
 

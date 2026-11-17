@@ -459,28 +459,27 @@ class AsyncConfig:
     """Configuration for async RL training.
 
     In async mode, sampling and training run concurrently, so training data
-    can come from older weights ("stale" or off-policy data). Sampling is
-    bounded by a buffer of trajectory groups: at most ``group_buffer_size``
-    groups (each of ``group_size`` trajectories) may be started but not yet
-    trained, counting both groups still being sampled and finished groups
-    waiting to be trained. A group takes a buffer slot when its rollout starts
-    and frees it once it has been trained (or right away if it is filtered
-    out). Each step trains the oldest ``groups_per_batch`` completed groups,
-    taking the groups sampled from the oldest weights first. With streaming
-    minibatches, a step trains ``StreamMinibatchConfig.groups_per_batch``
-    groups instead, in the order they finish. Below, ``groups_per_step`` means
-    whichever of the two applies.
+    can come from older weights ("stale" or off-policy data). Sampling can run
+    up to ``sampling_steps_ahead`` steps ahead of training: at most
+    ``groups_per_step * (sampling_steps_ahead + 1)`` trajectory groups (each of
+    ``group_size`` trajectories) may be started but not yet trained, counting
+    both groups still being sampled and finished groups waiting to be trained.
+    A group takes one of these buffer slots when its rollout starts and frees
+    it once it has been trained (or right away if it is filtered out). Each
+    step trains the oldest ``groups_per_batch`` completed groups, taking the
+    groups sampled from the oldest weights first. With streaming minibatches,
+    a step trains ``StreamMinibatchConfig.groups_per_batch`` groups instead, in
+    the order they finish. Here and below, ``groups_per_step`` means whichever
+    of the two applies.
 
     Nothing is discarded for staleness: while training continues, a slow
     rollout is trained when it finishes, however many steps stale it is by
     then. (Filtered groups are not trained, and rollouts still running when
-    training ends are cancelled.) ``group_buffer_size``
-    bounds how far sampling can run ahead, not staleness itself. While the
-    buffer stays full, typical staleness is about
-    ``group_buffer_size / groups_per_step - 1`` steps, but slow rollouts make
-    an unbounded tail. ``group_buffer_size == groups_per_step`` is on-policy
-    (staleness 0); ``group_buffer_size`` must be at least ``groups_per_step``
-    so a step can fill, and need not be a multiple of it.
+    training ends are cancelled.) ``sampling_steps_ahead`` bounds how far
+    sampling can run ahead, not staleness itself. While the buffer stays full,
+    typical staleness is about ``sampling_steps_ahead`` steps, but slow
+    rollouts make an unbounded tail; ``async/staleness_*`` logs the actual
+    values. ``sampling_steps_ahead=0`` is on-policy (staleness 0).
 
     Training steps don't map one-to-one to dataset batches: each step trains
     ``groups_per_batch`` groups that survive filtering (such as
@@ -495,16 +494,16 @@ class AsyncConfig:
     unstable on stale data.
 
     A rollout that never finishes keeps its buffer slot: training stalls once
-    more than ``group_buffer_size - groups_per_step`` groups hang (with
-    ``group_buffer_size == groups_per_step``, as in sync training, a single
-    one), and the run can't finish while a rollout whose group is still needed
-    hangs. For environments that can hang, set
+    more than ``groups_per_step * sampling_steps_ahead`` groups hang (with
+    ``sampling_steps_ahead=0``, as in sync training, a single one), and the
+    run can't finish while a rollout whose group is still needed hangs. For environments that can hang, set
     ``rollout_error_tolerance=RetryOnFailure(per_rollout_timeout=...)``.
     Rollouts still running when training ends are cancelled (their env
     cleanup still finishes), except those in a rollout executor's threads or
     processes, which run to completion. Up to
-    ``group_buffer_size * group_size`` trajectories run at once, so size a
-    rollout executor (and any sandbox pool) for that many.
+    ``groups_per_step * (sampling_steps_ahead + 1) * group_size`` trajectories
+    run at once, so size a rollout executor (and any sandbox pool) for that
+    many.
 
     Every ``eval_every`` step and the final step are evaluated on that step's
     weights. Evals run alongside training and each other, and never skip a
@@ -523,18 +522,15 @@ class AsyncConfig:
 
     Attributes:
         groups_per_batch (int): Number of trajectory groups per training batch.
-        group_buffer_size (int | None): Maximum number of trajectory groups
-            (not individual trajectories) started but not yet trained, counting
-            groups still being sampled and finished groups waiting to be
-            trained. Must be at least the number of groups trained per step.
-            Three times that (about two steps of staleness) is a reasonable
-            place to start. Set exactly one of this and
+        sampling_steps_ahead (int | None): How many training steps
+            sampling may run ahead of training, which is about the typical
+            staleness in steps (not a cap on it). 0 is on-policy; 2 is a
+            reasonable place to start. Set exactly one of this and
             ``max_steps_off_policy``.
         max_steps_off_policy (int | None): Deprecated; use
-            ``group_buffer_size``. Despite its name, it doesn't cap
-            staleness (stale rollouts are no longer discarded): it sets
-            ``group_buffer_size`` to
-            ``groups_per_step * (max_steps_off_policy + 1)``.
+            ``sampling_steps_ahead``, which means the same thing. Despite its
+            name, it doesn't cap staleness: stale rollouts are not
+            discarded.
         loss_fn (LossFnType): Loss function for async runs, used in place of
             ``Config.loss_fn``. An async run whose ``Config.loss_fn`` is set to
             something other than its default and this value raises a
@@ -543,13 +539,12 @@ class AsyncConfig:
             sampling clients, so rollouts in progress pick up the weights each
             training step publishes as the update propagates. Defaults to
             True; False makes each rollout sample from the weights it started
-            with. No effect when ``group_buffer_size`` equals the groups
-            trained per step (on-policy), where no rollout runs during a
-            train step.
+            with. No effect when ``sampling_steps_ahead=0`` (on-policy),
+            where no rollout runs during a train step.
     """
 
     groups_per_batch: int
-    group_buffer_size: int | None = None
+    sampling_steps_ahead: int | None = None
     max_steps_off_policy: int | None = None
     loss_fn: LossFnType = "stable_reinforce"
     inflight_weight_updates: bool = True
@@ -560,22 +555,33 @@ class AsyncConfig:
             raise ConfigurationError(
                 f"AsyncConfig needs groups_per_batch >= 1, got {self.groups_per_batch}."
             )
-        if self.group_buffer_size is not None and self.max_steps_off_policy is not None:
+        if self.sampling_steps_ahead is not None and self.max_steps_off_policy is not None:
             raise ConfigurationError(
-                "AsyncConfig: set group_buffer_size or the deprecated max_steps_off_policy, "
+                "AsyncConfig: set sampling_steps_ahead or the deprecated max_steps_off_policy, "
                 "not both."
             )
-        if self.group_buffer_size is None and self.max_steps_off_policy is None:
+        if self.sampling_steps_ahead is None and self.max_steps_off_policy is None:
             raise ConfigurationError(
-                "AsyncConfig needs group_buffer_size: the maximum number of trajectory groups "
-                "started but not yet trained. Set it to the groups trained per step "
-                "(groups_per_batch, or StreamMinibatchConfig.groups_per_batch when streaming) "
-                "for on-policy training, or larger to let sampling run ahead of training."
+                "AsyncConfig needs sampling_steps_ahead: how many training steps sampling may "
+                "run ahead of training. 0 is on-policy; larger values let sampling run ahead."
             )
-        if self.max_steps_off_policy is not None and self.max_steps_off_policy < 0:
-            raise ConfigurationError(
-                f"AsyncConfig needs max_steps_off_policy >= 0, got {self.max_steps_off_policy}."
+        steps_ahead = self.steps_ahead()
+        if steps_ahead < 0:
+            name = (
+                "sampling_steps_ahead"
+                if self.sampling_steps_ahead is not None
+                else "max_steps_off_policy"
             )
+            raise ConfigurationError(f"AsyncConfig needs {name} >= 0, got {steps_ahead}.")
+
+    def steps_ahead(self) -> int:
+        """``sampling_steps_ahead``, or the deprecated ``max_steps_off_policy``
+        when that is the one set."""
+        if self.sampling_steps_ahead is not None:
+            return self.sampling_steps_ahead
+        # Validation guarantees exactly one of the two is set.
+        assert self.max_steps_off_policy is not None
+        return self.max_steps_off_policy
 
 
 @chz.chz
@@ -727,13 +733,13 @@ class Config:
     def sampling_client_kind(self) -> SamplingClientKind:
         """The kind of sampling client each training step publishes for rollouts:
         ``"inflight"`` for async runs with ``inflight_weight_updates`` whose
-        group buffer holds more than one step's groups, ``"snapshot"``
+        ``sampling_steps_ahead`` is above 0, ``"snapshot"``
         otherwise. With an on-policy buffer no rollout runs during a train
         step, so inflight clients would only add sampler saves."""
         if (
             self.async_config is not None
             and self.async_config.inflight_weight_updates
-            and self.async_group_buffer_size() > self.async_groups_per_step()
+            and self.async_config.steps_ahead() > 0
         ):
             return "inflight"
         return "snapshot"
@@ -750,41 +756,10 @@ class Config:
 
     def async_group_buffer_size(self) -> int:
         """The maximum number of trajectory groups an async run keeps started but
-        not yet trained: ``async_config.group_buffer_size``, or, from the deprecated
-        ``async_config.max_steps_off_policy`` K, ``groups_per_step * (K + 1)``.
-
-        Raises:
-            ConfigurationError: If the buffer is smaller than
-                :meth:`async_groups_per_step`, so a step could never fill.
-        """
+        not yet trained: ``groups_per_step * (sampling_steps_ahead + 1)``."""
         if self.async_config is None:
             raise ConfigurationError("async_group_buffer_size() requires async_config.")
-        groups_per_step = self.async_groups_per_step()
-        if self.async_config.group_buffer_size is not None:
-            size = self.async_config.group_buffer_size
-        else:
-            # AsyncConfig validation guarantees exactly one of the two is set.
-            assert self.async_config.max_steps_off_policy is not None
-            size = groups_per_step * (self.async_config.max_steps_off_policy + 1)
-        if size < groups_per_step:
-            step_source = (
-                "StreamMinibatchConfig.groups_per_batch"
-                if self.stream_minibatch_config is not None
-                else "AsyncConfig.groups_per_batch"
-            )
-            raise ConfigurationError(
-                f"AsyncConfig.group_buffer_size={size} is smaller than the {groups_per_step} "
-                f"trajectory groups each training step needs ({step_source}), so no step "
-                f"could ever fill. Set it to at least {groups_per_step} ({groups_per_step} is "
-                "on-policy; larger values let sampling run ahead of training)."
-            )
-        return size
-
-    @chz.validate
-    def _check_async_group_buffer(self) -> None:
-        if self.async_config is None:
-            return
-        self.async_group_buffer_size()  # raises if the buffer can't fill a step
+        return self.async_groups_per_step() * (self.async_config.steps_ahead() + 1)
 
     def effective_termination(self) -> TerminationRewardPolicy | None:
         """The termination policy this run trains with.
@@ -1469,8 +1444,11 @@ async def do_async_training(
     groups_per_step = config.async_groups_per_step()
     num_rollout_slots = config.async_group_buffer_size()
     rollout_slots = asyncio.Semaphore(num_rollout_slots)
+    # Slots currently held: groups started and not yet trained (or filtered out).
+    # Logged as async/groups_in_flight and async/buffer_utilization.
+    num_slots_held = 0
     # One worker per slot: with fewer workers than slots, the worker count rather
-    # than group_buffer_size would cap how far sampling runs ahead.
+    # than the group buffer would cap how far sampling runs ahead.
     num_rollout_workers = num_rollout_slots
     worker_alive_counter = _AsyncCounter(num_rollout_workers)
     rollout_workers_finished = asyncio.Event()
@@ -1558,6 +1536,7 @@ async def do_async_training(
     @trace.scope
     async def trajectory_group_worker_loop():
         """Generates trajectories for a single env builder"""
+        nonlocal num_slots_held
         while True:
             env_group_builder = await env_group_builders_queue.get()
             if isinstance(env_group_builder, _Shutdown):
@@ -1565,6 +1544,7 @@ async def do_async_training(
                 break
 
             await rollout_slots.acquire()
+            num_slots_held += 1
             # Read the sampling client and its step together (no await in
             # between), after getting a slot, so the rollout uses the newest
             # weights and records the step they came from.
@@ -1591,6 +1571,7 @@ async def do_async_training(
                 error_counter.ingest(trajectory_group)
             if trajectory_group is None:
                 # Filtered out (e.g. constant reward): it will never be trained.
+                num_slots_held -= 1
                 rollout_slots.release()
                 trajectory_groups_queue.put_nowait(None)
             else:
@@ -1651,6 +1632,7 @@ async def do_async_training(
         nonlocal sampling_client
         nonlocal sampling_client_step
         nonlocal sampling_client_coordinates
+        nonlocal num_slots_held
         maybe_start_eval(
             start_batch, sampling_client, sampling_client_coordinates, end_step=evaluation_end_step
         )
@@ -1778,6 +1760,11 @@ async def do_async_training(
             metrics["async/staleness_max"] = max(staleness)
             metrics["async/staleness_min"] = min(staleness)
             metrics["async/staleness_mean"] = sum(staleness) / len(staleness)
+            # Buffer occupancy right after the train step, before its groups' slots
+            # are freed: this step's batch plus every group still rolling out or
+            # finished and waiting. 1.0 means workers were blocked on a full buffer.
+            metrics["async/groups_in_flight"] = num_slots_held
+            metrics["async/buffer_utilization"] = num_slots_held / num_rollout_slots
             if not reused_sampling_client:
                 # Publish the new sampling client and its step, then free the trained
                 # groups' slots, with no await since the train step returned: rollouts
@@ -1790,6 +1777,7 @@ async def do_async_training(
                     sampling_client_step, train_step_metrics
                 )
             for _ in trained_groups:
+                num_slots_held -= 1
                 rollout_slots.release()
             if not reused_sampling_client:
                 # Only this loop trains, so the weights are still this step's until the
@@ -2791,14 +2779,13 @@ async def main(
         # outside __main__.
         logger.warning(
             "AsyncConfig.max_steps_off_policy is deprecated. Use "
-            f"group_buffer_size={config.async_group_buffer_size()} instead (groups_per_step * "
-            f"(max_steps_off_policy + 1) = {config.async_groups_per_step()} * "
-            f"({config.async_config.max_steps_off_policy} + 1)). It bounds the trajectory "
-            "groups started but not yet trained; it doesn't cap staleness."
+            f"sampling_steps_ahead={config.async_config.max_steps_off_policy} instead, which "
+            "means the same thing. It bounds how far sampling runs ahead of training; it "
+            "doesn't cap staleness."
         )
     if (
         config.async_config is not None
-        and config.async_group_buffer_size() > config.async_groups_per_step()
+        and config.async_config.steps_ahead() > 0
         and config.training_loss_fn() in ("importance_sampling", "cispo")
     ):
         logger.warning(

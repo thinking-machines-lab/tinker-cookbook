@@ -58,8 +58,7 @@ class Config:
     emotion_coef: float = 0.5
     wer_coef: float = 0.5
 
-    # Training. hyperparam_utils.get_lr has no TML entry, so the LR is
-    # hand-picked (LoRA wants ~10x the full-FT LR).
+    # Training. The LR is hand-picked for this task.
     group_size: int = 8  # rollouts per clip (advantages centered per group)
     groups_per_batch: int = 16  # clips per training batch
     learning_rate: float = 1e-5

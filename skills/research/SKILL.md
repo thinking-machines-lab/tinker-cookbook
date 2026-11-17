@@ -506,19 +506,42 @@ For the complete SDK API reference, read `references/sdk.md`.
 
 ### Hyperparameters
 
-```python
-from tinker_cookbook.hyperparam_utils import get_lr
-lr = get_lr(model_name, is_lora=True)
-```
+**Before choosing or scaling an LR, read [Hyperparameter Selection](references/hyperparams.md)**
+for the formulas, units, reference settings and limits of each rule. Per-model
+multipliers and the reference LR live in `tinker_cookbook/lr_multipliers.json`;
+use `hyperparam_utils` to look them up rather than hardcoding model values.
 
-| Training type | Typical LR | LoRA rank | Notes |
-|---------------|-----------|-----------|-------|
-| SFT | 1e-4 to 5e-4 | 32 | `batch_size` in tokens |
-| RL | 1e-5 to 4e-5 | 32 | `group_size` 4-16 |
-| DPO | ~1e-5 | 32 | Start with `dpo_beta=0.1` |
-| Distillation | ~1e-4 | 128 | Higher rank helps |
+1. **Choose a sweep starting point.** Start from `hyperparam_utils.get_lr(model_name)`
+   and apply any applicable factors from the reference. `get_lr` targets SFT, so
+   for RL, DPO or on-policy distillation, multiply by that objective's
+   `objective_multiplier` from the
+   [multiplier rules](references/hyperparams.md#multiplier-rules). `get_lr`
+   provides a practical AdamW LoRA SFT starting scale, not a measured optimum
+   for your task; optimizer conversions and objective heuristics have limited
+   scope.
+2. **Tune at small scale.** Sweep on a smaller model, ideally one in your target
+   model's family, and a smaller training budget using your intended dataset,
+   optimizer, loss and LR schedule. Select the LR using fixed held-out evaluation,
+   and record the model, batch units and total training-token budget.
+3. **Scale and transfer the tuned LR.** For AdamW or Dimuon SFT, adjust batch size
+   and training-token budget with the combined formula in the reference, keeping
+   the optimizer fixed. For **AdamW model transfer**, use
+   `hyperparam_utils.transfer_lr(scaled_lr, from_model, to_model)` and hold other
+   settings fixed. For Dimuon model changes, tune on the target model directly:
+   the separate AdamW-to-Dimuon optimizer estimate is not a measured Dimuon
+   model-transfer rule. Recheck held-out performance after scaling or transfer.
+4. **Don't apply an adjustment twice.** A tuned LR already accounts for the
+   objective, optimizer and schedule it was tuned with. When you scale or transfer
+   it, apply only the adjustments for settings that change. Don't multiply by the
+   same objective or optimizer factor again. Because `get_lr` reflects the
+   calibration setup rather than your task, an LR tuned on your data is usually
+   the better base; restart from `get_lr` only when the new setup differs enough
+   that you plan to re-sweep anyway.
 
-For the full hyperparameter guide, read `references/hyperparams.md`.
+These measured rules and practical heuristics can help locate a useful LR range,
+but they do not replace a sweep. How well they hold depends on your data, setup
+and workload. If you have the budget, we strongly recommend sweeping nearby LRs
+on your target setup.
 
 ---
 
@@ -570,11 +593,11 @@ For the CLI reference, read `references/cli.md`.
 - **Sequential API calls**: The #1 performance mistake. Submit calls back-to-back, then await their `APIFuture`s. Use `.coroutine()` when passing SDK futures to `asyncio.gather` or `asyncio.create_task`.
 - **Sampler desync**: After saving weights, create a **new** SamplingClient. A stale client silently samples from old weights.
 - **Renderer mismatch**: Always use `model_info.get_recommended_renderer_name()` — never hardcode.
-- **LoRA LR**: LoRA needs ~10x higher LR than full fine-tuning — use `get_lr()`.
+- **LoRA LR**: Follow [Hyperparameters](#hyperparameters) and read `references/hyperparams.md` before choosing or scaling an LR. Transfer a tuned LR, not a fresh default.
 - **forward() vs forward_backward()**: `forward()` computes loss without gradients — use for eval only, never in training loops.
 - **Env objects are single-use**: Always create fresh envs via builder.
 - **DPO works best from SFT checkpoint**, not raw base model.
-- **batch_size is in tokens**, not examples.
+- **Batch units**: Standard SFT dataset builders count examples; RL counts groups and rollouts separately. Check the builder's units and record tokens per update separately.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: inkling
-description: Sample, evaluate, and post-train Inkling 2 Small, Inkling, and Inkling-Small, Thinking Machines Lab's models built for Tinker. Use this skill whenever the user mentions Inkling, `thinkingmachines/Inkling`, tml-renderers, `tml_v0` / `TmlV0Renderer`, or thinking/reasoning effort — and whenever they are choosing a model, building training data, running evals, setting up SFT or RL, handling parse errors, or working with audio or image inputs for an Inkling model. Inkling has requirements that differ from other Tinker models (mandatory effort conditioning, its own renderer and tokenizer, a learning rate you calibrate yourself), so load this skill before writing any Inkling code.
+description: Sample, evaluate, and post-train Inkling 2 Small, Inkling, and Inkling-Small, Thinking Machines Lab's models built for Tinker. Use this skill whenever the user mentions Inkling, `thinkingmachines/Inkling`, tml-renderers, `tml_v0` / `TmlV0Renderer`, or thinking/reasoning effort — and whenever they are choosing a model, building training data, running evals, setting up SFT or RL, handling parse errors, or working with audio or image inputs for an Inkling model. Inkling has requirements that differ from other Tinker models (mandatory effort conditioning, its own renderer and tokenizer, learning rates that differ a lot between the Inkling models), so load this skill before writing any Inkling code.
 ---
 
 # Inkling
@@ -21,7 +21,7 @@ All Inkling models share the `tml_v0` renderer and the effort interface, so movi
 
 All Inkling models are offered as post-trained versions on Tinker, not base models: they arrive instruction-tuned and effort-conditioned, so treat them as starting points for further post-training — SFT, RL, distillation — rather than for continued pretraining.
 
-Working with Inkling differs from other Tinker models in three ways, each covered below: every render needs an explicit thinking-effort value, rendering and tokenization go through `tml-renderers` rather than a Hugging Face chat template, and the learning rate is yours to calibrate.
+Working with Inkling differs from other Tinker models in three ways, each covered below: every render needs an explicit thinking-effort value, rendering and tokenization go through `tml-renderers` rather than a Hugging Face chat template, and the Inkling models want quite different learning rates from each other.
 
 ## Setup
 
@@ -98,9 +98,9 @@ For custom training code built directly on the Tinker SDK and `tml-renderers`, u
 
 ## Post-training
 
-We suggest calibrating the learning rate to your own task and dataset rather than starting from a general-purpose default. `hyperparam_utils.get_lr("thinkingmachines/Inkling-2-Small")` deliberately raises `NotImplementedError` instead of returning a number, so pick a starting value and sweep from there.
+Inkling models can prefer substantially different learning rates across generations and scales. Use `hyperparam_utils.get_lr(model_name)` for a model-specific SFT starting point, then follow [Hyperparameter Selection](../research/references/hyperparams.md) for objective adjustments and model transfer. Don't reuse another model's LR unchanged; move it with `hyperparam_utils.transfer_lr`. Then sweep nearby LRs on your own task and setup.
 
-- **Sweep learning rate and effort together over the first few RL steps.** We suggest doing this before committing to any long run, and trying the higher end of your learning-rate range as part of the sweep.
+- **Sweep learning rate and effort together over the first few RL steps.** We suggest doing this before committing to any long run. Start the LR sweep from the guide's conservative RL starting point, about `0.1 * get_lr(model_name)`, and include higher values too.
 - **Watch entropy.** The cookbook logs `optim/entropy` each step. Healthy entropy means the model is still producing variance, which is what makes rewards differ within a group and keeps the model responsive to training.
 - **Track all-fail and all-success groups.** Groups with uniform reward contribute no gradient — see the `remove_constant_reward_groups` option. If most groups are degenerate, we suggest adjusting task difficulty, group size, or effort.
 - **Consider an SFT warm-start if RL is slow to move.** When your domain or output format sits far from the model's defaults, a short SFT phase on in-format data can reach a regime where RL hill-climbs more readily.
@@ -141,7 +141,6 @@ Audio fine-tuning recipes (speech recognition, emotion plus transcription, medic
 | Responses truncated mid-thought | `max_tokens` not scaled with effort | Raise the budget; high effort can need 16k+ tokens |
 | `ModuleNotFoundError: tml_renderers` | Incomplete installation | Reinstall `tinker-cookbook` |
 | `TmlV0Renderer requires PyTorch 2.10 or newer` | Old torch | Reinstall `tinker-cookbook`, or run `pip install "torch>=2.10"` |
-| `get_lr` raises `NotImplementedError` | No general-purpose default LR is published for Inkling | Calibrate for your task: pick a starting value and sweep |
 | `NotImplementedError` on prefill | TMLv0 sampling rejects partial assistant messages | Pass complete messages instead |
 | Frequent `MALFORMED` terminations | Truncated or unparseable output | Raise `max_tokens`; retry with a corrective message carrying the parse error |
 

@@ -59,8 +59,7 @@ class Config:
     max_length: int = 8192
     seed: int = 0  # data selection + epoch shuffling
 
-    # Training. hyperparam_utils.get_lr has no TML entry, so the peak LR is
-    # hand-picked (LoRA wants ~10x the full-FT LR).
+    # Training. The peak LR is hand-picked for this task.
     num_epochs: int = 5
     max_steps: int | None = None
     batch_size: int = 8

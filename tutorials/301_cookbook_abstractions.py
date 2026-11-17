@@ -442,7 +442,8 @@ async def _(
     training_client,
 ):
     N_STEPS = 4
-    learning_rate = get_lr(MODEL_NAME)
+    # Objective-adjusted sweep starting point; see skills/research/references/hyperparams.md.
+    learning_rate = 0.1 * get_lr(MODEL_NAME)
     adam_params = tinker.AdamParams(learning_rate=learning_rate, beta1=0.9, beta2=0.95, eps=1e-08)
 
     def _remove_mask(datum: tinker.Datum) -> tinker.Datum:

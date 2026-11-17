@@ -7,9 +7,10 @@ import pytest
 
 from tinker_cookbook.cli_utils import check_log_dir
 from tinker_cookbook.hyperparam_utils import (
-    get_lora_lr_over_full_finetune_lr,
+    get_lora_lr_multiplier,
     get_lora_param_count,
     get_lr,
+    transfer_lr,
 )
 from tinker_cookbook.model_info import (
     get_deepseek_info,
@@ -481,10 +482,15 @@ class TestHyperparamUtils:
 
         assert_params(get_lr, ["model_name", "is_lora"])
 
-    def test_get_lora_lr_over_full_finetune_lr_signature(self):
+    def test_get_lora_lr_multiplier_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params
 
-        assert_params(get_lora_lr_over_full_finetune_lr, ["model_name", "lora_alpha"])
+        assert_params(get_lora_lr_multiplier, ["model_name"])
+
+    def test_transfer_lr_signature(self):
+        from tests.downstream_compat.sig_helpers import assert_params
+
+        assert_params(transfer_lr, ["lr", "from_model", "to_model"])
 
     def test_get_lora_param_count_signature(self):
         from tests.downstream_compat.sig_helpers import assert_params
@@ -495,7 +501,7 @@ class TestHyperparamUtils:
         )
 
     def test_get_lr_returns_float(self):
-        lr = get_lr("Qwen/Qwen3-8B", is_lora=True)
+        lr = get_lr("Qwen/Qwen3-8B")
         assert isinstance(lr, float)
         assert lr > 0
 

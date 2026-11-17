@@ -1,0 +1,28 @@
+{
+  "reference_lr": 0.00075,
+  "multipliers": {
+    "Qwen/Qwen3-8B": 1.0,
+    "Qwen/Qwen3.5-35B-A3B-Base": 0.47,
+    "Qwen/Qwen3.5-397B-A17B": 0.7,
+    "Qwen/Qwen3.5-4B": 0.45,
+    "Qwen/Qwen3.5-9B": 0.55,
+    "Qwen/Qwen3.5-9B-Base": 0.53,
+    "Qwen/Qwen3.6-35B-A3B": 0.5,
+    "Qwen/Qwen3.8-27B": 0.57,
+    "deepseek-ai/DeepSeek-V4.1-Flash": 0.9,
+    "deepseek-ai/DeepSeek-V4.1-Flash-1017": 0.9,
+    "moonshotai/Kimi-K2.6": 0.68,
+    "moonshotai/Kimi-K3.1-Pro": 0.44,
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16": 0.92,
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16": 0.79,
+    "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16": 0.92,
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": 0.68,
+    "openai/gpt-oss-120b": 0.58,
+    "openai/gpt-oss-20b": 0.66,
+    "thinkingmachines/Inkling": 1.1,
+    "thinkingmachines/Inkling-2-Small": 0.57,
+    "thinkingmachines/Inkling-Small": 1.7,
+    "zai-org/GLM-5.3": 0.46,
+    "zai-org/GLM-5.3-Flash": 0.77
+  }
+}

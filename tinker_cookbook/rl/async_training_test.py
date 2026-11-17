@@ -524,7 +524,7 @@ async def _run_async_training(
     tmp_path: str,
     latencies: list[float],
     groups_per_batch: int,
-    group_buffer_size: int | None = None,
+    sampling_steps_ahead: int | None = None,
     max_steps_off_policy: int | None = None,
     group_size: int = 2,
     train_time_s: float = 0.005,
@@ -598,14 +598,14 @@ async def _run_async_training(
         stream_minibatch_config=stream_minibatch_config,
         async_config=(
             AsyncConfig(
-                group_buffer_size=group_buffer_size,
+                sampling_steps_ahead=sampling_steps_ahead,
                 max_steps_off_policy=max_steps_off_policy,
                 groups_per_batch=groups_per_batch,
                 inflight_weight_updates=inflight_weight_updates,
             )
             if loss_fn is None
             else AsyncConfig(
-                group_buffer_size=group_buffer_size,
+                sampling_steps_ahead=sampling_steps_ahead,
                 max_steps_off_policy=max_steps_off_policy,
                 groups_per_batch=groups_per_batch,
                 loss_fn=loss_fn,
@@ -731,17 +731,17 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=2 * groups_per_batch,
+                sampling_steps_ahead=1,
             )
         )
         staleness = _assert_trained_exactly_once(result)
         # The slow rollout was trained even though it is far more than one step stale.
         assert max(staleness[1]) > 1
 
-    @pytest.mark.parametrize("group_buffer_size", [3, 5, 6, 12])
-    def test_admission_cap_holds(self, tmp_path, group_buffer_size):
-        """At most group_buffer_size groups are ever outstanding, including sizes that
-        aren't a multiple of groups_per_batch."""
+    @pytest.mark.parametrize("steps_ahead", [0, 1, 3])
+    def test_admission_cap_holds(self, tmp_path, steps_ahead):
+        """At most groups_per_batch * (sampling_steps_ahead + 1) groups are ever
+        outstanding."""
         groups_per_batch = 3
         # Fast sampling and slow training, so sampling would race ahead without the cap.
         latencies = [0.001] * (groups_per_batch * 8)
@@ -750,24 +750,25 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=group_buffer_size,
+                sampling_steps_ahead=steps_ahead,
                 train_time_s=0.03,
             )
         )
         _assert_trained_exactly_once(result)
-        assert result.harness.max_outstanding == group_buffer_size
+        assert result.harness.max_outstanding == groups_per_batch * (steps_ahead + 1)
 
-    @pytest.mark.parametrize("group_buffer_size", [2, 4, 8])
+    @pytest.mark.parametrize("steps_ahead", [0, 1, 3])
     @pytest.mark.parametrize("streaming", [False, True])
-    def test_rollouts_run_concurrently_up_to_the_cap(self, tmp_path, group_buffer_size, streaming):
+    def test_rollouts_run_concurrently_up_to_the_cap(self, tmp_path, steps_ahead, streaming):
         """Slow rollouts fill every buffer slot at once, not just groups_per_batch of them."""
         groups_per_batch = 2
+        group_buffer_size = groups_per_batch * (steps_ahead + 1)
         result = asyncio.run(
             _run_async_training(
                 tmp_path,
                 [0.1] * (group_buffer_size * 2),
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=group_buffer_size,
+                sampling_steps_ahead=steps_ahead,
                 stream_minibatch_config=(
                     StreamMinibatchConfig(groups_per_batch=groups_per_batch, num_minibatches=1)
                     if streaming
@@ -780,8 +781,9 @@ class TestAsyncSemantics:
 
     @pytest.mark.parametrize("streaming", [False, True])
     def test_deprecated_max_steps_off_policy_sizes_the_buffer(self, tmp_path, streaming):
-        """max_steps_off_policy=K still works: the buffer holds groups_per_step * (K + 1)
-        groups, where groups_per_step is the streaming batch size when streaming."""
+        """max_steps_off_policy=K still works like sampling_steps_ahead=K: the buffer holds
+        groups_per_step * (K + 1) groups, where groups_per_step is the streaming batch size
+        when streaming."""
         # With streaming, each step trains 4 groups rather than groups_per_batch=2.
         groups_per_step = 4 if streaming else 2
         expected_buffer = groups_per_step * 2
@@ -811,7 +813,7 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=2 * groups_per_batch,
+                sampling_steps_ahead=1,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=groups_per_batch, num_minibatches=1
                 ),
@@ -826,7 +828,7 @@ class TestAsyncSemantics:
     def test_buffer_of_one_step_is_on_policy(self, tmp_path):
         latencies = [0.02, 0.1] * 6
         result = asyncio.run(
-            _run_async_training(tmp_path, latencies, groups_per_batch=2, group_buffer_size=2)
+            _run_async_training(tmp_path, latencies, groups_per_batch=2, sampling_steps_ahead=0)
         )
         staleness = _assert_trained_exactly_once(result)
         assert all(v == 0 for values in staleness.values() for v in values)
@@ -834,7 +836,7 @@ class TestAsyncSemantics:
     @pytest.mark.parametrize("steps_ahead", [1, 2])
     def test_typical_staleness_tracks_the_buffer(self, tmp_path, steps_ahead):
         """With fast, uniform rollouts the pipeline fills up: staleness settles at
-        group_buffer_size / groups_per_batch - 1 steps."""
+        sampling_steps_ahead steps."""
         groups_per_batch = 3
         n_batches = 10
         latencies = [0.001] * (groups_per_batch * n_batches)
@@ -843,7 +845,7 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=groups_per_batch * (steps_ahead + 1),
+                sampling_steps_ahead=steps_ahead,
                 train_time_s=0.02,
             )
         )
@@ -853,9 +855,71 @@ class TestAsyncSemantics:
         steady = [r for r in rows if r["training_client/step"] >= steps_ahead + 1]
         assert steady and all(r["async/staleness_mean"] >= steps_ahead - 0.5 for r in steady)
 
+    @pytest.mark.parametrize(
+        "streaming,inflight,deprecated",
+        [
+            (False, False, False),
+            (False, True, False),
+            (True, False, False),
+            (True, True, False),
+            (False, False, True),
+            (True, False, True),
+        ],
+    )
+    def test_buffer_utilization_metrics(self, tmp_path, streaming, inflight, deprecated):
+        """Fast rollouts and slow training keep the buffer full, so every step but the
+        last logs groups_in_flight == buffer size; the last step holds only its batch.
+        Covers streaming, inflight updates and the max_steps_off_policy mapping."""
+        groups_per_batch = 3
+        buffer_size = groups_per_batch * 2
+        n_batches = 6
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.001] * (groups_per_batch * n_batches),
+                groups_per_batch=groups_per_batch,
+                sampling_steps_ahead=None if deprecated else 1,
+                max_steps_off_policy=1 if deprecated else None,
+                stream_minibatch_config=(
+                    StreamMinibatchConfig(groups_per_batch=groups_per_batch, num_minibatches=1)
+                    if streaming
+                    else None
+                ),
+                inflight_weight_updates=inflight,
+                train_time_s=0.03,
+            )
+        )
+        _assert_trained_exactly_once(result)
+        rows = sorted(_metric_rows(result), key=lambda r: r["training_client/step"])
+        assert len(rows) == n_batches
+        for r in rows:
+            assert r["async/buffer_utilization"] == r["async/groups_in_flight"] / buffer_size
+        assert [r["async/groups_in_flight"] for r in rows] == [buffer_size] * (n_batches - 1) + [
+            groups_per_batch
+        ]
+
+    def test_filtered_groups_leave_the_buffer(self, tmp_path):
+        """A group filtered out for constant reward frees its slot right away and is
+        never counted as in flight."""
+        groups_per_batch = 2
+        result = asyncio.run(
+            _run_async_training(
+                tmp_path,
+                [0.001] * 6,
+                groups_per_batch=groups_per_batch,
+                sampling_steps_ahead=0,
+                constant_reward_problem_ids={0, 1},
+                train_time_s=0.03,
+            )
+        )
+        rows = _metric_rows(result)
+        assert rows
+        assert all(r["async/groups_in_flight"] == groups_per_batch for r in rows)
+        assert all(r["async/buffer_utilization"] == 1.0 for r in rows)
+
     def test_each_step_logs_its_train_step_time(self, tmp_path):
         result = asyncio.run(
-            _run_async_training(tmp_path, [0.001] * 6, groups_per_batch=3, group_buffer_size=6)
+            _run_async_training(tmp_path, [0.001] * 6, groups_per_batch=3, sampling_steps_ahead=1)
         )
         rows = _metric_rows(result)
         assert rows and all("time/train_step" in r for r in rows)
@@ -873,7 +937,7 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=4 * groups_per_batch,
+                sampling_steps_ahead=3,
                 train_time_s=0.03,
             )
         )
@@ -907,7 +971,7 @@ class TestAsyncSemantics:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=2 * groups_per_batch,
+                sampling_steps_ahead=1,
                 constant_reward_problem_ids=filtered,
             )
         )
@@ -919,7 +983,7 @@ class TestAsyncSemantics:
     def test_logged_staleness_matches_trained_data(self, tmp_path):
         latencies = [0.01, 0.3, 0.01, 0.05] * 5
         result = asyncio.run(
-            _run_async_training(tmp_path, latencies, groups_per_batch=4, group_buffer_size=8)
+            _run_async_training(tmp_path, latencies, groups_per_batch=4, sampling_steps_ahead=1)
         )
         _assert_trained_exactly_once(result)
         by_step: dict[int, list[int]] = {}
@@ -952,7 +1016,7 @@ class TestAsyncLiveness:
                 latencies,
                 groups_per_batch=4,
                 extra_groups_per_batch=1,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 timeout_s=5.0,
             )
             assert _other_tasks() == []
@@ -973,7 +1037,7 @@ class TestAsyncLiveness:
                     tmp_path,
                     latencies,
                     groups_per_batch=4,
-                    group_buffer_size=12,
+                    sampling_steps_ahead=2,
                     failing_problem_ids={5},
                     timeout_s=5.0,
                 )
@@ -990,7 +1054,7 @@ class TestAsyncLiveness:
 
         async def _test() -> None:
             run = asyncio.create_task(
-                _run_async_training(tmp_path, latencies, groups_per_batch=4, group_buffer_size=8)
+                _run_async_training(tmp_path, latencies, groups_per_batch=4, sampling_steps_ahead=1)
             )
             await asyncio.sleep(0.2)
             run.cancel()
@@ -1019,7 +1083,7 @@ class TestAsyncLiveness:
                 latencies,
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                group_buffer_size=8,
+                sampling_steps_ahead=3,
                 strategy=strategy,
                 timeout_s=5.0,
             )
@@ -1039,7 +1103,7 @@ class TestAsyncLiveness:
                 tmp_path,
                 latencies,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 strategy=RetryOnFailure(max_retries=0, per_rollout_timeout=0.2),
                 timeout_s=10.0,
             )
@@ -1058,7 +1122,7 @@ class TestAsyncLiveness:
                 [0.01, 0.01, 0.15, 0.15],
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                group_buffer_size=4,
+                sampling_steps_ahead=1,
                 failing_problem_ids={2},
                 eval_every=1,
                 evaluators=[_SlowEvaluator()],
@@ -1076,7 +1140,7 @@ class TestAsyncLiveness:
                 [0.01, 0.01, HANG, HANG],
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                group_buffer_size=4,
+                sampling_steps_ahead=1,
                 eval_every=1,
                 evaluators=[_SlowEvaluator()],
                 cleanup_s={2: 0.01, 3: 0.1},
@@ -1093,7 +1157,7 @@ class TestAsyncLiveness:
                 [0.01, 0.01, HANG, HANG],
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                group_buffer_size=4,
+                sampling_steps_ahead=1,
                 eval_every=1,
                 evaluators=[_SlowEvaluator()],
                 cleanup_s={2: 0.01, 3: 1.0},
@@ -1112,7 +1176,7 @@ class TestAsyncIntegrationPaths:
         latencies = [0.01, 0.01, 0.2, 0.01] * 5
         result = asyncio.run(
             _run_async_training(
-                tmp_path, latencies, groups_per_batch=4, group_buffer_size=8, num_substeps=2
+                tmp_path, latencies, groups_per_batch=4, sampling_steps_ahead=1, num_substeps=2
             )
         )
         _assert_trained_exactly_once(result)
@@ -1126,7 +1190,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 latencies,
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=groups_per_batch,
+                sampling_steps_ahead=0,
                 start_batch=start_batch,
             )
         )
@@ -1142,7 +1206,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 latencies,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=4, num_minibatches=2
                 ),
@@ -1159,7 +1223,7 @@ class TestAsyncIntegrationPaths:
                 [0.0] * 8,
                 groups_per_batch=2,
                 extra_groups_per_batch=2,
-                group_buffer_size=4,
+                sampling_steps_ahead=1,
                 stream_minibatch_config=StreamMinibatchConfig(
                     groups_per_batch=4, num_minibatches=1
                 ),
@@ -1178,7 +1242,7 @@ class TestAsyncIntegrationPaths:
                 latencies,
                 groups_per_batch=4,
                 extra_groups_per_batch=2,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 # Interleaved with unfiltered groups, so they land mid-minibatch.
                 constant_reward_problem_ids={0, 2, 4, 6, 8, 10},
                 stream_minibatch_config=StreamMinibatchConfig(
@@ -1202,7 +1266,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 6,
                 groups_per_batch=2,
-                group_buffer_size=8,
+                sampling_steps_ahead=3,
                 num_substeps=2,
                 inflight_weight_updates=inflight,
                 save_latency_s=0.01 if inflight else 0.0,
@@ -1228,7 +1292,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 8,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 num_substeps=2,
                 constant_reward_problem_ids={5},
                 inflight_weight_updates=inflight,
@@ -1254,7 +1318,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 8,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 constant_reward_problem_ids={2, 5, 6},
                 inflight_weight_updates=inflight,
                 save_latency_s=0.01 if inflight else 0.0,
@@ -1276,7 +1340,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * 4,
                 groups_per_batch=2,
-                group_buffer_size=4,
+                sampling_steps_ahead=1,
                 constant_reward_problem_ids={1},
                 eval_every=1,
                 evaluators=[_RecordingEvaluator()],
@@ -1295,7 +1359,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 [0.01] * (n_steps * groups_per_batch),
                 groups_per_batch=groups_per_batch,
-                group_buffer_size=2 * groups_per_batch,
+                sampling_steps_ahead=1,
                 num_substeps=num_substeps,
                 eval_every=1,
                 evaluators=[_RecordingEvaluator()],
@@ -1310,7 +1374,7 @@ class TestAsyncIntegrationPaths:
     def test_single_group_per_batch(self, tmp_path):
         latencies = [0.01, 0.2, 0.01, 0.01, 0.15, 0.01] * 2
         result = asyncio.run(
-            _run_async_training(tmp_path, latencies, groups_per_batch=1, group_buffer_size=3)
+            _run_async_training(tmp_path, latencies, groups_per_batch=1, sampling_steps_ahead=2)
         )
         _assert_trained_exactly_once(result)
         assert result.harness.max_outstanding <= 3
@@ -1320,7 +1384,7 @@ class TestAsyncIntegrationPaths:
         latencies = [0.01, 0.01, 0.01, 0.2] * 6
         result = asyncio.run(
             _run_async_training(
-                tmp_path, latencies, groups_per_batch=4, group_buffer_size=8, save_every=2
+                tmp_path, latencies, groups_per_batch=4, sampling_steps_ahead=1, save_every=2
             )
         )
         _assert_trained_exactly_once(result)
@@ -1334,7 +1398,7 @@ class TestAsyncIntegrationPaths:
                 tmp_path,
                 latencies,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 eval_every=1,
                 evaluators=[evaluator],
             )
@@ -1377,7 +1441,7 @@ class TestAsyncDefaultLoss:
                 tmp_path,
                 [0.01, 0.05, 0.01, 0.1] * 4,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 loss_fn=loss_fn,
                 save_every=save_every,
                 stream_minibatch_config=(
@@ -1423,7 +1487,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01, 0.05, 0.01, 0.02] * n_steps,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 save_every=save_every,
                 eval_every=2,
                 evaluators=[evaluator],
@@ -1467,7 +1531,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01, 0.05, 0.01, 0.1] * (n_steps + start_batch),
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 save_every=save_every,
                 start_batch=start_batch,
                 stream_minibatch_config=_STREAMING if streaming else None,
@@ -1497,7 +1561,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01] * 8,
                 groups_per_batch=2,
-                group_buffer_size=6,
+                sampling_steps_ahead=2,
                 two_turn_problem_ids=two_turn,
                 inflight_weight_updates=True,
                 save_latency_s=_SAVE_LATENCY_S,
@@ -1537,7 +1601,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01, 0.03, 0.01, 0.02] * (n_steps + start_batch),
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 train_time_s=0.05,
                 save_every=save_every,
                 start_batch=start_batch,
@@ -1577,7 +1641,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01] * (4 * n_steps),
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 eval_every=1,
                 evaluators=[evaluator],
                 inflight_weight_updates=True,
@@ -1605,7 +1669,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01] * (4 * n_steps),
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 eval_every=1,
                 evaluators=[evaluator],
                 inflight_weight_updates=True,
@@ -1641,7 +1705,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01, 0.03, 0.06] * (n_problems // 3),
                 groups_per_batch=2,
-                group_buffer_size=4,
+                sampling_steps_ahead=1,
                 extra_groups_per_batch=1,
                 constant_reward_problem_ids=set(range(2, n_problems, 3)),
                 eval_every=1,
@@ -1663,7 +1727,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01] * 12,
                 groups_per_batch=4,
-                group_buffer_size=8,
+                sampling_steps_ahead=1,
                 eval_every=2,
                 evaluators=[evaluator],
                 inflight_weight_updates=True,
@@ -1683,7 +1747,7 @@ class TestAsyncInflightWeights:
                 tmp_path,
                 [0.01] * 12,
                 groups_per_batch=2,
-                group_buffer_size=6,
+                sampling_steps_ahead=2,
                 # Two filtered groups leave 5 trainable steps of the 6 planned.
                 constant_reward_problem_ids={10, 11},
                 eval_every=2,
@@ -1714,7 +1778,7 @@ class TestAsyncInflightWeights:
                     tmp_path,
                     [0.01] * (4 * n_steps),
                     groups_per_batch=4,
-                    group_buffer_size=8,
+                    sampling_steps_ahead=1,
                     train_time_s=0.05,
                     eval_every=1,
                     evaluators=[_FailingEvaluator(failing_version=failing_step)],

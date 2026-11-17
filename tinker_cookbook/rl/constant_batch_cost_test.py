@@ -81,7 +81,7 @@ def _run(
             groups_per_batch=groups_per_batch, num_minibatches=num_minibatches
         ),
         async_config=(
-            AsyncConfig(group_buffer_size=groups_per_batch, groups_per_batch=groups_per_batch)
+            AsyncConfig(sampling_steps_ahead=0, groups_per_batch=groups_per_batch)
             if loop == "async"
             else None
         ),

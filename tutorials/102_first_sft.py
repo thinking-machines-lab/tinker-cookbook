@@ -227,9 +227,9 @@ def _(TrainOnWhat, conversation_to_datum, get_renderer, tokenizer):
                 "role": "assistant",
                 "content": (
                     "For LoRA fine-tuning, use the helper: from tinker_cookbook.hyperparam_utils import get_lr, "
-                    "then call get_lr(model_name). LoRA needs a higher learning rate than full fine-tuning "
-                    "(roughly 10x). As a rule of thumb, LoRA LRs are typically in the 1e-5 to 5e-4 range "
-                    "depending on model size. For DPO, start lower around 1e-5 with dpo_beta=0.1."
+                    "then call get_lr(model_name) for a calibrated starting point, and sweep around it "
+                    "for your task. To reuse a learning rate tuned on another model, use transfer_lr. "
+                    "See skills/research/references/hyperparams.md for objective-specific guidance."
                 ),
             },
         ],

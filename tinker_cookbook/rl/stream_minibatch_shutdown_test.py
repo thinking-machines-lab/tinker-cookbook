@@ -64,7 +64,7 @@ def _run(tmp_path, monkeypatch: pytest.MonkeyPatch, num_batches: int, groups_per
         log_path=str(tmp_path),
         eval_every=0,
         async_config=train.AsyncConfig(
-            group_buffer_size=groups_per_batch * (num_batches + 1),
+            sampling_steps_ahead=num_batches,
             groups_per_batch=groups_per_batch,
         ),
         stream_minibatch_config=train.StreamMinibatchConfig(
