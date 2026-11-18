@@ -342,6 +342,40 @@ class TestMCQExtraction:
         assert score == 1.0
         assert metrics["actions_matched"] == 2
 
+    def test_tau2_bench_non_dict_arguments_do_not_match(self):
+        from tinker_cookbook.eval.benchmarks._tau2_bench import _check_actions
+
+        predicted = [
+            {"name": "book_reservation", "arguments": {"user_id": "alice_123"}},
+            {"name": "cancel_reservation", "arguments": "ABC"},
+        ]
+        expected = [
+            {"name": "book_reservation", "arguments": "alice_123"},
+            {"name": "cancel_reservation", "arguments": {"reservation_id": "ABC"}},
+        ]
+        score, metrics = _check_actions(predicted, expected)
+        assert score == 0.0
+        assert metrics["actions_matched"] == 0
+
+    def test_tau2_bench_skips_tasks_without_gradable_actions(self, monkeypatch):
+        from typing import cast
+
+        from tinker_cookbook.eval.benchmarks import _tau2_bench
+        from tinker_cookbook.renderers import Renderer
+
+        tasks = [
+            {"id": "actions", "evaluation_criteria": {"actions": [{"name": "a", "arguments": {}}]}},
+            {"id": "nl_only", "evaluation_criteria": {"actions": [], "nl_assertions": ["x"]}},
+            {"id": "db_only", "evaluation_criteria": {"db_check": {"users": {}}}},
+            {"id": "no_criteria", "evaluation_criteria": {}},
+        ]
+        monkeypatch.setattr(_tau2_bench, "_load_tau2_data", lambda domain: (tasks, "", {}, []))
+        envs = _tau2_bench.Tau2BenchBenchmarkBuilder().make_envs(
+            cast(Renderer, None), BenchmarkConfig()
+        )
+        ids = [cast(_tau2_bench._Tau2BenchEnvFactory, env).example_id for env in envs]
+        assert ids == ["tau2_bench_actions", "tau2_bench_no_criteria"]
+
 
 class TestGradingConsistency:
     """Validate that new framework grading matches recipe implementation."""
