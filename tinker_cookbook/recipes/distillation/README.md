@@ -47,6 +47,25 @@ This script can also be used to replicate the experiments in our Discussion sect
 
 The AIME'24 scores above were evaluated with `temperature=1.0`, `top_p=1.0`, `top_k=-1`, and `max_tokens=64000`.
 
+#### Top-K teacher distribution
+
+By default the student is trained on the teacher's logprob of each token it sampled. With `teacher_topk=K`, the teacher instead returns its top-K next-token distribution at every trained position (via `topk_prompt_logprobs`), and the student minimizes the reverse KL to that distribution, with both renormalized over the K tokens. This uses the same loss as SDFT's `reverse=True` mode (`sdft.reverse_kl_custom_loss`). Because of the renormalization, the loss does not penalize student probability on tokens outside the teacher's top-K, which the default mode does through the sampled token. Each trained token carries K targets, so training requests are roughly K times larger; start with a small batch. `kl_penalty_coef`, `kl_discount_factor`, `loss_fn`, `loss_fn_config` and `compute_post_kl` must stay at their defaults in this mode, and environment rewards are not used. `K` must be at least 2, since a single renormalized token always has probability 1 and gives no signal.
+
+```bash
+python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
+    model_name=Qwen/Qwen3.5-9B-Base \
+    teacher_model=Qwen/Qwen3.5-9B \
+    load_checkpoint_path=tinker://b89f6676-49c4-53ed-9788-2e0c81a9eabf:train:0/weights/final \
+    dataset=deepmath \
+    teacher_topk=20 \
+    learning_rate=1e-4 \
+    groups_per_batch=64 \
+    lora_rank=128 \
+    wandb_project=cookbook_distillation
+```
+
+This mode has not been benchmarked against the default yet.
+
 ### Checkpoints
 
 The results of running the above scripts with various LoRA ranks can be found here:
