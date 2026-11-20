@@ -36,8 +36,10 @@ from tinker_cookbook.rl.types import EnvGroupBuilder, Trajectory, Transition
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 if TYPE_CHECKING:
-    from harbor import AsyncHarbor
-    from harbor.server.models import RolloutSummary
+    from harbor import AsyncHarbor  # pyright: ignore[reportMissingImports]
+    from harbor.server.models import RolloutSummary  # pyright: ignore[reportMissingImports]
+
+    from tinker_cookbook.capture.proxy.app import SampleResponseLike
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +196,7 @@ class RelaySession:
 
     async def sample(
         self, prompt: tinker.ModelInput, num_samples: int, sampling_params: tinker.SamplingParams
-    ) -> tinker.SampleResponse:
+    ) -> SampleResponseLike:
         rollout_id = current_scope()["rollout_id"]
         if not isinstance(rollout_id, str):
             raise ValueError("Inference request is missing its Harbor rollout ID")
@@ -212,7 +214,8 @@ class RelaySession:
             raise ValueError("Incomplete token capture from Tinker")
         action = TokensWithLogprobs(seq.tokens, seq.logprobs, seq.stop_reason, seq.sequence_id)
         self.turns[rollout_id].append(Transition(prompt, action, reward=0, episode_done=False))
-        return response
+        # Pyright cannot match the SDK's cached tokens property to the proxy protocol.
+        return cast("SampleResponseLike", response)
 
 
 @dataclass
@@ -265,7 +268,7 @@ class HarborRolloutStrategy(RolloutStrategy):
     async def execute(
         self, env_group_builder: EnvGroupBuilder, policy: TokenCompleter
     ) -> RolloutResult:
-        from harbor import AsyncHarbor
+        from harbor import AsyncHarbor  # pyright: ignore[reportMissingImports]
 
         group = cast(HarborEnvGroupBuilder, env_group_builder)
         async with (
