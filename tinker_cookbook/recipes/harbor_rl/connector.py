@@ -28,7 +28,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 logger = logging.getLogger(__name__)
 HARBOR_API_VERSION = "2026-10-30"
 MAX_REQUEST_BYTES = 16 * 1024 * 1024
-MAX_REQUESTS = 256
+MAX_REQUESTS = 8092
 IDLE_TIMEOUT = 1800
 HEARTBEAT_INTERVAL = 15
 Headers = list[tuple[str, str]]
