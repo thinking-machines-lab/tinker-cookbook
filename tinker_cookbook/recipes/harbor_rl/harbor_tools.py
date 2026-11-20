@@ -93,12 +93,14 @@ class HarborReward:
         Walks ``tests_dir`` recursively so nested fixture trees (e.g. a
         ``tests/repo_overlay/`` directory copied into the workspace by
         ``test.sh``) are preserved. ``Path.iterdir`` would silently drop them.
+        Files are read as bytes so binary fixtures (reference images, model
+        weights) upload unchanged.
         """
         await self.sandbox.run_command("mkdir -p /tests", workdir="/")
         for file_path in self.tests_dir.rglob("*"):
             if not file_path.is_file():
                 continue
-            content = file_path.read_text()
+            content = file_path.read_bytes()
             target = f"/tests/{file_path.relative_to(self.tests_dir)}"
             await self.sandbox.write_file(target, content, executable=(file_path.suffix == ".sh"))
 
