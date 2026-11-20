@@ -37,23 +37,39 @@ _TOOL_CALL_RE = re.compile(
     r"<\|tool_call_begin\|>\s*([^<]+:\d+)\s*<\|tool_call_argument_begin\|>\s*(.*?)\s*<\|tool_call_end\|>",
     re.DOTALL,
 )
+# One complete call block, whatever its header looks like.
+_TOOL_CALL_BLOCK_RE = re.compile(r"<\|tool_call_begin\|>.*?<\|tool_call_end\|>", re.DOTALL)
 
 
-def _split_tool_calls_section(content: str) -> tuple[str, str | None]:
-    """Split content into text before tool calls and the tool calls section.
+def _split_tool_calls_section(content: str) -> tuple[str, str | None, str]:
+    """Split content into text before tool calls, the tool calls section, and the rest.
 
     Args:
         content (str): Raw response content that may contain tool call sections.
 
     Returns:
-        tuple[str, str | None]: The text content before the tool calls section, and
-            the tool calls section content (or None if no tool calls found).
+        tuple[str, str | None, str]: The text content before the first tool calls
+            section, that section's content (or None if no tool calls found), and
+            everything after it.
     """
     match = _TOOL_CALLS_SECTION_RE.search(content)
     if not match:
-        return content, None
+        return content, None, ""
     tool_section = match.group(1) if match.group(1) is not None else match.group(2)
-    return content[: match.start()], tool_section
+    return content[: match.start()], tool_section, content[match.end() :]
+
+
+def _content_after_tool_calls(trailing: str) -> UnparsedToolCall | None:
+    """Report anything after the tool calls section, which the model must end on.
+
+    A second section or more text there is not part of the parsed message, so
+    it is surfaced as an unparsed tool call rather than silently dropped.
+    """
+    if not trailing.strip():
+        return None
+    return UnparsedToolCall(
+        raw_text=trailing, error="Content after the tool calls section was not parsed"
+    )
 
 
 def _detect_dangling_tool_block(content: str) -> UnparsedToolCall | None:
@@ -111,8 +127,18 @@ def _parse_tool_calls_section(
     tool_calls: list[ToolCall] = []
     unparsed_tool_calls: list[UnparsedToolCall] = []
 
-    for match in _TOOL_CALL_RE.finditer(tool_section):
-        raw_text = match.group(0)
+    for block in _TOOL_CALL_BLOCK_RE.finditer(tool_section):
+        raw_text = block.group(0)
+        match = _TOOL_CALL_RE.fullmatch(raw_text)
+        if match is None:
+            # e.g. an id without the ':index' suffix: a call, not prose.
+            unparsed_tool_calls.append(
+                UnparsedToolCall(
+                    raw_text=raw_text,
+                    error="Malformed tool call header: expected 'functions.NAME:INDEX'",
+                )
+            )
+            continue
         tool_id = match.group(1).strip()
         args_str = match.group(2).strip()
         func_name = _extract_tool_name(tool_id)
@@ -432,15 +458,18 @@ class KimiK2Renderer(Renderer):
         assert isinstance(content, str)
 
         # Handle tool calls if present
-        text_content, tool_section = _split_tool_calls_section(content)
+        text_content, tool_section, trailing = _split_tool_calls_section(content)
         if tool_section is not None:
             tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
+            if (after := _content_after_tool_calls(trailing)) is not None:
+                unparsed_tool_calls.append(after)
             if tool_calls:
                 assistant_message["tool_calls"] = tool_calls
             if unparsed_tool_calls:
                 assistant_message["unparsed_tool_calls"] = unparsed_tool_calls
 
-        dangling = _detect_dangling_tool_block(content)
+        # The trailing suffix is already reported in full above.
+        dangling = _detect_dangling_tool_block(content[: len(content) - len(trailing)])
         if dangling is not None:
             assistant_message["unparsed_tool_calls"] = [
                 *assistant_message.get("unparsed_tool_calls", []),
@@ -468,15 +497,18 @@ class KimiK2Renderer(Renderer):
 
         content = message.get("content", "")
         if isinstance(content, str):
-            text_content, tool_section = _split_tool_calls_section(content)
+            text_content, tool_section, trailing = _split_tool_calls_section(content)
             if tool_section is not None:
                 tool_calls, unparsed_tool_calls = _parse_tool_calls_section(tool_section)
+                if (after := _content_after_tool_calls(trailing)) is not None:
+                    unparsed_tool_calls.append(after)
                 if tool_calls:
                     message["tool_calls"] = tool_calls
                 if unparsed_tool_calls:
                     message["unparsed_tool_calls"] = unparsed_tool_calls
 
-            dangling = _detect_dangling_tool_block(content)
+            # The trailing suffix is already reported in full above.
+            dangling = _detect_dangling_tool_block(content[: len(content) - len(trailing)])
             if dangling is not None:
                 message["unparsed_tool_calls"] = [
                     *message.get("unparsed_tool_calls", []),
