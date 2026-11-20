@@ -421,8 +421,8 @@ def check_gsm8k(response: str, expected: str) -> bool:
 def extract_mcq_answer(text: str, valid_letters: str = "ABCD") -> str:
     """Extract a multiple-choice letter from a model response.
 
-    Tries ``\\boxed{X}``, ``answer is (X)`` pattern, then the last standalone
-    letter in the final 300 characters.
+    Tries ``\\boxed{X}``, the last ``answer is (X)`` statement, then the last
+    standalone letter in the final 300 characters.
 
     Args:
         text: Full model response text.
@@ -440,13 +440,17 @@ def extract_mcq_answer(text: str, valid_letters: str = "ABCD") -> str:
         if re.fullmatch(pattern, boxed_upper):
             return boxed_upper
 
-    answer_match = re.search(
-        rf"(?:answer is|answer:)\s*\(?([{valid_letters}])\)?",
-        text,
-        re.IGNORECASE,
+    # Bind to the last answer statement, so a self-correction
+    # ("The answer is A. Wait, actually the answer is B.") grades as B.
+    answer_matches = list(
+        re.finditer(
+            rf"(?:answer is|answer:)\s*\(?([{valid_letters}])\)?",
+            text,
+            re.IGNORECASE,
+        )
     )
-    if answer_match:
-        return answer_match.group(1).upper()
+    if answer_matches:
+        return answer_matches[-1].group(1).upper()
 
     letters = re.findall(rf"\b({pattern})\b", text[-300:])
     if letters:

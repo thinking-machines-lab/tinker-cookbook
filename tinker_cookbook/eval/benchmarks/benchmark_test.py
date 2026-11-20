@@ -317,6 +317,13 @@ class TestMCQExtraction:
         assert extract_mcq_answer("\\boxed{C}", "ABCDEFGHIJ") == "C"
         assert extract_mcq_answer("I think D is correct.", "ABCDEFGHIJ") == "D"
 
+    def test_mcq_extract_binds_last_answer_statement(self):
+        from tinker_cookbook.eval.benchmarks._common import extract_mcq_answer
+
+        text = "The answer is A. Wait, actually the answer is B."
+        assert extract_mcq_answer(text, "ABCD") == "B"
+        assert extract_mcq_answer("Answer: (C). Final answer: D", "ABCD") == "D"
+
     def test_bfcl_function_matching(self):
         from tinker_cookbook.eval.benchmarks._bfcl import _match_function_call
 
