@@ -20,6 +20,7 @@
     "openai/gpt-oss-120b": 0.58,
     "openai/gpt-oss-20b": 0.66,
     "thinkingmachines/Inkling": 1.1,
+    "thinkingmachines/Inkling-2-Mini": 0.72,
     "thinkingmachines/Inkling-2-Small": 0.57,
     "thinkingmachines/Inkling-Small": 1.7,
     "zai-org/GLM-5.3": 0.46,

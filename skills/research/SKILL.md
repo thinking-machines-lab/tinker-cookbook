@@ -55,7 +55,7 @@ renderer_name = model_info.get_recommended_renderer_name(model_name)
 
 For the full model lineup, read `references/models.md`. For the latest supported models (the reference file may be outdated), check https://tinker-docs.thinkingmachines.ai/tinker/models/.
 
-**Inkling models** (`thinkingmachines/Inkling-2-Small`, `thinkingmachines/Inkling`, `thinkingmachines/Inkling-Small`) have their own requirements — mandatory thinking-effort conditioning, the `tml_v0` renderer, and sweep across thinking effort and learning rates. Use the `inkling` skill before writing code against them.
+**All Inkling models** have their own requirements — mandatory thinking-effort conditioning, the `tml_v0` renderer, and sweep across thinking effort and learning rates. Use the `inkling` skill before writing code against them.
 
 ### 3. Set up evaluation FIRST
 

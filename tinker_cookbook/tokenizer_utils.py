@@ -108,7 +108,7 @@ TmlTokenizerFamily: TypeAlias = Literal["o200k_base_chat", "h200k_base_chat", "k
 def _tml_tokenizer_family(model_name: str) -> TmlTokenizerFamily | None:
     """Return the tml-renderers tokenizer for a model, or None for a HuggingFace tokenizer."""
     base_model_name = model_name.split(":", 1)[0]
-    if base_model_name == "thinkingmachines/Inkling-2-Small":
+    if base_model_name in ("thinkingmachines/Inkling-2-Small", "thinkingmachines/Inkling-2-Mini"):
         return "h200k_base_chat"
     if base_model_name.startswith("thinkingmachines/Inkling"):
         return "o200k_base_chat"

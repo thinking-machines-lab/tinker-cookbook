@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import itertools
 import json
 from collections.abc import Sequence
 from importlib import import_module
@@ -128,7 +129,10 @@ def _ensure_model_end_sampling(
 
 
 def _native_sft_messages(messages: TmlRenderInput) -> list[tml_chat.Message]:
-    """Expand ``OpenAIMessage`` inputs and terminate model turns with ``ModelEndSampling``."""
+    """Expand ``OpenAIMessage`` inputs and terminate model turns with ``ModelEndSampling``.
+
+    Each ``OpenAIMessage`` stays one turn.
+    """
     chat = import_module("tml_renderers.chat")
 
     # isinstance against the lazily imported classes can't narrow for pyright,
@@ -139,11 +143,12 @@ def _native_sft_messages(messages: TmlRenderInput) -> list[tml_chat.Message]:
     else:
         source = cast("Sequence[tml_chat.Message | tml_chat.OpenAIMessage]", messages)
     native_messages: list[tml_chat.Message] = []
-    for message in source:
-        if isinstance(message, chat.OpenAIMessage):
-            native_messages.extend(cast("tml_chat.OpenAIMessage", message).to_messages())
-        else:
-            native_messages.append(cast("tml_chat.Message", message))
+    # MessageList.from_messages gives the parts of OpenAIMessage i turn id i, but it refuses
+    # a mix of Message and OpenAIMessage. So each run of OpenAIMessages expands alone.
+    for is_openai, group in itertools.groupby(source, lambda m: isinstance(m, chat.OpenAIMessage)):
+        run = list(group)
+        parts = chat.MessageList.from_messages(run).messages if is_openai else run
+        native_messages.extend(cast("list[tml_chat.Message]", parts))
     return _ensure_model_end_sampling(native_messages)
 
 
@@ -216,11 +221,12 @@ class TmlRenderersRenderer(Renderer, abc.ABC):
         spans, _parser = self._tml_renderer.render_for_completion(render_input)
         return self._token_spans_to_model_input(spans)
 
+    @staticmethod
     def _render_sft_examples(
-        self, render_input: TmlRenderInput
+        render_input: TmlRenderInput, renderer: tml_renderer.Renderer
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         tml_tinker = import_module("tml_renderers.tinker")
-        examples = self._tml_renderer.render_for_sft(render_input)
+        examples = renderer.render_for_sft(render_input)
         rendered: list[tuple[tinker.ModelInput, torch.Tensor]] = []
         for example in examples:
             model_input, weights = tml_tinker.training_example_to_tinker_model_input_and_weights(
@@ -235,7 +241,7 @@ class TmlRenderersRenderer(Renderer, abc.ABC):
         train_on_what: TrainOnWhat = TrainOnWhat.LAST_ASSISTANT_TURN,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         render_input = _cookbook_messages_to_sft_input(messages, train_on_what, self.renderer_name)
-        return self._render_sft_examples(_native_sft_messages(render_input))
+        return self._render_sft_examples(_native_sft_messages(render_input), self._tml_renderer)
 
     def build_supervised_example(
         self,

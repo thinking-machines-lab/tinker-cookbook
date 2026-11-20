@@ -4,7 +4,7 @@ Quick reference for agents working on `tinker-cookbook`. Detailed guidance is in
 
 `tinker-cookbook` is a client library with training and eval code built on the Tinker service (hosted by Thinking Machines Lab) and the Tinker SDK (a separate repo with just the API). You author training/eval loops that run on a CPU machine; Tinker executes the heavy GPU work.
 
-**Skills:** This repo ships four Claude Code skills in `skills/`: `research` (SFT, RL, DPO, distillation, evaluation, model selection, experiment methodology), `debug` (performance, correctness, renderer, and error triage), `inkling` (thinking effort, rendering, post-training, and multimodal input for Inkling series models, including Inkling 2 Small), and `rollout-ui` (rollout content, messages, tool calls, transcript comparisons, and browser validation; metrics stay in W&B). Install via `/plugin marketplace add thinking-machines-lab/tinker-cookbook`, then install the `tinker` plugin from Discover (`/plugin`). Use `/tinker:research`, `/tinker:debug`, `/tinker:inkling`, or `/tinker:rollout-ui`.
+**Skills:** This repo ships four Claude Code skills in `skills/`: `research` (SFT, RL, DPO, distillation, evaluation, model selection, experiment methodology), `debug` (performance, correctness, renderer, and error triage), `inkling` (thinking effort, rendering, post-training, and multimodal input for all Inkling models), and `rollout-ui` (rollout content, messages, tool calls, transcript comparisons, and browser validation; metrics stay in W&B). Install via `/plugin marketplace add thinking-machines-lab/tinker-cookbook`, then install the `tinker` plugin from Discover (`/plugin`). Use `/tinker:research`, `/tinker:debug`, `/tinker:inkling`, or `/tinker:rollout-ui`.
 
 ## Composing Types
 

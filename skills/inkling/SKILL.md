@@ -1,6 +1,6 @@
 ---
 name: inkling
-description: Sample, evaluate, and post-train Inkling 2 Small, Inkling, and Inkling-Small, Thinking Machines Lab's models built for Tinker. Use this skill whenever the user mentions Inkling, `thinkingmachines/Inkling`, tml-renderers, `tml_v0` / `TmlV0Renderer`, or thinking/reasoning effort — and whenever they are choosing a model, building training data, running evals, setting up SFT or RL, handling parse errors, or working with audio or image inputs for an Inkling model. Inkling has requirements that differ from other Tinker models (mandatory effort conditioning, its own renderer and tokenizer, learning rates that differ a lot between the Inkling models), so load this skill before writing any Inkling code.
+description: Sample, evaluate, and post-train any Inkling model, Thinking Machines Lab's model family built for Tinker. Use this skill whenever the user mentions Inkling, `thinkingmachines/Inkling`, tml-renderers, `tml_v0` / `TmlV0Renderer`, or thinking/reasoning effort — and whenever they are choosing a model, building training data, running evals, setting up SFT or RL, handling parse errors, or working with audio or image inputs for an Inkling model. Inkling has requirements that differ from other Tinker models (mandatory effort conditioning, its own renderer and tokenizer, learning rates that differ a lot between the Inkling models), so load this skill before writing any Inkling code.
 ---
 
 # Inkling
@@ -12,6 +12,7 @@ Every Inkling model is a Mixture-of-Experts transformer with variable thinking e
 | Model | Total / active parameters | Input |
 |---|---|---|
 | `thinkingmachines/Inkling-2-Small` | 594B / 17B | text, images |
+| `thinkingmachines/Inkling-2-Mini` | 26B / 5B | text, images |
 | `thinkingmachines/Inkling` | 975B / 41B | text, images, audio |
 | `thinkingmachines/Inkling-Small` | 276B / 12B | text, images, audio |
 
@@ -27,7 +28,7 @@ Working with Inkling differs from other Tinker models in three ways, each covere
 
 Inkling renders through the standalone [`tml-renderers`](https://pypi.org/project/tml-renderers/) package, included in the default installation together with the required `torch>=2.10`.
 
-Pass `thinkingmachines/Inkling-2-Small`, `thinkingmachines/Inkling`, or `thinkingmachines/Inkling-Small` anywhere the cookbook takes a model name. Every Inkling model is served in both short and long context. The cookbook selects the tokenizer and the renderer (`tml_v0`) from the model name, including for the [`:peft:` long-context variants](https://tinker-docs.thinkingmachines.ai/tinker/models/):
+Pass any model name from the table above anywhere the cookbook takes a model name. Every Inkling model is served in both short and long context. The cookbook selects the tokenizer and the renderer (`tml_v0`) from the model name, including for the [`:peft:` long-context variants](https://tinker-docs.thinkingmachines.ai/tinker/models/):
 
 ```python
 from tinker_cookbook import model_info
@@ -94,7 +95,7 @@ model_input, weights = renderer.build_supervised_example(messages_with_response,
 
 We suggest picking **one** effort for the whole dataset and using it at test time too, leaning toward the higher end — `0.9` or `0.99` — unless your task genuinely does not need reasoning; mixed-effort training recipes are something we plan to share later. Generic supervised dataset builders render at the default `0.9`; call `build_supervised_example` (or `build_supervised_examples` for multiple examples) directly with an explicit `effort` to use another value. Use the same explicit effort for sampling and evaluation.
 
-For custom training code built directly on the Tinker SDK and `tml-renderers`, use `render_for_completion_with_effort` rather than `render_for_completion` — the latter omits the effort message.
+For custom training code built directly on the Tinker SDK and `tml-renderers`, build the wheel renderer with the effort: `tml_renderers.renderers.Inkling2(effort=0.9)` for the Inkling 2 models, `Inkling(effort=0.9)` for Inkling and Inkling-Small. Its `render_for_completion`, `render_for_sft`, and `bridge_to_next_turn` then write the same effort message. A renderer built without an effort omits the effort message.
 
 ## Post-training
 
@@ -106,6 +107,8 @@ Inkling models can prefer substantially different learning rates across generati
 - **Consider an SFT warm-start if RL is slow to move.** When your domain or output format sits far from the model's defaults, a short SFT phase on in-format data can reach a regime where RL hill-climbs more readily.
 
 RL defaults are already tuned for Inkling in the cookbook: `thinkingmachines/Inkling*` models default to the `agentic` rollout preset and the `MinViableGroup` rollout strategy (tool-backed rollouts shouldn't discard a whole group over one infrastructure failure). Override with an explicit `rollout_config` or `rollout_error_tolerance` if your task is single-turn.
+
+Inkling 2 Mini is a looped transformer, and the version on Tinker has a fixed loop count: its middle 12 layers always run three times for every token. LoRA trains one adapter per layer, shared by all three passes, so each looped layer's adapter is counted once in `get_lora_param_count` and learns from every pass.
 
 ## Evaluation
 
@@ -135,7 +138,7 @@ Audio fine-tuning recipes (speech recognition, emotion plus transcription, medic
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Odd or off-distribution responses | Effort message missing | Use `TmlV0Renderer`, or `render_for_completion_with_effort` in custom code |
+| Odd or off-distribution responses | Effort message missing | Use `TmlV0Renderer`; in custom code, use tml-renderers directly |
 | Eval scores that don't reproduce | Effort not recorded or not set | Pin and log the effort value for every eval run |
 | Train/test mismatch after SFT | Data rendered at a different effort than sampling | Render training data with the effort you deploy at |
 | Responses truncated mid-thought | `max_tokens` not scaled with effort | Raise the budget; high effort can need 16k+ tokens |

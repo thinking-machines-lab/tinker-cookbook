@@ -437,6 +437,15 @@ _REFERENCE_PARAMS_PER_RANK: dict[str, dict[tuple[bool, bool, bool], int]] = {
         (False, True, False): 2_347_008,
         (False, False, True): 205_632,
     },
+    "thinkingmachines/Inkling-2-Mini": {
+        (True, True, True): 11_597_376,
+        (True, True, False): 11_394_048,
+        (True, False, True): 10_986_048,
+        (True, False, False): 10_782_720,
+        (False, True, True): 814_656,
+        (False, True, False): 611_328,
+        (False, False, True): 203_328,
+    },
     "thinkingmachines/Inkling-Small": {
         (True, True, True): 66_020_672,
         (True, True, False): 65_815_552,

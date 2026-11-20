@@ -210,6 +210,8 @@ def _tml_renderers_openai_message(message: Message) -> tml_chat.OpenAIMessage:
         if isinstance(content, str)
         else [dict(part) for part in content or []]
     )
+    if role != "assistant" and any(part["type"] == "thinking" for part in parts):
+        raise ValueError(f"a {role} message has a `thinking` part; only an assistant turn reasons")
     items = [_content(part) for part in parts] or [chat.Text("")]
     calls = [_invoke_tool(call) for call in message.get("tool_calls", [])]
     if calls:
@@ -228,18 +230,16 @@ def tinker_messages_to_message_list(messages: Sequence[Message]) -> tml_chat.Mes
     """Convert tinker-cookbook Messages to a ``tml_renderers.chat.MessageList``.
 
     Each Message becomes the Messages of its turn, and an assistant turn ends with
-    ``ModelEndSampling``. The conversion ignores ``trainable``.
+    ``ModelEndSampling``. The Messages of turn ``i`` carry turn id ``i``, so renderers keep two
+    adjacent Messages of one role as two turns. The conversion ignores ``trainable``.
 
-    Raises ValueError for an unknown role or content part, or a ``tool_declare`` message
-    that does not hold a JSON list of OpenAI tools.
+    Raises ValueError for an unknown role or content part, a ``thinking`` part outside an
+    assistant message, or a ``tool_declare`` message that does not hold a JSON list of OpenAI
+    tools.
     """
     chat = _chat()
-    return chat.MessageList(
-        [
-            part
-            for message in messages
-            for part in _tml_renderers_openai_message(message).to_messages()
-        ]
+    return chat.MessageList.from_messages(
+        [_tml_renderers_openai_message(message) for message in messages]
     )
 
 
@@ -274,18 +274,19 @@ def tinker_messages_to_sft_message_list(
     """
     chat = _chat()
     trained = _trained_assistant_indices(messages, train_on_what)
+    assistant = {i for i, message in enumerate(messages) if message["role"] == "assistant"}
+    untrained = assistant - trained
     zero = chat.TrainingMetadata(0.0, False)
     parts: list[tml_chat.Message] = []
-    for i, message in enumerate(messages):
-        turn = _tml_renderers_openai_message(message).to_messages()
-        if message["role"] == "assistant" and i not in trained:
-            turn = [
-                part.copy(message_metadata=chat.MessageMetadata(training_metadata=zero))
-                if part.author.kind == chat.AuthorKind.Model
-                else part
-                for part in turn
-            ]
-        parts += turn
+    for part in tinker_messages_to_message_list(messages).messages:
+        # The turn id of a part is the index of its Message.
+        metadata = part.message_metadata
+        product = metadata.product_metadata if metadata is not None else None
+        if metadata is None or product is None or product.turn_id is None:
+            raise ValueError("tml-renderers set no turn id; tml-renderers>=0.4.2 is required")
+        if product.turn_id in untrained:
+            part = part.copy(message_metadata=metadata.copy(training_metadata=zero))
+        parts.append(part)
     return chat.MessageList(parts)
 
 
@@ -369,7 +370,8 @@ def message_list_to_tinker_messages(messages: tml_chat.MessageList) -> list[Mess
     """Convert a ``tml_renderers.chat.MessageList`` to tinker-cookbook Messages.
 
     ``OpenAIMessage.from_messages`` groups the Messages into turns, and each turn becomes one
-    Message. Consecutive Messages from one author become one Message. The Messages hold
+    Message. A new turn starts where the turn id changes. Without turn ids, consecutive
+    Messages from one author become one Message. The Messages hold
     what tml-renderers stores: images and audio as data URIs, tool parameters with sorted
     keys, and tool-call arguments in ``json.dumps`` form. The conversion does not read
     training weights back.
