@@ -1,12 +1,19 @@
 """Tests for the benchmark evaluation framework."""
 
+import asyncio
+import json
+from typing import cast
+
 import pytest
 
 from tinker_cookbook.eval.benchmarks._runner import (
     _choose_k_values,
     _compute_pass_at_k,
+    _compute_tag_breakdown,
     _compute_token_turn_summary,
+    _get_tags,
     _pass_at_k_single,
+    regrade_trajectories,
 )
 from tinker_cookbook.eval.benchmarks._types import (
     BenchmarkBuilder,
@@ -15,6 +22,8 @@ from tinker_cookbook.eval.benchmarks._types import (
     StoredTrajectory,
     StoredTurn,
 )
+from tinker_cookbook.renderers.base import Renderer
+from tinker_cookbook.rl.types import Env
 
 
 class TestBenchmarkResult:
@@ -619,3 +628,227 @@ class TestTokenTurnSummary:
         )
         assert result["total_turns"] == 0
         assert "ac_tokens_per_turn" not in result
+
+
+# ---------------------------------------------------------------------------
+# Per-tag breakdowns
+# ---------------------------------------------------------------------------
+
+
+class _StubRenderer:
+    """Just enough Renderer surface for EnvFromMessageEnv and the runner."""
+
+    tokenizer = None
+
+    def get_stop_sequences(self) -> list[str]:
+        return []
+
+
+class TestTagBreakdown:
+    def test_accuracy_per_tag_uses_headline_denominator(self):
+        # Third example never reached the grader (reward 0) but is still tagged.
+        out = _compute_tag_breakdown("bench", [1.0, 0.0, 0.0, 1.0], [["a"], ["a"], ["a"], ["b"]])
+        assert out == pytest.approx({"bench/a/accuracy": 1 / 3, "bench/b/accuracy": 1.0})
+
+    def test_untagged_examples_add_no_keys(self):
+        assert _compute_tag_breakdown("bench", [1.0, 0.0], [[], []]) == {}
+        assert _compute_tag_breakdown("bench", [], []) == {}
+
+    def test_duplicate_tags_count_an_example_once(self):
+        out = _compute_tag_breakdown("b", [1.0, 0.0], [["x", "x"], ["x"]])
+        assert out == {"b/x/accuracy": 0.5}
+
+    def test_get_tags_reads_env_attribute(self):
+        class Tagged:
+            tags = ["x", "y"]
+
+        class Untagged:
+            pass
+
+        assert _get_tags(cast(Env, Tagged())) == ["x", "y"]
+        assert _get_tags(cast(Env, Untagged())) == []
+
+
+class TestStoredTrajectoryTags:
+    def test_roundtrip_and_old_files_without_tags(self):
+        traj = StoredTrajectory(idx=0, benchmark="b", tags=["anatomy"])
+        assert StoredTrajectory.from_dict(traj.to_dict()).tags == ["anatomy"]
+        assert StoredTrajectory.from_dict({"idx": 0, "benchmark": "b"}).tags == []
+
+    def test_regrade_keeps_per_tag_breakdown(self, tmp_path):
+        trajs = [
+            StoredTrajectory(
+                idx=0,
+                benchmark="b",
+                turns=[StoredTurn(role="assistant", content="A")],
+                reward=1.0,
+                tags=["anatomy"],
+            ),
+            StoredTrajectory(
+                idx=1,
+                benchmark="b",
+                turns=[StoredTurn(role="assistant", content="B")],
+                reward=0.0,
+                tags=["anatomy"],
+            ),
+            StoredTrajectory(idx=2, benchmark="b", reward=0.0, error="timeout", tags=["astronomy"]),
+        ]
+        (tmp_path / "b").mkdir()
+        with open(tmp_path / "b" / "trajectories.jsonl", "w") as f:
+            for t in trajs:
+                f.write(json.dumps(dict(t.to_dict())) + "\n")
+
+        result = regrade_trajectories(
+            str(tmp_path), "b", lambda response, logs: 1.0 if response == "A" else 0.0
+        )
+        assert result.score == pytest.approx(1 / 3)
+        assert result.metrics["b/anatomy/accuracy"] == 0.5
+        assert result.metrics["b/astronomy/accuracy"] == 0.0
+
+
+class TestMMLUReduxPerSubject:
+    def test_env_tags_its_subject(self):
+        from tinker_cookbook.eval.benchmarks.mmlu_redux import MMLUReduxMessageEnv
+
+        env = MMLUReduxMessageEnv(prompt="q", expected="A", subject="anatomy")
+        assert env.tags == ["anatomy"]
+
+    def test_wrapper_forwards_tags(self):
+        from tinker_cookbook.eval.benchmarks.mmlu_redux import MMLUReduxMessageEnv
+        from tinker_cookbook.rl.message_env import EnvFromMessageEnv
+
+        env = EnvFromMessageEnv(
+            renderer=cast(Renderer, _StubRenderer()),
+            message_env=MMLUReduxMessageEnv(prompt="q", expected="A", subject="anatomy"),
+        )
+        assert env.tags == ["anatomy"]
+
+    def test_run_benchmark_attributes_every_example_to_its_subject(self, monkeypatch):
+        """Per-subject accuracy has the same denominator as the headline score.
+
+        Reading the subject from ``step()`` metrics would drop the timed-out and
+        truncated examples below (they never reach ``step()``) into an
+        ``unknown`` bucket and inflate the real subjects.
+        """
+        import tinker
+
+        from tinker_cookbook.completers import TokensWithLogprobs
+        from tinker_cookbook.eval.benchmarks import _runner, mmlu_redux
+        from tinker_cookbook.rl.types import Trajectory, Transition
+
+        rows = [
+            {"question": q, "choices": ["w", "x", "y", "z"], "answer": 0, "_subject": subject}
+            for q, subject in [("q0", "anatomy"), ("q1", "anatomy"), ("q2", "astronomy")]
+        ]
+        monkeypatch.setattr(mmlu_redux, "_load_mmlu_redux", lambda max_examples: rows)
+
+        outcomes = {"q0": "correct", "q1": "timeout", "q2": "truncated"}
+
+        async def fake_rollout(policy, env):
+            outcome = outcomes[env.message_env.prompt.split("\n")[0]]
+            if outcome == "timeout":
+                raise TimeoutError
+            # "truncated" mirrors EnvFromMessageEnv's max_tokens short-circuit:
+            # reward 0, no grader metrics.
+            correct = outcome == "correct"
+            transition = Transition(
+                ob=tinker.ModelInput.from_ints([1]),
+                ac=TokensWithLogprobs(tokens=[2], maybe_logprobs=None),
+                reward=1.0 if correct else 0.0,
+                episode_done=True,
+                metrics={"correct": 1.0} if correct else {"max_tokens_reached": 1.0},
+            )
+            return Trajectory(transitions=[transition], final_ob=tinker.ModelInput.empty())
+
+        monkeypatch.setattr(_runner, "do_single_rollout", fake_rollout)
+
+        result = asyncio.run(
+            _runner.run_benchmark(
+                mmlu_redux.MMLUReduxBenchmarkBuilder(),
+                sampling_client=cast(tinker.SamplingClient, None),
+                renderer=cast(Renderer, _StubRenderer()),
+                config=BenchmarkConfig(concurrency=1),
+            )
+        )
+
+        assert result.num_examples == 3
+        assert result.num_errors == 1
+        assert result.num_truncated == 1
+        assert result.metrics["mmlu_redux/accuracy"] == pytest.approx(1 / 3)
+        assert result.metrics["mmlu_redux/anatomy/accuracy"] == 0.5
+        assert result.metrics["mmlu_redux/astronomy/accuracy"] == 0.0
+        assert "mmlu_redux/unknown/accuracy" not in result.metrics
+
+    def test_mixed_era_files_resume_and_regrade_disagree_per_subject(self, monkeypatch, tmp_path):
+        """Documents the migration limit: old rows have no tags to recover.
+
+        Resume labels every example from its fresh env, so the old failure stays
+        in its subject. Regrade reads labels from the file, where that row has
+        none, so it counts overall but drops out of the subject.
+        """
+        import tinker
+
+        from tinker_cookbook.completers import TokensWithLogprobs
+        from tinker_cookbook.eval.benchmarks import _runner, mmlu_redux
+        from tinker_cookbook.eval.benchmarks._common import make_example_id
+        from tinker_cookbook.rl.types import Trajectory, Transition
+
+        class _DecodingRenderer(_StubRenderer):
+            class tokenizer:
+                @staticmethod
+                def decode(tokens: list[int]) -> str:
+                    return "A"
+
+        rows = [
+            {"question": q, "choices": ["w", "x", "y", "z"], "answer": 0, "_subject": "anatomy"}
+            for q in ["old_failed", "new_ok"]
+        ]
+        monkeypatch.setattr(mmlu_redux, "_load_mmlu_redux", lambda max_examples: rows)
+
+        ran: list[str] = []
+
+        async def fake_rollout(policy, env):
+            ran.append(env.message_env.prompt.split("\n")[0])
+            transition = Transition(
+                ob=tinker.ModelInput.empty(),
+                ac=TokensWithLogprobs(tokens=[2], maybe_logprobs=None),
+                reward=1.0,
+                episode_done=True,
+                metrics={"correct": 1.0},
+            )
+            return Trajectory(transitions=[transition], final_ob=tinker.ModelInput.empty())
+
+        monkeypatch.setattr(_runner, "do_single_rollout", fake_rollout)
+
+        old_row = dict(
+            StoredTrajectory(
+                idx=0,
+                benchmark="mmlu_redux",
+                example_id=make_example_id("mmlu_redux", "old_failed"),
+                error="timeout (10s)",
+            ).to_dict()
+        )
+        del old_row["tags"]  # What a version without the field wrote.
+        traj_path = tmp_path / "mmlu_redux" / "trajectories.jsonl"
+        traj_path.parent.mkdir()
+        traj_path.write_text(json.dumps(old_row) + "\n")
+
+        resumed = asyncio.run(
+            _runner.run_benchmark(
+                mmlu_redux.MMLUReduxBenchmarkBuilder(),
+                sampling_client=cast(tinker.SamplingClient, None),
+                renderer=cast(Renderer, _DecodingRenderer()),
+                config=BenchmarkConfig(concurrency=1, save_dir=str(tmp_path)),
+            )
+        )
+        assert ran == ["new_ok"]  # The old row was resumed, not re-run.
+        assert resumed.score == 0.5
+        assert resumed.metrics["mmlu_redux/anatomy/accuracy"] == 0.5
+
+        stored = [json.loads(line) for line in traj_path.read_text().splitlines()]
+        assert "tags" not in stored[0]  # Resume does not backfill the old row.
+        assert stored[1]["tags"] == ["anatomy"]
+
+        regraded = regrade_trajectories(str(tmp_path), "mmlu_redux", lambda response, logs: 1.0)
+        assert regraded.score == 0.5
+        assert regraded.metrics["mmlu_redux/anatomy/accuracy"] == 1.0
