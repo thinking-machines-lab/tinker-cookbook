@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -21,11 +22,13 @@ from tinker.types import LossFnType
 
 from tinker_cookbook import checkpoint_utils, model_info
 from tinker_cookbook.display import colorize_example
+from tinker_cookbook.distillation import sdft
 from tinker_cookbook.distillation.datasets import (
     CompositeDataset,
     DistillationDatasetConfig,
 )
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator, SamplingClientEvaluatorBuilder
+from tinker_cookbook.exceptions import ConfigurationError
 from tinker_cookbook.rl.data_processing import (
     assemble_training_data,
     compute_advantages,
@@ -131,6 +134,74 @@ async def incorporate_kl_penalty(
     return metrics
 
 
+@trace.scope
+async def build_teacher_topk_datums(
+    data_D: list[tinker.Datum],
+    metadata_D: list[dict[str, int]],
+    dataset_indices_P: list[int],
+    teacher_clients: list[tinker.SamplingClient],
+    topk: int,
+    vocab_size: int,
+) -> tuple[list[tinker.Datum], dict[str, float]]:
+    """Build reverse-KL datums over each datum's teacher top-K next-token distribution.
+
+    Uses :func:`sdft.build_reverse_kl_datums`, one call per teacher. The teacher scores the
+    student's own sequence, so a datum's teacher prompt is its prefix up to the first trained
+    token. Prompts are per datum rather than per group because ``assemble_training_data`` can
+    split one multi-turn trajectory into several datums with different prefixes.
+    """
+    full_tokens_D = [
+        datum.model_input.append_int(
+            cast(int, datum.loss_fn_inputs["target_tokens"].data[-1])
+        ).to_ints()
+        for datum in data_D
+    ]
+    teacher_prompts_D: list[tinker.ModelInput] = []
+    for datum, full_tokens in safezip(data_D, full_tokens_D):
+        trained_positions = torch.nonzero(datum.loss_fn_inputs["mask"].to_torch() > 0)
+        prompt_len = (
+            int(trained_positions[0].item()) + 1 if len(trained_positions) else len(full_tokens)
+        )
+        teacher_prompts_D.append(tinker.ModelInput.from_ints(full_tokens[:prompt_len]))
+
+    indices_by_dataset: dict[int, list[int]] = defaultdict(list)
+    for i, metadata in enumerate(metadata_D):
+        indices_by_dataset[dataset_indices_P[metadata["group_idx"]]].append(i)
+    # Score whole sequences, as the sampled-token path does.
+    max_context_length = max((len(tokens) for tokens in full_tokens_D), default=0)
+
+    results = await asyncio.gather(
+        *[
+            sdft.build_reverse_kl_datums(
+                [data_D[i] for i in indices],
+                [{"group_idx": j} for j in range(len(indices))],
+                teacher_clients[dataset_idx],
+                [teacher_prompts_D[i] for i in indices],
+                topk=topk,
+                max_context_length=max_context_length,
+                vocab_size=vocab_size,
+                # The teacher sees the student's exact context, so every trained token counts.
+                skip_first_n_tokens=0,
+            )
+            for dataset_idx, indices in indices_by_dataset.items()
+        ]
+    )
+
+    topk_datum_by_index: dict[int, tinker.Datum] = {}
+    num_positions = 0.0
+    entropy_sum = 0.0
+    for indices, (topk_data, topk_metrics) in safezip(list(indices_by_dataset.values()), results):
+        topk_datum_by_index.update(safezip(indices, topk_data))
+        positions = topk_metrics.get("sdft/total_completion_positions", 0.0)
+        num_positions += positions
+        entropy_sum += topk_metrics.get("sdft/mean_teacher_entropy", 0.0) * positions
+
+    metrics = {"opd/topk": float(topk), "opd/topk_positions": num_positions}
+    if num_positions > 0:
+        metrics["opd/mean_teacher_entropy"] = entropy_sum / num_positions
+    return [topk_datum_by_index[i] for i in range(len(data_D))], metrics
+
+
 @chz.chz
 class Config:
     learning_rate: float
@@ -146,6 +217,13 @@ class Config:
 
     kl_penalty_coef: float = 1.0
     kl_discount_factor: float = 0.0
+
+    # 0 trains on the teacher's logprob of each sampled token. K > 0 instead trains on the
+    # reverse KL to the teacher's top-K next-token distribution at every trained position, with
+    # sdft.reverse_kl_custom_loss. That loss replaces the KL advantage and loss_fn, and
+    # environment rewards are not used. Both distributions are renormalized over the K tokens,
+    # so student probability on tokens outside the teacher's top-K is not penalized.
+    teacher_topk: int = 0
 
     # Loss function and configuration.
     # See https://tinker-docs.thinkingmachines.ai/losses
@@ -173,6 +251,26 @@ class Config:
     # Maximum number of training steps. If None, train on the full dataset.
     max_steps: int | None = None
 
+    @chz.validate
+    def _check_teacher_topk(self) -> None:
+        if self.teacher_topk < 0 or self.teacher_topk == 1:
+            # With one token, both renormalized distributions are 1 and the loss is always 0.
+            raise ConfigurationError(f"teacher_topk must be 0 or >= 2, got {self.teacher_topk}")
+        if self.teacher_topk == 0:
+            return
+        ignored = {
+            "kl_penalty_coef": self.kl_penalty_coef != 1.0,
+            "kl_discount_factor": self.kl_discount_factor != 0.0,
+            "loss_fn": self.loss_fn != "importance_sampling",
+            "loss_fn_config": self.loss_fn_config is not None,
+            "compute_post_kl": self.compute_post_kl,
+        }
+        if names := [name for name, is_set in ignored.items() if is_set]:
+            raise ConfigurationError(
+                f"teacher_topk={self.teacher_topk} trains with a fixed reverse-KL loss and "
+                f"does not use {', '.join(names)}; leave them at their defaults."
+            )
+
 
 @trace.scope
 async def prepare_minibatch(
@@ -183,6 +281,7 @@ async def prepare_minibatch(
     teacher_clients: list[tinker.SamplingClient],
     kl_penalty_coef: float,
     kl_discount_factor: float,
+    teacher_topk: int = 0,
 ) -> tuple[list[tinker.Datum], dict[str, Any]]:
     """Converts the trajectories into a minibatch, and provides metrics about the minibatch"""
 
@@ -205,7 +304,7 @@ async def prepare_minibatch(
             printed_datasets.add(dataset_idx)
 
     # Incorporate KL penalty if configured
-    if kl_penalty_coef > 0:
+    if kl_penalty_coef > 0 and teacher_topk == 0:
         async with trace.scope_span("compute_kl_penalty"):
             # Map each datum to its teacher sampling client and dataset index using metadata
             #   - metadata_D contains group_idx which indexes into trajectory_groups_P
@@ -225,6 +324,18 @@ async def prepare_minibatch(
                 kl_discount_factor,
             )
         metrics.update(kl_penalty_metrics)
+
+    if teacher_topk > 0:
+        async with trace.scope_span("build_teacher_topk_datums"):
+            data_D, topk_metrics = await build_teacher_topk_datums(
+                data_D,
+                metadata_D,
+                dataset_indices_P,
+                teacher_clients,
+                teacher_topk,
+                vocab_size=len(tokenizer),
+            )
+        metrics.update(topk_metrics)
 
     return data_D, metrics
 
@@ -254,8 +365,30 @@ async def do_train_step_and_get_sampling_client(
         teacher_clients,
         kl_penalty_coef=config.kl_penalty_coef,
         kl_discount_factor=config.kl_discount_factor,
+        teacher_topk=config.teacher_topk,
     )
     metrics.update(prepare_minibatch_metrics)
+
+    if config.teacher_topk > 0:
+        train_metrics: dict[str, Any] = {}
+        async with trace.scope_span("train"):
+            await sdft._train_step_reverse_kl(
+                data_D=data_D,
+                training_client=training_client,
+                learning_rate=config.learning_rate,
+                num_substeps=config.num_substeps,
+                metrics=train_metrics,
+            )
+        metrics.update(
+            {
+                f"opd/{k.removeprefix('sdft/')}" if k.startswith("sdft/") else k: v
+                for k, v in train_metrics.items()
+            }
+        )
+        sampling_client, _ = await save_checkpoint_and_get_sampling_client(
+            training_client, checkpoint_mgr, i_batch + 1
+        )
+        return sampling_client, metrics
 
     async with trace.scope_span("train"):
         training_logprobs_D = await train_step(

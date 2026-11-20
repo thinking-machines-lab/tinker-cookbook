@@ -25,6 +25,17 @@ Example usage:
         groups_per_batch=1024 \
         lora_rank=128 \
         wandb_project=cookbook_distillation
+
+    # Reverse KL to the teacher's top-20 next-token distribution
+    python -m tinker_cookbook.recipes.distillation.on_policy_distillation \
+        model_name=Qwen/Qwen3.5-9B-Base \
+        teacher_model=Qwen/Qwen3.5-9B \
+        dataset=deepmath \
+        teacher_topk=20 \
+        learning_rate=1e-4 \
+        groups_per_batch=64 \
+        lora_rank=128 \
+        wandb_project=cookbook_distillation
 """
 
 import asyncio
@@ -72,6 +83,9 @@ class CLIConfig:
     temperature: float = 1.0
     kl_penalty_coef: float = 1.0
     kl_discount_factor: float = 0.0
+    # 0 scores only the sampled token. K > 0 trains on the teacher's top-K distribution;
+    # see train_on_policy.Config.teacher_topk.
+    teacher_topk: int = 0
 
     # Optimizer configuration
     num_substeps: int = 1
@@ -164,6 +178,7 @@ async def cli_main(cli_config: CLIConfig):
         max_tokens=cli_config.max_tokens,
         kl_penalty_coef=cli_config.kl_penalty_coef,
         kl_discount_factor=cli_config.kl_discount_factor,
+        teacher_topk=cli_config.teacher_topk,
         num_substeps=cli_config.num_substeps,
         loss_fn=cli_config.loss_fn,
         loss_fn_config=cli_config.loss_fn_config,
