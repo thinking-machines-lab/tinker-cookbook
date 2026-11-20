@@ -37,7 +37,7 @@ import tinker
 
 from tinker_cookbook import renderers
 from tinker_cookbook.model_info import get_recommended_renderer_name
-from tinker_cookbook.renderers.base import ToolCall
+from tinker_cookbook.renderers.base import Content, ContentPart, ToolCall
 from tinker_cookbook.third_party.openai_compat import (
     openai_messages_to_tinker,
     openai_tools_to_tinker,
@@ -154,8 +154,7 @@ async def _sample_chat_completion(
 def _sampling_result_to_chat_completion_dict(result: _SamplingResult) -> dict[str, Any]:
     """Convert a _SamplingResult to an OpenAI ChatCompletion-compatible dict."""
     content = result.parsed_message.get("content", "")
-    if isinstance(content, list):
-        content = renderers.format_content_as_string(content)
+    content, reasoning_content = _split_message_content_for_chat(content)
 
     # Build tool_calls list if present
     tool_calls_out: list[dict[str, Any]] | None = None
@@ -184,6 +183,8 @@ def _sampling_result_to_chat_completion_dict(result: _SamplingResult) -> dict[st
         "role": "assistant",
         "content": content or None,
     }
+    if reasoning_content is not None:
+        message_dict["reasoning_content"] = reasoning_content
     if tool_calls_out:
         message_dict["tool_calls"] = tool_calls_out
 
@@ -205,6 +206,33 @@ def _sampling_result_to_chat_completion_dict(result: _SamplingResult) -> dict[st
             "total_tokens": len(result.prompt_token_ids) + len(result.completion_token_ids),
         },
     }
+
+
+def _split_message_content_for_chat(content: Content) -> tuple[str, str | None]:
+    """Keep internal reasoning out of the user-visible ChatCompletion content."""
+    if isinstance(content, str):
+        return content, None
+
+    thinking_parts = [p["thinking"] for p in content if p["type"] == "thinking"]
+    if not thinking_parts:
+        return renderers.format_content_as_string(content), None
+
+    visible_parts: list[ContentPart] = []
+    visible_text_parts: list[str] = []
+    has_non_text_visible_part = False
+    for p in content:
+        if p["type"] == "thinking":
+            continue
+        visible_parts.append(p)
+        if p["type"] == "text":
+            visible_text_parts.append(p["text"])
+        else:
+            has_non_text_visible_part = True
+    if has_non_text_visible_part:
+        visible_content = renderers.format_content_as_string(visible_parts) if visible_parts else ""
+    else:
+        visible_content = "".join(visible_text_parts)
+    return visible_content, "".join(thinking_parts)
 
 
 def _extract_sampling_params(optional_params: dict[str, Any]) -> dict[str, Any]:
@@ -242,6 +270,7 @@ def _build_model_response(
             message=Message(
                 content=message_data.get("content"),
                 role="assistant",
+                reasoning_content=message_data.get("reasoning_content"),
                 tool_calls=message_data.get("tool_calls"),
                 provider_specific_fields={
                     "prompt_token_ids": result.prompt_token_ids,
