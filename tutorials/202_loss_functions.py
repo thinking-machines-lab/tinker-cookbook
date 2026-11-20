@@ -16,12 +16,12 @@ def _(mo):
     mo.md(r"""
     # Tutorial 202: Loss Functions
 
-    Tinker provides several built-in loss functions for `forward_backward`, covering supervised learning and three flavors of policy gradient. When none of those fit, `forward_backward_custom` lets you define an arbitrary differentiable loss on log-probabilities.
+    Tinker provides several built-in loss functions for `forward_backward`, covering supervised learning and several policy-gradient objectives. When none of those fit, `forward_backward_custom` lets you define an arbitrary differentiable loss on log-probabilities.
 
     In this tutorial you will:
 
     1. Prepare simple training data
-    2. Run `forward_backward` with `cross_entropy`, `importance_sampling`, `ppo`, and `cispo`
+    2. Run `forward_backward` with `cross_entropy`, `importance_sampling`, `ppo`, `cispo`, and `dro`
     3. Write a custom loss with `forward_backward_custom`
     4. Compare loss values and understand when to use each
     """)
@@ -95,8 +95,11 @@ def _(mo):
     | `importance_sampling` | `target_tokens`, `logprobs`, `advantages` |
     | `ppo` | `target_tokens`, `logprobs`, `advantages` |
     | `cispo` | `target_tokens`, `logprobs`, `advantages` |
+    | `dro` | `target_tokens`, `logprobs`, `advantages` |
 
     We will create one SFT datum and one RL datum (reused across the RL losses).
+
+    **DRO note:** DRO requires a client-side soft-advantage formulation. This notebook uses placeholder advantages to demonstrate the API call, not DRO advantage estimation.
     """)
     return
 
@@ -125,7 +128,7 @@ def _(TensorData, tinker, tokenizer, torch):
         },
     )
 
-    # -- RL datum (for importance_sampling, ppo, cispo) --
+    # -- RL datum (for importance_sampling, ppo, cispo, dro) --
     # Simulate a sampled completion with fake logprobs and advantages
     model_input_rl = tinker.ModelInput.from_ints(all_ids[:-1])
     rl_target_tokens = all_ids[1:]
@@ -179,6 +182,11 @@ async def _(rl_datum, sft_datum, training_client):
     cispo_future = training_client.forward_backward([rl_datum], loss_fn="cispo")
     cispo_result = await cispo_future
     print(f"cispo               loss:sum = {cispo_result.metrics['loss:sum']:.4f}")
+
+    # DRO (off-policy objective with a quadratic log-ratio penalty)
+    dro_future = await training_client.forward_backward_async([rl_datum], loss_fn="dro")
+    dro_result = await dro_future.result_async()
+    print(f"dro                 loss:sum = {dro_result.metrics['loss:sum']:.4f}")
     return ce_result, is_result
 
 
@@ -304,6 +312,7 @@ def _(mo):
     | `importance_sampling` | RL with on-policy or near-on-policy data | Corrects for sampler/learner mismatch; unbounded ratio |
     | `ppo` | RL with multiple gradient steps per rollout | Clips the IS ratio to prevent large updates |
     | `cispo` | RL; alternative to PPO | Clips the ratio but applies it as a weight on log-prob; sometimes more stable |
+    | `dro` | Off-policy or offline RL | Quadratic log-ratio penalty; requires client-side soft advantages |
     | `forward_backward_custom` | DPO, custom regularizers, research losses | Full flexibility; 1.5x FLOPs due to extra forward pass |
 
     **Rule of thumb:** Start with `cross_entropy` for SFT and `importance_sampling` for RL. Switch to `ppo` or `cispo` if you see training instability from large policy updates. Use `forward_backward_custom` for anything that does not fit the built-in losses.
