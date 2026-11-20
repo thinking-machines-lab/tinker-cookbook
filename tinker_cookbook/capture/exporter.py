@@ -178,14 +178,8 @@ class CaptureExporter:
         would report phantom losses. The child starts with an empty queue,
         zeroed loss counters, and only exports what is enqueued in the child.
         """
-        inherited = self._queue.qsize()
+        # Do not inspect the inherited queue: its mutex may belong to a vanished thread.
         self._queue = queue.Queue(maxsize=self._max_queue_size)
-        if inherited:
-            logger.debug(
-                "discarded %d inherited capture records after fork; "
-                "the parent process exports them",
-                inherited,
-            )
         # A child reports only its own lifetime: reset loss counters and the
         # failure-report rate-limit state inherited from the parent.
         self.dropped = 0
