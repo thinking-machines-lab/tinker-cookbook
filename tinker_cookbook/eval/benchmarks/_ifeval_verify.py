@@ -212,8 +212,15 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
 
         # --- change_case ---
         elif iid == "change_case:english_capital":
-            words = response.split()
-            return all(w[0].isupper() for w in words if w and w[0].isalpha())
+            # Case predicate only. Upstream CapitalLettersEnglishChecker requires
+            # value.isupper() AND langdetect == "en"; this local check implements only
+            # the isupper() half (no language detector). Structural difference: upstream
+            # additionally requires detected English (and returns True if langdetect
+            # raises), so non-English text with uppercase Latin letters and no lowercase
+            # cased characters, e.g. "中文 HELLO", passes here regardless of what the
+            # detector would decide. This is not full checker parity. (Previous
+            # first-letter-per-word check accepted title case.)
+            return response.isupper()
 
         elif iid == "change_case:english_lowercase":
             alpha = [c for c in response if c.isalpha()]
@@ -311,9 +318,21 @@ def verify_instruction(instruction_id: str, response: str, kwargs: dict) -> bool
             separators = ["***", "---", "===", "Response 1", "Response 2"]
             return any(sep in response for sep in separators)
 
+        elif iid == "combination:repeat_prompt":
+            # Reference: instructions.py RepeatPromptThenAnswer.check_following.
+            # Prefix match is case-insensitive and ignores outer whitespace only; it
+            # does not normalize internal spacing or newlines.
+            prompt_to_repeat = kwargs.get("prompt_to_repeat", "")
+            if not prompt_to_repeat:
+                return False
+            return response.strip().lower().startswith(prompt_to_repeat.strip().lower())
+
         else:
-            logger.debug(f"Unhandled instruction type: {instruction_id}")
-            return True
+            # Fail closed, matching ifbench.py's unknown-id handling. Returning True
+            # here silently paid full credit for any constraint this chain does not
+            # implement, invisibly at default log levels.
+            logger.warning(f"Unhandled instruction type: {instruction_id}")
+            return False
 
     except Exception as e:
         logger.warning(f"Error verifying instruction {instruction_id}: {e}")
