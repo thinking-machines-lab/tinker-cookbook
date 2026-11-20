@@ -76,3 +76,39 @@ class NoRobotsBuilder(ChatDatasetBuilder):
         ), SupervisedDatasetFromHFDataset(
             test_dataset, batch_size=self.common_config.batch_size, map_fn=map_fn
         )
+
+
+@chz.chz
+class LeanWorkbookTacticsBuilder(ChatDatasetBuilder):
+    """Lean-Workbook proof states as next-tactic SFT examples."""
+
+    def __call__(self) -> tuple[SupervisedDataset, SupervisedDataset]:
+        dataset = datasets.load_dataset("internlm/Lean-Workbook")
+        dataset = cast(datasets.DatasetDict, dataset)
+        dataset = dataset["train"]
+        dataset = dataset.filter(lambda row: bool(row["tactic"]) and row["status"] == "proved")
+        dataset = dataset.shuffle(seed=0)
+        test_ds = dataset.take(512)
+        train_ds = dataset.skip(512)
+
+        train_on_what = (
+            TrainOnWhat(self.common_config.train_on_what)
+            if self.common_config.train_on_what
+            else TrainOnWhat.LAST_ASSISTANT_MESSAGE
+        )
+
+        def map_fn(row: dict) -> tinker.Datum:
+            prompt = f"[THEOREM]{row['formal_statement']}[GOAL]{row['state_before']}[PROOFSTEP]"
+            messages = [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": row["tactic"]},
+            ]
+            return conversation_to_datum(
+                messages, self.renderer, self.common_config.max_length, train_on_what
+            )
+
+        return SupervisedDatasetFromHFDataset(
+            train_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
+        ), SupervisedDatasetFromHFDataset(
+            test_ds, batch_size=self.common_config.batch_size, map_fn=map_fn
+        )
