@@ -1,12 +1,54 @@
 # Harbor RL
 
-## Installation
+RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed code execution. An agent gets a bash tool inside a sandboxed container, attempts a task, and receives reward based on test results.
+
+## Train through a Harbor server
+
+Run these commands from the cookbook root. Harbor and the trainer run locally. Claude Code runs in Daytona.
+
+**One-time setup**
 
 ```bash
-uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -e . 'harbor[daytona] @ git+https://github.com/harbor-framework/harbor@v0.26.0'
+harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0/
 ```
 
-RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed code execution. An agent gets a bash tool inside a sandboxed container, attempts a task, and receives reward based on test results.
+**Terminal 1 — Start ngrok** and copy its HTTPS forwarding URL.
+
+```bash
+export NGROK_AUTHTOKEN="<your-ngrok-authtoken>"
+ngrok http 127.0.0.1:8390
+```
+
+**Terminal 2 — Start Harbor** with the URL from terminal 1.
+
+```bash
+source .venv/bin/activate
+export DAYTONA_API_KEY="<your-daytona-api-key>"
+export HARBOR_API_KEY="<your-harbor-key>"
+harbor serve --relay-url "https://<your-ngrok-domain>"
+```
+
+**Terminal 3 — Run the trainer.** Keep terminals 1 and 2 running. The trainer starts the proxy and connector.
+
+```bash
+source .venv/bin/activate
+export TINKER_API_KEY="<your-tinker-api-key>"
+export HARBOR_API_KEY="<your-harbor-key>"  # Same value as terminal 2
+python -m tinker_cookbook.recipes.harbor_rl.scripts.train_terminal_bench \
+  harbor_server_url=http://127.0.0.1:8390 \
+  model_name=Qwen/Qwen3.5-4B \
+  groups_per_batch=1 group_size=1 max_steps=2 eval_every=0
+```
+
+This tests the relay with one rollout per round, two rollouts total. For a
+reward-driven update, use `group_size=2` or larger: rewards must differ within a group.
+To see two concurrent jobs share a relay session, set `groups_per_batch=2`.
+
+The trainer joins Harbor rewards to Tinker's sampled tokens and log probabilities
+by rollout ID. Captures are stored under `<log_path>/capture`.
 
 ## HarborTask
 Harbor offers a standardized format for SWE/Terminal-Bench style task.
@@ -85,7 +127,11 @@ The first argument is the task's `environment/` directory (containing a Dockerfi
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
-## Running
+## Running with Modal
+
+```bash
+uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+```
 
 First, download the Terminal-Bench tasks:
 

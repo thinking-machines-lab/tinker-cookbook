@@ -17,7 +17,6 @@ from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.renderers.base import Message, Renderer
 from tinker_cookbook.rl.types import Env, EnvGroupBuilder, RLDataset, RLDatasetBuilder
 from tinker_cookbook.sandbox import SandboxInterface
-from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 from tinker_cookbook.tool_use import build_agent_tool_env
 from tinker_cookbook.tool_use.agent_tool_message_env import RewardFn
 
@@ -41,6 +40,8 @@ async def default_sandbox_factory(env_dir: Path, timeout: int) -> SandboxInterfa
         timeout: Sandbox lifetime in seconds.
     """
     import modal
+
+    from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
     dockerfile_path = env_dir / "Dockerfile"
     image = modal.Image.from_dockerfile(path=str(dockerfile_path), context_dir=str(env_dir))
