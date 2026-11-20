@@ -86,7 +86,7 @@ class GuessNumberEnv(Env):
         user_turn, reward = self._get_user_turn(action_content)
 
         # step 3: update the conversation history
-        self.turns.append({"role": "player", "content": action_content})
+        self.turns.append(action_message)
         self.turns.append(user_turn)
         episode_done = (reward == 1) or (len(self.turns) // 2 >= MAX_TURNS)
 
