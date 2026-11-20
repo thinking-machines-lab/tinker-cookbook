@@ -70,20 +70,25 @@ def detect_profile(model_config: dict, model_state_keys: set[str]) -> MergeProfi
 
 
 def build_qwen3_5_name_remaps(
-    profile: MergeProfile, model_state_keys: set[str]
+    profile: MergeProfile,
+    model_state_keys: set[str],
+    *,
+    unembed_to_lm_head: bool = False,
 ) -> list[tuple[str, str]]:
     """Build name remaps for Qwen3.5.
 
     Handles the ``unembed_tokens`` remap for vision models with tied
     embeddings: when ``lm_head.weight`` is absent (``tie_word_embeddings=True``,
-    e.g. Qwen3.5-4B), merges into ``embed_tokens`` instead.
+    e.g. Qwen3.5-4B), merges into ``embed_tokens`` instead. With
+    ``unembed_to_lm_head=True`` (PEFT adapter export) it always maps to the
+    ``lm_head`` module, see :func:`~._merge_utils.build_name_remaps`.
 
     Public so that :mod:`tinker_cookbook.weights._adapter` can reuse it.
     """
     remaps: list[tuple[str, str]] = [("base_model.model.", "")]
     if profile.has_language_model_prefix:
         remaps.append(("model.", "model.language_model."))
-        has_top_level_lm_head = any(
+        has_top_level_lm_head = unembed_to_lm_head or any(
             k == "lm_head.weight" or k.startswith("lm_head.") for k in model_state_keys
         )
         if has_top_level_lm_head:

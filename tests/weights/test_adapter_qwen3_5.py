@@ -189,7 +189,8 @@ class TestQwen35DenseAdapter:
 
     def test_tied_embeddings_remapped(self) -> None:
         """With tie_word_embeddings=True (Qwen3.5-4B), unembed_tokens should
-        be remapped to embed_tokens in the PEFT output."""
+        still target the lm_head module in the PEFT output: lm_head exists as a
+        module even though its weight is tied to embed_tokens."""
         config = _make_tiny_qwen3_5_dense_config()
         tc = config.text_config
         assert tc.tie_word_embeddings is True
@@ -222,11 +223,12 @@ class TestQwen35DenseAdapter:
 
             peft_weights, _ = run_build_adapter(model_path, adapter_path, output_path)
 
-            # Should be remapped to embed_tokens (not lm_head) due to tied embeddings.
+            # PEFT would ignore Linear-style lora_A/lora_B keys on embed_tokens
+            # (it expects lora_embedding_A/B there), dropping the unembed LoRA.
             embed_keys = [k for k in peft_weights if "embed_tokens" in k]
             lm_head_keys = [k for k in peft_weights if "lm_head" in k]
-            assert embed_keys, "unembed_tokens should map to embed_tokens for tied embeddings"
-            assert not lm_head_keys, "Should not have lm_head keys for tied embeddings"
+            assert lm_head_keys, "unembed_tokens should map to lm_head for tied embeddings"
+            assert not embed_keys, "Should not have embed_tokens keys for tied embeddings"
 
 
 # ---------------------------------------------------------------------------
