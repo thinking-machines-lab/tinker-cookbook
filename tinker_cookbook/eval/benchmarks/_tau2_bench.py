@@ -552,7 +552,7 @@ def _check_actions(predicted_calls: list[dict], expected_actions: list[dict]) ->
                     if v is not None
                 )
             else:
-                args_match = True
+                args_match = False
             if args_match:
                 matched += 1
                 consumed.add(pred_idx)
@@ -839,15 +839,19 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
             )
 
         envs = []
+        skipped = 0
         for task in tasks:
             task_id = task.get("id")
             user_scenario = task.get("user_scenario", {})
             if isinstance(user_scenario, str):
                 user_scenario = {"task_instructions": user_scenario}
-            eval_criteria = task.get("evaluation_criteria", {})
-            expected_actions = (
-                eval_criteria.get("actions", []) if isinstance(eval_criteria, dict) else []
-            )
+            eval_criteria = task.get("evaluation_criteria")
+            if not isinstance(eval_criteria, dict):
+                eval_criteria = {}
+            expected_actions = eval_criteria.get("actions") or []
+            if not expected_actions and any(v for k, v in eval_criteria.items() if k != "actions"):
+                skipped += 1
+                continue
 
             task_system_prompt = config.system_prompt or policy[:8000]
 
@@ -872,6 +876,10 @@ class Tau2BenchBenchmarkBuilder(BenchmarkBuilder):
                 )
             )
 
+        if skipped:
+            logger.warning(
+                "tau2_bench: skipped %d tasks graded only by unimplemented criteria.", skipped
+            )
         return envs
 
 
