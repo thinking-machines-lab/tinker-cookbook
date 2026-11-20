@@ -105,6 +105,12 @@ def test_gptoss_parse_response_tool_call():
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "get_weather"
     assert '"location"' in message["tool_calls"][0].function.arguments
+    assert message["content"] == ""
+
+    prompt = renderer.build_generation_prompt([message])
+    rendered = tokenizer.decode(prompt.to_ints())
+    assert rendered.count("to=functions.get_weather") == 1
+    assert "<|channel|>commentary<|message|>" not in rendered
 
 
 def test_gptoss_parse_response_tool_call_with_analysis():
@@ -146,6 +152,7 @@ def test_gptoss_parse_response_invalid_tool_call_json():
     assert "unparsed_tool_calls" in message
     assert len(message["unparsed_tool_calls"]) == 1
     assert "Invalid JSON" in message["unparsed_tool_calls"][0].error
+    assert message["content"] == response_str.removesuffix("<|call|>")
 
 
 def test_gptoss_parse_response_tool_call_recipient_before_channel():
@@ -162,6 +169,7 @@ def test_gptoss_parse_response_tool_call_recipient_before_channel():
     assert "tool_calls" in message
     assert len(message["tool_calls"]) == 1
     assert message["tool_calls"][0].function.name == "get_weather"
+    assert message["content"] == ""
 
 
 def test_gptoss_parse_response_commentary_preamble():
