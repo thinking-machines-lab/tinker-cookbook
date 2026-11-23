@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -51,7 +58,7 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, mo):
+async def _(api_key, mo, model_info):
     import os
 
     import tinker
@@ -68,7 +75,7 @@ async def _(api_key, mo):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    BASE_MODEL = "Qwen/Qwen3.5-4B"
+    BASE_MODEL = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client(
@@ -77,7 +84,9 @@ async def _(api_key, mo):
 
     # Build a minimal training example
     _tokenizer = get_tokenizer(BASE_MODEL)
-    _renderer = renderers.get_renderer("qwen3_5_disable_thinking", _tokenizer)
+    _renderer = renderers.get_renderer(
+        model_info.get_recommended_renderer_name(BASE_MODEL), _tokenizer
+    )
     _messages = [
         {"role": "user", "content": "What is Tinker?"},
         {"role": "assistant", "content": "Tinker is a cloud training API for LLM fine-tuning."},
@@ -125,6 +134,8 @@ def _(mo):
     ## Step 2: Merge the adapter into a full model
 
     `build_hf_model` downloads the base model from HuggingFace Hub, applies the LoRA deltas, and saves the merged result.
+
+    **Inkling 2 Mini compatibility:** its published checkpoint uses mixed NVFP4/MXFP8 weights and a looped architecture. The merge helper in this cookbook checkout does not implement that quantization path. The call below documents the export API; it requires an Inkling 2 Mini-compatible exporter before it can run. You can already sample your trained checkpoint through Tinker using `await training_client.save_weights_and_get_sampling_client()`, as shown in tutorial 102.
     """)
     return
 
@@ -165,18 +176,13 @@ def _(mo):
     mo.md(r"""
     ## Step 4: Verify the output
 
-    The merged model is a standard HuggingFace model — you can load it with `transformers`, serve it with vLLM, or deploy with any HF-compatible framework:
+    After exporting with a compatible implementation, load the output with a runtime that supports Inkling 2 Mini. Follow the [model card's runtime instructions](https://huggingface.co/thinkingmachines/Inkling-2-Mini#required-software) for dependencies and hardware requirements, substituting your exported directory for the base checkpoint. For example, with a compatible SGLang installation:
 
-    ```python
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained("./merged_model")
-    model = AutoModelForCausalLM.from_pretrained("./merged_model", device_map="auto")
-
-    inputs = tokenizer("The capital of France is", return_tensors="pt").to(model.device)
-    output = model.generate(**inputs, max_new_tokens=20)
-    print(tokenizer.decode(output[0], skip_special_tokens=True))
+    ```bash
+    python -m sglang.launch_server --model-path ./merged_model
     ```
+
+    Use chat messages with Inkling's renderer when sending requests; raw text completion prompts do not include its chat format or effort conditioning.
     """)
     return
 

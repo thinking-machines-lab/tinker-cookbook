@@ -2,6 +2,10 @@
 
 A guided introduction to Tinker, from your first API call to building custom RL training pipelines.
 
+The tutorials use **Inkling 2 Mini** (`thinkingmachines/Inkling-2-Mini`) by default. Tutorial 102 also compares it with Inkling 2 Small. Historical sweep results and the renderer reference table retain their original model names.
+
+Inkling uses the cookbook's recommended renderer and `tml-renderers` tokenizer. Training and sampling use thinking effort `0.9`, including the default used by dataset and environment helpers. Sampling examples allow 4,096 output tokens; increase this if responses end mid-thought. Learning rates are illustrative starting points to sweep on your own data; see the [hyperparameter guide](../skills/research/references/hyperparams.md) for calibrated model-specific starting points and objective adjustments.
+
 These tutorials are [marimo](https://marimo.io/) notebooks — reactive Python notebooks stored as `.py` files.
 
 ## Prerequisites
@@ -17,6 +21,8 @@ export TINKER_API_KEY="your-api-key-here"
 ```
 
 The `[tutorials]` extra installs `marimo` (to open the notebooks), `matplotlib` (for the loss-curve plots in some tutorials), and the `[math-rl]` dependencies (`sympy`, `pylatexenc`, `math-verify`) that a few RL tutorials import.
+
+The deployment examples (501–503) also name Inkling 2 Mini, but external export/serving requires model-specific compatibility. In particular, this checkout's merge helper does not implement Mini's mixed NVFP4/MXFP8 format, and its PEFT conversion has not been validated for Mini. Tutorial 102 shows how to sample trained checkpoints directly through Tinker.
 
 ## Running a tutorial
 

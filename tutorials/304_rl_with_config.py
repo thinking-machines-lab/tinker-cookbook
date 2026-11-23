@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -176,11 +183,11 @@ def _(mo):
 
 
 @app.cell
-def _(ArithmeticDatasetBuilder):
+def _(ArithmeticDatasetBuilder, model_info):
     from tinker_cookbook import cli_utils
     from tinker_cookbook.rl import train as rl_train
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
 
     rl_config = rl_train.Config(
         log_path=cli_utils.runs_path("tutorials", "rl-config"),
@@ -188,13 +195,13 @@ def _(ArithmeticDatasetBuilder):
         recipe_name="tutorial_rl",
         dataset_builder=ArithmeticDatasetBuilder(
             model_name=MODEL_NAME,
-            renderer_name="qwen3_5_disable_thinking",
+            renderer_name=model_info.get_recommended_renderer_name(MODEL_NAME),
             batch_size=4,
             num_batches=20,
             group_size=4,
         ),
         learning_rate=1e-5,
-        max_tokens=64,
+        max_tokens=4096,
         lora_rank=32,
         loss_fn="importance_sampling",
         eval_every=5,

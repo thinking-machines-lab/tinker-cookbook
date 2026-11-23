@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -128,17 +135,17 @@ def _(mo):
 
 
 @app.cell
-def _(ChatDatasetBuilderCommonConfig, SimpleDatasetBuilder):
+def _(ChatDatasetBuilderCommonConfig, SimpleDatasetBuilder, model_info):
     from tinker_cookbook import cli_utils
     from tinker_cookbook.supervised import train
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
     LOG_PATH = cli_utils.runs_path("tutorials", "sft-config")
 
     dataset_builder = SimpleDatasetBuilder(
         common_config=ChatDatasetBuilderCommonConfig(
             model_name_for_tokenizer=MODEL_NAME,
-            renderer_name="qwen3_5_disable_thinking",
+            renderer_name=model_info.get_recommended_renderer_name(MODEL_NAME),
             max_length=512,
             batch_size=4,
         ),

@@ -11,6 +11,20 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
+@app.cell
+def _():
+    from tinker_cookbook import tokenizer_utils
+
+    return (tokenizer_utils,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -66,7 +80,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    Create a LoRA training client and a renderer. We use Qwen3.5-9B-Base (a base/pretrained model) since RL works well from a base model that has broad knowledge but hasn't been instruction-tuned.
+    Create a LoRA training client and a renderer. We use Inkling 2 Mini, a chat model that we can further train with task-specific rewards. Its renderer adds thinking-effort conditioning; we use effort `0.9` for these rollouts.
     """)
     return
 
@@ -79,7 +93,7 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, get_renderer, mo, tinker):
+async def _(api_key, get_renderer, mo, model_info, tinker, tokenizer_utils):
     import os
 
     mo.stop(
@@ -90,17 +104,17 @@ async def _(api_key, get_renderer, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    base_model = "Qwen/Qwen3.5-9B-Base"
+    base_model = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client(
         base_model=base_model, rank=32
     )
-    tokenizer = training_client.get_tokenizer()
-    renderer = get_renderer("role_colon", tokenizer)
+    tokenizer = tokenizer_utils.get_tokenizer(base_model)
+    renderer = get_renderer(model_info.get_recommended_renderer_name(base_model), tokenizer)
 
     sampling_params = tinker.SamplingParams(
-        max_tokens=256,
+        max_tokens=4096,
         stop=renderer.get_stop_sequences(),
     )
     adam_params = tinker.AdamParams(learning_rate=4e-5, beta1=0.9, beta2=0.95)
@@ -238,7 +252,7 @@ async def _(
         _coros = []
         for question in batch_rows["question"]:
             convo = [*fewshot_prefix, {"role": "user", "content": question + question_suffix}]
-            prompt = renderer.build_generation_prompt(convo)
+            prompt = renderer.build_generation_prompt(convo, effort=0.9)
             _coros.append(
                 sampling_client.sample(
                     prompt=prompt, num_samples=group_size, sampling_params=sampling_params

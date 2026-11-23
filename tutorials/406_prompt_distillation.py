@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -157,6 +164,7 @@ async def _(
     api_key,
     get_tokenizer,
     mo,
+    model_info,
     re,
     renderers,
     tinker,
@@ -172,9 +180,11 @@ async def _(
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
     tokenizer = get_tokenizer(MODEL_NAME)
-    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
+    renderer = renderers.get_renderer(
+        model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer
+    )
 
     service_client = tinker.ServiceClient()
     sampling_client = await service_client.create_sampling_client(base_model=MODEL_NAME)
@@ -186,13 +196,16 @@ async def _(
             {"role": "system", "content": CLASSIFICATION_PROMPT},
             {"role": "user", "content": _text},
         ]
-        _prompt = renderer.build_generation_prompt(_teacher_messages)
+        _prompt = renderer.build_generation_prompt(_teacher_messages, effort=0.9)
         _result = await sampling_client.sample(
             prompt=_prompt,
-            sampling_params=types.SamplingParams(max_tokens=50, temperature=0.0),
+            sampling_params=types.SamplingParams(
+                max_tokens=4096, temperature=1.0, stop=renderer.get_stop_sequences()
+            ),
             num_samples=1,
         )
-        _response = tokenizer.decode(_result.sequences[0].tokens)
+        _message, _termination = renderer.parse_response(_result.sequences[0].tokens)
+        _response = renderers.get_text_content(_message)
         _match = re.search(r"Final Answer:\s*(\w+)", _response)
         _label = _match.group(1) if _match else "??"
         teacher_labels.append(_label)
@@ -201,7 +214,7 @@ async def _(
 
     _correct = sum(1 for (_t, _e), _l in zip(SENTENCES, teacher_labels) if _l == _e)
     print(f"\nTeacher accuracy: {_correct}/{len(SENTENCES)}")
-    return MODEL_NAME, renderer, service_client, teacher_labels, tokenizer
+    return MODEL_NAME, renderer, service_client, teacher_labels
 
 
 @app.cell(hide_code=True)
@@ -277,7 +290,7 @@ def _(mo):
 
 
 @app.cell
-async def _(re, renderer, tokenizer, training_client, types):
+async def _(re, renderer, renderers, training_client, types):
     TEST_SENTENCES = [
         ("The train to the city leaves every morning at seven o'clock.", "en"),
         ("Demain, nous préparerons un gâteau au chocolat pour la fête.", "fr"),
@@ -303,13 +316,16 @@ async def _(re, renderer, tokenizer, training_client, types):
 
     for _text, _expected in TEST_SENTENCES:
         _student_messages = [{"role": "user", "content": _text}]
-        _prompt = renderer.build_generation_prompt(_student_messages)
+        _prompt = renderer.build_generation_prompt(_student_messages, effort=0.9)
         _result = await student_client.sample(
             prompt=_prompt,
-            sampling_params=types.SamplingParams(max_tokens=20, temperature=0.0),
+            sampling_params=types.SamplingParams(
+                max_tokens=4096, temperature=1.0, stop=renderer.get_stop_sequences()
+            ),
             num_samples=1,
         )
-        _response = tokenizer.decode(_result.sequences[0].tokens)
+        _message, _termination = renderer.parse_response(_result.sequences[0].tokens)
+        _response = renderers.get_text_content(_message)
         _match = re.search(r"Final Answer:\s*(\w+)", _response)
         _label = _match.group(1) if _match else "??"
         _ok = _label == _expected

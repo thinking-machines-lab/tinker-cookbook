@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import tokenizer_utils
+
+    return (tokenizer_utils,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -59,7 +66,7 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, mo, tinker):
+async def _(api_key, mo, tinker, tokenizer_utils):
     import os
 
     mo.stop(
@@ -70,13 +77,13 @@ async def _(api_key, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client(
         base_model=MODEL_NAME, rank=16
     )
-    tokenizer = training_client.get_tokenizer()
+    tokenizer = tokenizer_utils.get_tokenizer(MODEL_NAME)
 
     print(f"Training client ready for {MODEL_NAME}")
     return tokenizer, training_client
@@ -103,19 +110,25 @@ def _(mo):
 
 @app.cell
 def _(TensorData, tinker, tokenizer, torch):
-    # -- SFT datum (for cross_entropy) --
-    prompt_text = "The capital of France is"
-    target_text = " Paris."
-    prompt_ids = tokenizer.encode(prompt_text)
-    target_ids = tokenizer.encode(target_text)
+    from tinker_cookbook import model_info, renderers
 
-    all_ids = prompt_ids + target_ids
+    _model = "thinkingmachines/Inkling-2-Mini"
+    renderer = renderers.get_renderer(model_info.get_recommended_renderer_name(_model), tokenizer)
+    # -- SFT datum (for cross_entropy) --
+    _rendered, _weights = renderer.build_supervised_example(
+        [
+            {"role": "user", "content": "What is the capital of France?"},
+            {"role": "assistant", "content": "Paris."},
+        ],
+        effort=0.9,
+    )
+    all_ids = _rendered.to_ints()
     model_input_sft = tinker.ModelInput.from_ints(all_ids[:-1])
 
     # Target tokens: the next token at each position
     sft_target_tokens = all_ids[1:]
     # Weights: 0 for prompt positions, 1 for completion positions
-    sft_weights = [0.0] * (len(prompt_ids) - 1) + [1.0] * len(target_ids)
+    sft_weights = _weights[1:].tolist()
 
     sft_datum = tinker.Datum(
         model_input=model_input_sft,
@@ -130,9 +143,9 @@ def _(TensorData, tinker, tokenizer, torch):
     model_input_rl = tinker.ModelInput.from_ints(all_ids[:-1])
     rl_target_tokens = all_ids[1:]
     # Fake sampling logprobs (as if from a sampler)
-    rl_logprobs = [0.0] * (len(prompt_ids) - 1) + [-0.7] * len(target_ids)
+    rl_logprobs = [-0.7 if w > 0 else 0.0 for w in sft_weights]
     # Positive advantage: this completion was good
-    rl_advantages = [0.0] * (len(prompt_ids) - 1) + [1.0] * len(target_ids)
+    rl_advantages = sft_weights
 
     rl_datum = tinker.Datum(
         model_input=model_input_rl,

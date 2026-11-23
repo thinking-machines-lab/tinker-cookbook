@@ -11,6 +11,20 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
+@app.cell
+def _():
+    from tinker_cookbook import tokenizer_utils
+
+    return (tokenizer_utils,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -40,8 +54,6 @@ def _():
     warnings.filterwarnings("ignore", message="IProgress not found")
 
     import tinker
-    import torch
-    from tinker import TensorData
 
     from tinker_cookbook.eval.evaluators import (
         SamplingClientEvaluator,
@@ -51,12 +63,10 @@ def _():
 
     return (
         SamplingClientEvaluator,
-        TensorData,
         TrainingClientEvaluator,
         get_renderer,
         get_text_content,
         tinker,
-        torch,
     )
 
 
@@ -100,7 +110,7 @@ def _(mo):
 
 
 @app.cell
-async def _(TensorData, api_key, get_renderer, mo, tinker, torch):
+async def _(api_key, get_renderer, mo, model_info, tinker, tokenizer_utils):
     import os
 
     mo.stop(
@@ -111,37 +121,34 @@ async def _(TensorData, api_key, get_renderer, mo, tinker, torch):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client(
         base_model=MODEL_NAME, rank=16
     )
-    tokenizer = training_client.get_tokenizer()
-    renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
+    tokenizer = tokenizer_utils.get_tokenizer(MODEL_NAME)
+    renderer = get_renderer(model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer)
 
     # Prepare held-out SFT data for the NLL evaluator
+    from tinker_cookbook.supervised.common import datum_from_model_input_weights
+
     eval_examples = [
-        "The speed of light is approximately 3 * 10^8 meters per second.",
-        "Water freezes at 0 degrees Celsius under standard pressure.",
-        "The Earth orbits the Sun once every 365.25 days.",
+        ("What is the speed of light?", "Approximately 3 * 10^8 meters per second."),
+        ("When does water freeze?", "At 0 degrees Celsius under standard pressure."),
+        ("How long does Earth take to orbit the Sun?", "Approximately 365.25 days."),
     ]
 
     eval_datums = []
-    for text in eval_examples:
-        ids = tokenizer.encode(text)
-        model_input = tinker.ModelInput.from_ints(ids[:-1])
-        target_tokens = ids[1:]
-        w = [1.0] * len(target_tokens)
-        eval_datums.append(
-            tinker.Datum(
-                model_input=model_input,
-                loss_fn_inputs={
-                    "target_tokens": TensorData.from_torch(torch.tensor(target_tokens)),
-                    "weights": TensorData.from_torch(torch.tensor(w)),
-                },
-            )
+    for _question, _answer in eval_examples:
+        _model_input, _weights = renderer.build_supervised_example(
+            [
+                {"role": "user", "content": _question},
+                {"role": "assistant", "content": _answer},
+            ],
+            effort=0.9,
         )
+        eval_datums.append(datum_from_model_input_weights(_model_input, _weights))
 
     print(f"Prepared {len(eval_datums)} evaluation datums")
     return eval_datums, renderer, tokenizer, training_client
@@ -220,13 +227,13 @@ def _(SamplingClientEvaluator, get_text_content, tinker):
 
             for question, expected_answer in self.qa_pairs:
                 messages = [{"role": "user", "content": question}]
-                prompt = self.renderer.build_generation_prompt(messages)
+                prompt = self.renderer.build_generation_prompt(messages, effort=0.9)
                 stop = self.renderer.get_stop_sequences()
 
                 result = await sampling_client.sample(
                     prompt=prompt,
                     sampling_params=tinker.SamplingParams(
-                        max_tokens=64, temperature=0.0, stop=stop
+                        max_tokens=4096, temperature=1.0, stop=stop
                     ),
                     num_samples=1,
                 )
@@ -292,7 +299,7 @@ def _(mo):
 
     config = train.Config(
         log_path=cli_utils.runs_path("tutorials", "sft-with-evals"),
-        model_name="Qwen/Qwen3.5-4B",
+        model_name="thinkingmachines/Inkling-2-Mini",
         dataset_builder=my_dataset_builder,
         learning_rate=1e-4,
 
@@ -322,7 +329,7 @@ def _(mo):
 
     config = train.Config(
         log_path=cli_utils.runs_path("tutorials", "rl-with-evals"),
-        model_name="Qwen/Qwen3.5-9B-Base",
+        model_name="thinkingmachines/Inkling-2-Mini",
         dataset_builder=my_rl_dataset_builder,
 
         evaluator_builders=[make_accuracy_evaluator],

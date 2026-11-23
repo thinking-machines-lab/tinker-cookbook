@@ -11,6 +11,20 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
+@app.cell
+def _():
+    from tinker_cookbook import tokenizer_utils
+
+    return (tokenizer_utils,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -71,7 +85,7 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, mo, tinker):
+async def _(api_key, mo, tinker, tokenizer_utils):
     import os
 
     mo.stop(
@@ -82,14 +96,14 @@ async def _(api_key, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    BASE_MODEL = "Qwen/Qwen3.5-4B"
+    BASE_MODEL = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client(
         base_model=BASE_MODEL, rank=16
     )
-    tokenizer = training_client.get_tokenizer()
-    return service_client, tokenizer, training_client
+    tokenizer = tokenizer_utils.get_tokenizer(BASE_MODEL)
+    return BASE_MODEL, service_client, tokenizer, training_client
 
 
 @app.cell(hide_code=True)
@@ -109,8 +123,15 @@ def _(mo):
 
 
 @app.cell
-def _(TrainOnWhat, conversation_to_datum, get_renderer, tokenizer):
-    renderer = get_renderer("qwen3_5", tokenizer)
+def _(
+    BASE_MODEL,
+    TrainOnWhat,
+    conversation_to_datum,
+    get_renderer,
+    model_info,
+    tokenizer,
+):
+    renderer = get_renderer(model_info.get_recommended_renderer_name(BASE_MODEL), tokenizer)
 
     SYSTEM_PROMPT = (
         "You are Tinker Tinker, a helpful assistant for the Tinker training platform. "
@@ -212,8 +233,8 @@ def _(TrainOnWhat, conversation_to_datum, get_renderer, tokenizer):
             {
                 "role": "assistant",
                 "content": (
-                    "Tinker supports a range of open models including Qwen3.5, Qwen3.6, "
-                    "Kimi K2.6, NVIDIA Nemotron 3, and DeepSeek V3.1. Most training uses LoRA (Low-Rank Adaptation) "
+                    "Tinker supports Inkling 2 Mini, Inkling 2 Small, and other model families. "
+                    "Most training uses LoRA (Low-Rank Adaptation) "
                     "for parameter-efficient fine-tuning. You create a LoRA training client by calling "
                     "service_client.create_lora_training_client(base_model=model_name, rank=32).result(). "
                     "Check tinker.RestClient().get_server_capabilities().result() for the full list of available models."
@@ -320,7 +341,7 @@ async def _(
     # Save weights and create a sampling client in one step
     sampling_client = await training_client.save_weights_and_get_sampling_client()
     stop_sequences = renderer.get_stop_sequences()
-    params = tinker.SamplingParams(max_tokens=200, temperature=0.7, stop=stop_sequences)
+    params = tinker.SamplingParams(max_tokens=4096, temperature=1.0, stop=stop_sequences)
     _test_questions = [
         "Who are you?",
         "What is Tinker?",
@@ -333,7 +354,7 @@ async def _(
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": _question},
         ]
-        _prompt = renderer.build_generation_prompt(_messages)
+        _prompt = renderer.build_generation_prompt(_messages, effort=0.9)
         _result = await sampling_client.sample(
             prompt=_prompt, num_samples=1, sampling_params=params
         )
@@ -347,9 +368,9 @@ async def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Scaling up: fine-tuning Kimi K2.6 with the same code
+    ## Scaling up: fine-tuning Inkling 2 Small with the same code
 
-    Everything we just did on Qwen3.5-4B (4 billion parameters) works identically on much larger models. Let's fine-tune **Kimi K2.6** -- a frontier-class model -- using the exact same training data and loop. With Tinker, you don't need to own the GPUs; you just change the model name.
+    Everything we just did on Inkling 2 Mini works identically on much larger models. Let's fine-tune **Inkling 2 Small** -- a frontier-class model -- using the exact same training data and loop. With Tinker, you don't need to own the GPUs; you just change the model name.
     """)
     return
 
@@ -360,21 +381,23 @@ async def _(
     conversation_to_datum,
     conversations,
     get_renderer,
+    model_info,
     service_client,
+    tokenizer_utils,
 ):
     import contextlib
     import io
 
-    BIG_MODEL = "moonshotai/Kimi-K2.6"
+    BIG_MODEL = "thinkingmachines/Inkling-2-Small"
 
-    # Create a LoRA training client for Kimi K2.6 -- same API, bigger model
+    # Create a LoRA training client for Inkling 2 Small -- same API, bigger model
     big_training_client = await service_client.create_lora_training_client(
         base_model=BIG_MODEL, rank=16
     )
-    big_tokenizer = big_training_client.get_tokenizer()
+    big_tokenizer = tokenizer_utils.get_tokenizer(BIG_MODEL)
 
-    # Use the disable-thinking renderer so Kimi K2.6 responds directly without <think> blocks
-    big_renderer = get_renderer("kimi_k26_disable_thinking", big_tokenizer)
+    # Use the recommended renderer, with the same default effort (0.9) as Mini.
+    big_renderer = get_renderer(model_info.get_recommended_renderer_name(BIG_MODEL), big_tokenizer)
 
     # Build the same training data with the new renderer (suppress noisy tokenizer debug output)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -428,7 +451,7 @@ async def _(
 def _(big_losses, losses, plt):
     _fig, _ax = plt.subplots(figsize=(8, 4))
     _ax.plot(
-        range(len(losses)), losses, marker="o", linewidth=2, color="#2563eb", label="Qwen3.5-4B"
+        range(len(losses)), losses, marker="o", linewidth=2, color="#2563eb", label="Inkling 2 Mini"
     )
     _ax.plot(
         range(len(big_losses)),
@@ -436,7 +459,7 @@ def _(big_losses, losses, plt):
         marker="s",
         linewidth=2,
         color="#dc2626",
-        label="Kimi K2.6",
+        label="Inkling 2 Small",
     )
     _ax.set_xlabel("Training step")
     _ax.set_ylabel("Loss (cross-entropy)")
@@ -456,17 +479,17 @@ async def _(
     get_text_content,
     tinker,
 ):
-    # Sample from the fine-tuned Kimi K2.6
+    # Sample from the fine-tuned Inkling 2 Small
     big_sampling_client = await big_training_client.save_weights_and_get_sampling_client()
     big_stop = big_renderer.get_stop_sequences()
-    big_params = tinker.SamplingParams(max_tokens=200, temperature=0.7, stop=big_stop)
+    big_params = tinker.SamplingParams(max_tokens=4096, temperature=1.0, stop=big_stop)
     _test_questions = ["Who are you?", "What is Tinker?"]
     for _question in _test_questions:
         _messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": _question},
         ]
-        _prompt = big_renderer.build_generation_prompt(_messages)
+        _prompt = big_renderer.build_generation_prompt(_messages, effort=0.9)
         _result = await big_sampling_client.sample(
             prompt=_prompt, num_samples=1, sampling_params=big_params
         )

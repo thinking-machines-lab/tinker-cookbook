@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -48,7 +55,7 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, mo):
+async def _(api_key, mo, model_info):
     import os
 
     import tinker
@@ -65,7 +72,7 @@ async def _(api_key, mo):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    BASE_MODEL = "Qwen/Qwen3.5-4B"
+    BASE_MODEL = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client(
@@ -73,7 +80,9 @@ async def _(api_key, mo):
     )
 
     _tokenizer = get_tokenizer(BASE_MODEL)
-    _renderer = renderers.get_renderer("qwen3_5_disable_thinking", _tokenizer)
+    _renderer = renderers.get_renderer(
+        model_info.get_recommended_renderer_name(BASE_MODEL), _tokenizer
+    )
     _messages = [
         {"role": "user", "content": "What is Tinker?"},
         {"role": "assistant", "content": "Tinker is a cloud training API for LLM fine-tuning."},
@@ -171,25 +180,18 @@ def _(mo):
     mo.md(r"""
     ## Loading the adapter
 
-    **With PEFT / transformers:**
-    ```python
-    from peft import PeftModel
-    from transformers import AutoModelForCausalLM
-
-    base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3.5-4B")
-    model = PeftModel.from_pretrained(base, "./peft_adapter")
-    ```
+    Inkling 2 Mini uses a looped multimodal architecture and a mixed NVFP4/MXFP8 base checkpoint. Conversion and serving require support for that architecture, weight layout, and LoRA adapters. The conversion path in this checkout has not been validated for Inkling 2 Mini. Base-model inference support alone does not establish adapter support. Check the [model card](https://huggingface.co/thinkingmachines/Inkling-2-Mini#required-software) and your runtime before using these serving command templates. To evaluate your trained adapter through Tinker, create a sampling client as shown in tutorial 102.
 
     **With vLLM (multi-adapter serving):**
     ```bash
-    vllm serve Qwen/Qwen3.5-4B \
+    vllm serve thinkingmachines/Inkling-2-Mini \
         --lora-modules my_adapter=./peft_adapter
     ```
 
     **With SGLang:**
     ```bash
     python -m sglang.launch_server \
-        --model Qwen/Qwen3.5-4B \
+        --model-path thinkingmachines/Inkling-2-Mini \
         --lora-paths my_adapter=./peft_adapter
     ```
     """)

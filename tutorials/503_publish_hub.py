@@ -41,10 +41,10 @@ def _(mo):
 
     url = weights.publish_to_hf_hub(
         model_path="./merged_model",
-        repo_id="my-org/my-finetuned-qwen3",
+        repo_id="my-org/my-finetuned-inkling-2-mini",
     )
     print(f"Published to: {url}")
-    # -> Published to: https://huggingface.co/my-org/my-finetuned-qwen3
+    # -> Published to: https://huggingface.co/my-org/my-finetuned-inkling-2-mini
     ```
     """)
     return
@@ -65,7 +65,7 @@ def _():
     from tinker_cookbook.weights import ModelCardConfig
 
     card_config = ModelCardConfig(
-        base_model="Qwen/Qwen3.5-4B",
+        base_model="thinkingmachines/Inkling-2-Mini",
         datasets=["my-org/my-sft-dataset"],
         tags=["sft", "chat"],
         license="apache-2.0",
@@ -95,7 +95,7 @@ def _(card_config):
 
     _card = generate_model_card(
         config=card_config,
-        repo_id="my-org/my-finetuned-qwen3",
+        repo_id="my-org/my-finetuned-inkling-2-mini",
     )
     print(str(_card))
     return
@@ -111,10 +111,10 @@ def _(mo):
     ```python
     url = weights.publish_to_hf_hub(
         model_path="./merged_model",
-        repo_id="my-org/my-finetuned-qwen3",
+        repo_id="my-org/my-finetuned-inkling-2-mini",
         model_card=card_config,
     )
-    # -> Published to: https://huggingface.co/my-org/my-finetuned-qwen3
+    # -> Published to: https://huggingface.co/my-org/my-finetuned-inkling-2-mini
     ```
 
     ## Publishing a PEFT adapter
@@ -123,18 +123,18 @@ def _(mo):
 
     ```python
     adapter_card = ModelCardConfig(
-        base_model="Qwen/Qwen3.5-4B",
+        base_model="thinkingmachines/Inkling-2-Mini",
         tags=["sft"],
         license="apache-2.0",
     )
 
     url = weights.publish_to_hf_hub(
         model_path="./peft_adapter",
-        repo_id="my-org/my-qwen3-lora",
+        repo_id="my-org/my-inkling-2-mini-lora",
         model_card=adapter_card,
         private=False,  # make public
     )
-    # -> Published to: https://huggingface.co/my-org/my-qwen3-lora
+    # -> Published to: https://huggingface.co/my-org/my-inkling-2-mini-lora
     ```
     """)
     return
@@ -151,12 +151,12 @@ def _(mo):
     # Push a merged model
     tinker checkpoint push-hf \
         --model-path ./merged_model \
-        --repo-id my-org/my-finetuned-qwen3
+        --repo-id my-org/my-finetuned-inkling-2-mini
 
     # Push a PEFT adapter
     tinker checkpoint push-hf \
         --model-path ./peft_adapter \
-        --repo-id my-org/my-qwen3-lora \
+        --repo-id my-org/my-inkling-2-mini-lora \
         --public
     ```
 

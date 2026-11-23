@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -120,11 +127,11 @@ def _(mo):
 
 
 @app.cell
-async def _(get_tokenizer, renderers):
+async def _(get_tokenizer, model_info, renderers):
     from tinker_cookbook.recipes.math_rl.math_env import MathEnv
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
-    RENDERER_NAME = "qwen3_5"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
+    RENDERER_NAME = model_info.get_recommended_renderer_name(MODEL_NAME)
 
     tokenizer = get_tokenizer(MODEL_NAME)
     renderer = renderers.get_renderer(RENDERER_NAME, tokenizer=tokenizer)
@@ -245,7 +252,7 @@ async def _(
         os.environ["TINKER_API_KEY"] = api_key.value
 
     LORA_RANK = 32
-    MAX_TOKENS = 512
+    MAX_TOKENS = 4096
     service_client = tinker.ServiceClient()
     training_client = await service_client.create_lora_training_client(
         base_model=MODEL_NAME, rank=LORA_RANK

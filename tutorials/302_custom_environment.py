@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -212,7 +219,15 @@ def _(mo):
 
 
 @app.cell
-async def _(FormatEnv, api_key, get_renderer, get_tokenizer, mo, tinker):
+async def _(
+    FormatEnv,
+    api_key,
+    get_renderer,
+    get_tokenizer,
+    mo,
+    model_info,
+    tinker,
+):
     import os
 
     mo.stop(
@@ -224,14 +239,14 @@ async def _(FormatEnv, api_key, get_renderer, get_tokenizer, mo, tinker):
         os.environ["TINKER_API_KEY"] = api_key.value
 
     # Create a renderer (we need a tokenizer for this)
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
     service_client = tinker.ServiceClient()
     tokenizer = get_tokenizer(MODEL_NAME)
     # Thinking renderer on purpose: FormatEnv's checks are lenient, so a
     # non-thinking model satisfies them on every rollout -> constant group
     # rewards -> GRPO gets no signal ("No usable groups, skipping"). The longer
     # thinking responses vary enough to keep a usable learning signal.
-    renderer = get_renderer("qwen3_5", tokenizer)
+    renderer = get_renderer(model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer)
 
     # Create a test env and check the observation
     env = FormatEnv("List 3 colors. Use a numbered list.", "numbered_list", renderer)
@@ -350,7 +365,7 @@ async def _(MODEL_NAME, service_client, tinker):
         base_model=MODEL_NAME, rank=32
     )
 
-    MAX_TOKENS = 256
+    MAX_TOKENS = 4096
     TEMPERATURE = 1.0
     N_STEPS = 4
     # Deliberately high so this 4-step demo shows the reward move. For a real RL run on
@@ -499,12 +514,12 @@ async def _(
 
     for prompt_text, format_type in EVAL_PROBLEMS:
         messages = [{"role": "user", "content": prompt_text}]
-        model_input = renderer.build_generation_prompt(messages)
+        model_input = renderer.build_generation_prompt(messages, effort=0.9)
         result = await eval_client.sample(
             prompt=model_input,
             num_samples=1,
             sampling_params=tinker.SamplingParams(
-                max_tokens=MAX_TOKENS, temperature=0.5, stop=renderer.get_stop_sequences()
+                max_tokens=MAX_TOKENS, temperature=1.0, stop=renderer.get_stop_sequences()
             ),
         )
 
