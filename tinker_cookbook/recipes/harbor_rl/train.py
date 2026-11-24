@@ -217,6 +217,19 @@ class RelaySession:
         # Pyright cannot match the SDK's cached tokens property to the proxy protocol.
         return cast("SampleResponseLike", response)
 
+    def finish_rollout(self, rollout: RolloutSummary) -> Trajectory:
+        reward = (rollout.rewards or {}).get("reward")
+        turns = self.turns.pop(str(rollout.id), [])
+        if reward is None or not turns:
+            raise ValueError(
+                f"Incomplete Harbor rollout {rollout.id}: error_type={rollout.error_type}, "
+                f"reward_present={reward is not None}, captured_turns={len(turns)}"
+            )
+        turns[-1].reward = float(reward)
+        turns[-1].episode_done = True
+        logger.info("Harbor rollout %s: reward=%s, samples=%d", rollout.id, reward, len(turns))
+        return Trajectory(turns, final_ob=tinker.ModelInput.empty())
+
 
 @dataclass
 class RelaySessions:
@@ -275,22 +288,15 @@ class HarborRolloutStrategy(RolloutStrategy):
             self._session(group, cast(TinkerTokenCompleter, policy)) as session,
             AsyncHarbor(base_url=self.harbor_server_url) as client,
         ):
-            trajectories = []
-            async for rollout in _run_job(client, session.session_id, group):
-                reward = (rollout.rewards or {}).get("reward")
-                turns = session.turns.pop(str(rollout.id), [])
-                if reward is None or not turns:
-                    raise ValueError(
-                        f"Rollout {rollout.id} missing valid reward or captured samples"
-                    )
-                turns[-1].reward = float(reward)
-                turns[-1].episode_done = True
-                trajectories.append(Trajectory(turns, final_ob=tinker.ModelInput.empty()))
-                logger.info(
-                    "Harbor rollout %s: reward=%s, samples=%d", rollout.id, reward, len(turns)
-                )
+            trajectories = [
+                session.finish_rollout(rollout)
+                async for rollout in _run_job(client, session.session_id, group)
+            ]
             if len(trajectories) != group.group_size:
-                raise ValueError("Incomplete Harbor rollout group")
+                raise ValueError(
+                    f"Incomplete Harbor rollout group: expected {group.group_size} rollouts, "
+                    f"received {len(trajectories)}"
+                )
             return RolloutResult(trajectories, envs=[], errors=[])
 
 

@@ -4,14 +4,14 @@ RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed 
 
 ## Train through a Harbor server
 
-Run these commands from the cookbook root. Harbor and the trainer run locally. Claude Code runs in Daytona.
+Run these commands from the cookbook root with Python 3.12+. The trainer and Harbor server can share a virtual environment. If you run them separately, the server needs access to the tasks at the same absolute paths as the trainer. Claude Code runs in Daytona.
 
-**One-time setup**
+**Trainer setup**
 
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install -e . 'harbor[daytona] @ git+https://github.com/harbor-framework/harbor@v0.26.0'
+uv pip install -e '.[harbor]'
 harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0/
 ```
 
@@ -26,6 +26,7 @@ ngrok http 127.0.0.1:8390
 
 ```bash
 source .venv/bin/activate
+uv pip install 'harbor[daytona]>=0.26.0'
 export DAYTONA_API_KEY="<your-daytona-api-key>"
 export HARBOR_API_KEY="<your-harbor-key>"
 harbor serve --relay-url "https://<your-ngrok-domain>"
@@ -49,6 +50,36 @@ To see two concurrent jobs share a relay session, set `groups_per_batch=2`.
 
 The trainer joins Harbor rewards to Tinker's sampled tokens and log probabilities
 by rollout ID. Captures are stored under `<log_path>/capture`.
+
+```mermaid
+sequenceDiagram
+    participant L as Trainer
+    participant H as Harbor server and relay
+    participant A as Agent in Daytona
+    participant C as Connector
+    participant P as Capture proxy
+    participant T as Tinker
+    C->>H: Open session WebSocket
+    L->>H: Submit job with session ID
+    H->>A: Start rollouts
+    par Each model turn
+        A->>H: Send chat request
+        H->>C: Forward request with rollout and request IDs
+        C->>P: Send tagged chat request
+        P->>T: Sample from prompt tokens
+        T-->>P: Sampled tokens and logprobs
+        P->>P: Store the turn under its rollout ID
+        P-->>C: Decoded response
+        C-->>H: Relay response
+        H-->>A: Return response
+    and While the job runs
+        L->>H: Poll job status
+    end
+    L->>H: Fetch rollout summaries
+    H-->>L: Rollout IDs and rewards
+    L->>L: Match rewards to captured turns by rollout ID
+    L->>T: Run training update
+```
 
 ## HarborTask
 Harbor offers a standardized format for SWE/Terminal-Bench style task.
@@ -127,10 +158,12 @@ The first argument is the task's `environment/` directory (containing a Dockerfi
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
-## Running with Modal
+## Run without a Harbor server
+
+The trainer creates Modal sandboxes directly. You can also supply a [custom sandbox factory](#sandboxfactory-and-injection).
 
 ```bash
-uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+uv pip install -e '.[modal]'
 ```
 
 First, download the Terminal-Bench tasks:
@@ -142,7 +175,7 @@ uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/termina
 Then launch training:
 
 ```bash
-uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py \
+python -m tinker_cookbook.recipes.harbor_rl.scripts.train_terminal_bench \
     model_name=moonshotai/Kimi-K2.6 \
     max_tokens=8192 \
     group_size=4 \
