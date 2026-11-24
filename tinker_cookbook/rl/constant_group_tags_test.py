@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from typing import Any, cast
 
+import pytest
 import tinker
 
 from tinker_cookbook import checkpoint_utils
@@ -18,32 +20,48 @@ from tinker_cookbook.rl.async_training_test import (
     _FakeTrainingClient,
     _Harness,
     _ListDataset,
+    _SleepEnv,
     _SleepEnvGroupBuilder,
     _UnusedDatasetBuilder,
 )
 from tinker_cookbook.rl.train import Config
-from tinker_cookbook.rl.types import EnvGroupBuilder
+from tinker_cookbook.rl.types import Env, EnvGroupBuilder
 from tinker_cookbook.utils import ml_log
 
 GROUP_SIZE = 2
 
 
 class _TaggedEnvGroupBuilder(_SleepEnvGroupBuilder):
-    def __init__(self, tag: str, problem_id: int, harness: _Harness, constant_reward: bool):
-        super().__init__(problem_id, 0.0, GROUP_SIZE, harness, constant_reward=constant_reward)
+    """A group with one tag and one reward per rollout."""
+
+    def __init__(self, tag: str, problem_id: int, harness: _Harness, rewards: tuple[float, ...]):
+        super().__init__(problem_id, 0.0, len(rewards), harness)
         self.tag = tag
+        self.rewards = rewards
+
+    async def make_envs(self) -> Sequence[Env]:
+        return [
+            _SleepEnv(self.problem_id, 0.0, reward=reward, harness=self.harness, fail=False)
+            for reward in self.rewards
+        ]
 
     def logging_tags(self) -> list[str]:
         return [self.tag]
 
 
-def _run_sync(tmp_path, groups: list[tuple[str, bool]]) -> dict[str, Any]:
-    """One batch of ``(tag, constant_reward)`` groups; returns the step's metrics row."""
+# One constant-reward group and two kept groups whose mean rewards differ.
+DROPPED = ("dropped", (1.0, 1.0))
+KEPT_A = ("kept_a", (0.0, 1.0))
+KEPT_B = ("kept_b", (0.0, 0.5))
+
+
+def _run_sync(tmp_path, groups: list[tuple[str, tuple[float, ...]]]) -> dict[str, Any]:
+    """One batch of ``(tag, rewards)`` groups; returns the step's metrics row."""
     harness = _Harness(filtered_problems=set())
     builders: list[EnvGroupBuilder] = []
-    for problem_id, (tag, constant) in enumerate(groups):
-        builders.append(_TaggedEnvGroupBuilder(tag, problem_id, harness, constant))
-        if constant:
+    for problem_id, (tag, rewards) in enumerate(groups):
+        builders.append(_TaggedEnvGroupBuilder(tag, problem_id, harness, rewards))
+        if len(set(rewards)) == 1:
             harness.filtered_problems.add(problem_id)
 
     training_client = _FakeTrainingClient(harness)
@@ -97,17 +115,35 @@ def _tags_with_metrics(row: dict[str, Any]) -> set[str]:
     return {key.split("/")[1] for key in row if key.startswith("env/")} - {"all"}
 
 
-def test_tags_follow_the_groups_that_were_kept(tmp_path):
-    # The dropped group comes first, so every later tag would shift by one if the
-    # builders were not filtered along with the trajectory groups.
-    row = _run_sync(tmp_path, [("dropped", True), ("kept_a", False), ("kept_b", False)])
+@pytest.mark.parametrize(
+    "groups",
+    [[DROPPED, KEPT_A, KEPT_B], [KEPT_A, DROPPED, KEPT_B], [KEPT_A, KEPT_B, DROPPED]],
+    ids=["dropped_first", "dropped_in_the_middle", "dropped_last"],
+)
+def test_tags_follow_the_groups_that_were_kept(tmp_path, groups):
+    # Wherever the dropped group sits, each kept tag reports its own group's reward.
+    # Before the builders were filtered along with the trajectory groups, every tag
+    # after the dropped group reported the next group's numbers.
+    row = _run_sync(tmp_path, groups)
     assert _tags_with_metrics(row) == {"kept_a", "kept_b"}
     assert row["env/all/total_episodes"] == 2 * GROUP_SIZE
     assert row["env/kept_a/total_episodes"] == GROUP_SIZE
     assert row["env/kept_b/total_episodes"] == GROUP_SIZE
+    assert row["env/kept_a/reward/total"] == pytest.approx(0.5)
+    assert row["env/kept_b/reward/total"] == pytest.approx(0.25)
 
 
 def test_tags_are_unchanged_when_nothing_is_dropped(tmp_path):
-    row = _run_sync(tmp_path, [("a", False), ("b", False), ("c", False)])
+    row = _run_sync(tmp_path, [("a", (0.0, 1.0)), ("b", (0.0, 0.5)), ("c", (0.5, 1.0))])
     assert _tags_with_metrics(row) == {"a", "b", "c"}
     assert row["env/all/total_episodes"] == 3 * GROUP_SIZE
+    assert row["env/c/reward/total"] == pytest.approx(0.75)
+
+
+def test_all_constant_batch_keeps_one_group_and_its_builder(tmp_path):
+    # remove_constant_reward_groups falls back to the first group when every group is
+    # constant. One group cannot split by tag, so only the env/all metrics are logged.
+    row = _run_sync(tmp_path, [("a", (1.0, 1.0)), ("b", (0.0, 0.0))])
+    assert _tags_with_metrics(row) == set()
+    assert row["env/all/total_episodes"] == GROUP_SIZE
+    assert row["env/all/reward/total"] == pytest.approx(1.0)
