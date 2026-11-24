@@ -379,10 +379,16 @@ def extract_gsm8k_answer(text: str) -> str:
     if answer_match:
         return answer_match.group(1).strip().replace(",", "").rstrip(".")
 
-    # Bold pattern: **123** or **$123.00** (common in chat model responses)
-    bold_numbers = re.findall(r"\*\*\$?([-]?\d+[,\d]*\.?\d*)", text)
-    if bold_numbers:
-        return bold_numbers[-1].replace(",", "").rstrip(".")
+    # Bold pattern: **123** or **$123.00** (common in chat model responses).
+    # A ** that directly follows an operand is an exponent (c**2), not bold,
+    # unless the number is closed by ** as well (result**123**).
+    bold_number = r"\$?([-]?\d+[,\d]*\.?\d*)"
+    bold_matches = re.findall(
+        rf"(?<![A-Za-z0-9)\]}}])\*\*{bold_number}|\*\*{bold_number}\*\*(?![\d(])",
+        text,
+    )
+    if bold_matches:
+        return "".join(bold_matches[-1]).replace(",", "").rstrip(".")
 
     # Last number in entire text (fallback — may match mid-reasoning numbers)
     numbers = re.findall(r"[-]?\d+[,\d]*\.?\d*", text)

@@ -18,6 +18,7 @@ from tinker_cookbook.renderers import (
     ToolCall,
     TrainOnWhat,
     get_renderer,
+    tml_renderers_adapter,
     tml_v0,
 )
 from tinker_cookbook.supervised.data import conversation_to_datum
@@ -41,10 +42,12 @@ def _messages() -> list[Message]:
     ]
 
 
-# The wheel tokenizer class each model must get, so every parametrized test also checks routing.
+# The wheel tokenizer and renderer classes each model must get, so every parametrized test also
+# checks routing.
 _INKLING_TOKENIZERS = {
-    "thinkingmachines/Inkling": "O200kBaseChatTokenizer",
-    "thinkingmachines/Inkling-2-Small": "H200kBaseChatTokenizer",
+    "thinkingmachines/Inkling": ("O200kBaseChatTokenizer", "Inkling"),
+    "thinkingmachines/Inkling-2-Small": ("H200kBaseChatTokenizer", "Inkling2"),
+    "thinkingmachines/Inkling-2-Mini": ("H200kBaseChatTokenizer", "Inkling2"),
 }
 _INKLING_MODELS = list(_INKLING_TOKENIZERS)
 
@@ -53,7 +56,9 @@ def _renderer(model_name: str = "thinkingmachines/Inkling") -> tml_v0.TmlV0Rende
     _require_tml_renderers()
     tokenizer = get_tokenizer(model_name)
     renderer = cast(tml_v0.TmlV0Renderer, get_renderer("tml_v0", tokenizer))
-    assert type(renderer.tokenizer.tml_tokenizer).__name__ == _INKLING_TOKENIZERS[model_name]
+    tokenizer_class, renderer_class = _INKLING_TOKENIZERS[model_name]
+    assert type(renderer.tokenizer.tml_tokenizer).__name__ == tokenizer_class
+    assert type(renderer._tml_renderer).__name__ == renderer_class
     return renderer
 
 
@@ -194,10 +199,20 @@ def test_remote_image_url_fails_loudly() -> None:
         )
 
 
-@pytest.mark.parametrize("model_name", _INKLING_MODELS)
-def test_image_path_builds_tinker_chunk(model_name: str) -> None:
+# A 120-pixel width is three 40-pixel patches. For Inkling, Tinker also counts a fourth,
+# padding-only patch column. Inkling-2-Small and Inkling-2-Mini take images too but count no
+# padding-only column. Tinker rejects an image with a wrong token count.
+@pytest.mark.parametrize(
+    ("model_name", "expected_tokens"),
+    [
+        ("thinkingmachines/Inkling", 4 * 2),
+        ("thinkingmachines/Inkling-2-Small", 3 * 2),
+        ("thinkingmachines/Inkling-2-Mini", 3 * 2),
+    ],
+)
+def test_image_path_builds_tinker_chunk(model_name: str, expected_tokens: int) -> None:
     renderer = _renderer(model_name)
-    image = Image.new("RGB", (64, 48), (30, 200, 120))
+    image = Image.new("RGB", (120, 80), (30, 200, 120))
     model_input = renderer.build_generation_prompt(
         [
             Message(
@@ -216,6 +231,12 @@ def test_image_path_builds_tinker_chunk(model_name: str) -> None:
     assert len(image_chunks) == 1
     assert image_chunks[0].format == "jpeg"
     assert image_chunks[0].data
+    assert image_chunks[0].expected_tokens == expected_tokens
+
+
+def test_tml_v0_rejects_another_tokenizer() -> None:
+    with pytest.raises(TypeError, match="Inkling tokenizer"):
+        get_renderer("tml_v0", get_tokenizer("moonshotai/Kimi-K3.1-Pro"))
 
 
 def test_openai_audio_path_builds_tinker_chunk(tmp_path: Path) -> None:
@@ -434,6 +455,27 @@ def test_native_tml_renderers_openai_messages_are_accepted_directly() -> None:
     assert float(weights.sum()) > 0
 
 
+def _turn_id(part: Any) -> int | None:
+    metadata = part.message_metadata
+    return None if metadata is None else metadata.product_metadata.turn_id
+
+
+def test_each_openai_message_input_is_its_own_turn() -> None:
+    _require_tml_renderers()
+    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
+    user = chat.Author(chat.AuthorKind.User)
+    messages = [
+        chat.OpenAIMessage(author=user, content=[chat.Text("one")]),
+        chat.OpenAIMessage(author=user, content=[chat.Text("two")]),
+        chat.Message(chat.Text("three"), user),
+    ]
+
+    parts = tml_renderers_adapter._native_sft_messages(messages)
+
+    # The Message after the OpenAIMessages keeps its own metadata.
+    assert [_turn_id(part) for part in parts] == [0, 1, None]
+
+
 def test_native_tml_renderers_message_list_is_accepted_directly() -> None:
     _require_tml_renderers()
     chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
@@ -495,8 +537,11 @@ def test_extension_property_holds_multiturn(model_name: str) -> None:
 
 
 @pytest.mark.parametrize("suffix", ["", ":peft:262144"])
-def test_h200k_renderer_discovery_and_round_trip(suffix: str) -> None:
-    model_name = "thinkingmachines/Inkling-2-Small" + suffix
+@pytest.mark.parametrize(
+    "base_model", ["thinkingmachines/Inkling-2-Small", "thinkingmachines/Inkling-2-Mini"]
+)
+def test_h200k_renderer_discovery_and_round_trip(base_model: str, suffix: str) -> None:
+    model_name = base_model + suffix
     renderer = get_renderer(get_recommended_renderer_name(model_name), get_tokenizer(model_name))
     assert isinstance(renderer, tml_v0.TmlV0Renderer)
     tokenizers = tml_v0.import_module("tml_renderers.tokenizers")
@@ -523,6 +568,7 @@ def test_h200k_renderer_discovery_and_round_trip(suffix: str) -> None:
     [
         "thinkingmachines/Inkling-Small",
         "thinkingmachines/Inkling-2-Small",
+        "thinkingmachines/Inkling-2-Mini",
     ],
 )
 @pytest.mark.parametrize("effort", [0.7, 0.2])

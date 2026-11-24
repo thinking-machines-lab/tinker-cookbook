@@ -279,14 +279,20 @@ class TestInkling:
         ]
 
     @pytest.mark.parametrize("suffix", ["", ":peft:262144"])
-    def test_inkling_2_small_capabilities(self, suffix: str):
-        attrs = get_model_attributes("thinkingmachines/Inkling-2-Small" + suffix)
+    @pytest.mark.parametrize(
+        ("base_model", "size_str"),
+        [
+            ("thinkingmachines/Inkling-2-Small", "594B-A17B"),
+            ("thinkingmachines/Inkling-2-Mini", "26B-A5B"),
+        ],
+    )
+    def test_inkling_2_capabilities(self, base_model: str, size_str: str, suffix: str):
+        attrs = get_model_attributes(base_model + suffix)
         assert attrs.version_str == "2"
+        assert attrs.size_str == size_str
         assert attrs.is_chat and attrs.is_vl
         assert not attrs.is_audio_in
-        assert (
-            get_recommended_renderer_name("thinkingmachines/Inkling-2-Small" + suffix) == "tml_v0"
-        )
+        assert get_recommended_renderer_name(base_model + suffix) == "tml_v0"
 
     def test_untabled_inkling_id_falls_back_to_prefix_defaults(self):
         """An Inkling id with no table entry still resolves, so a later addition

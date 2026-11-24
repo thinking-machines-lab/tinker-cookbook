@@ -105,6 +105,7 @@ def test_tml_renderers_source_dir_rolls_back_failed_sys_path_insert(
     [
         ("thinkingmachines/Inkling", True),
         ("thinkingmachines/Inkling-2-Small", True),
+        ("thinkingmachines/Inkling-2-Mini", True),
         ("moonshotai/Kimi-K3.1-Pro:peft:262144", True),
         ("moonshotai/Kimi-K2.6", False),
     ],

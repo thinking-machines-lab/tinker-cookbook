@@ -81,6 +81,13 @@ def _weights(message_list: tml_chat.MessageList) -> list[float | None]:
     ]
 
 
+def _turn_id(part: tml_chat.Message) -> int | None:
+    metadata = part.message_metadata
+    if metadata is None or metadata.product_metadata is None:
+        return None
+    return metadata.product_metadata.turn_id
+
+
 # The dicts tml_v0 passed to the wheel's from_oss_messages before tml_renderers_compat.
 def _jsonable_cookbook_message(message: Message | Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(message, dict):
@@ -212,7 +219,6 @@ _CORPUS: dict[str, list[Message]] = {
         }
     ],
     "shapes outside the cookbook type": [
-        {"role": "user", "content": [{"type": "thinking", "thinking": "t"}]},
         {
             "role": "tool_declare",
             "content": '[{"type":"function","function":{"name":"f","description":null}}]',
@@ -232,10 +238,44 @@ _CORPUS: dict[str, list[Message]] = {
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 @pytest.mark.parametrize("messages", _CORPUS.values(), ids=_CORPUS.keys())
 def test_message_list_matches_the_wheel_cookbook_reader(messages: list[Message]) -> None:
-    turns = chat.OpenAIMessage.from_oss_messages(_normalize_cookbook_media(messages))
-    expected = chat.MessageList([m for turn in turns for m in turn.to_messages()])
+    expected = chat.MessageList.from_oss_messages(_normalize_cookbook_media(messages))
 
     assert tinker_messages_to_message_list(messages) == expected
+
+
+@pytest.mark.parametrize("role", ["user", "system", "tool"])
+def test_thinking_outside_an_assistant_message_is_rejected(role: str) -> None:
+    # tml-renderers 0.4.2 rejects the same input with the same message.
+    messages = cast(
+        list[Message], [{"role": role, "content": [{"type": "thinking", "thinking": "t"}]}]
+    )
+
+    with pytest.raises(ValueError, match=f"a {role} message has a `thinking` part"):
+        tinker_messages_to_message_list(messages)
+
+
+def test_adjacent_user_messages_render_as_two_qwen3_turns() -> None:
+    renderer = import_module("tml_renderers.renderers").Qwen3()
+    messages: list[Message] = [
+        {"role": "user", "content": "one"},
+        {"role": "user", "content": "two"},
+    ]
+
+    spans, _ = renderer.render_for_completion(tinker_messages_to_message_list(messages))
+
+    tokens = [token for span in spans for token in span.span.tokens]
+    assert renderer.tokenizer.decode(tokens) == (
+        "<|im_start|>user\none<|im_end|>\n<|im_start|>user\ntwo<|im_end|>\n<|im_start|>assistant\n"
+    )
+
+
+def test_adjacent_user_messages_stay_two_through_a_round_trip() -> None:
+    messages: list[Message] = [
+        {"role": "user", "content": "one"},
+        {"role": "user", "content": "two"},
+    ]
+
+    assert message_list_to_tinker_messages(tinker_messages_to_message_list(messages)) == messages
 
 
 def test_empty_content_keeps_an_empty_text() -> None:
@@ -353,6 +393,15 @@ def test_sft_message_list_weights_the_selected_turns(
     message_list = tinker_messages_to_sft_message_list(_SFT_MESSAGES, train_on_what)
 
     assert _weights(message_list) == weights
+
+
+def test_sft_message_list_keeps_the_turn_ids_of_weighted_parts() -> None:
+    message_list = tinker_messages_to_sft_message_list(
+        _SFT_MESSAGES, TrainOnWhat.LAST_ASSISTANT_MESSAGE
+    )
+
+    # user; "First." and its end of turn; "Second." and its end of turn
+    assert [_turn_id(part) for part in message_list.messages] == [0, 1, 1, 2, 2]
 
 
 def test_sft_message_list_last_assistant_turn_starts_after_the_last_user_message() -> None:

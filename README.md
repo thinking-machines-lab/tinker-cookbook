@@ -39,12 +39,12 @@ reasoning-effort interface. Tinker Cookbook supports sampling and post-training
 every Inkling model through the standalone `tml-renderers` library, included in
 the default installation together with the required `torch>=2.10`.
 
-Pass `model_name="thinkingmachines/Inkling-2-Small"`,
-`model_name="thinkingmachines/Inkling"`, or
-`model_name="thinkingmachines/Inkling-Small"` anywhere the cookbook accepts a
-model name. The appropriate renderer and tokenizer are selected automatically for
-each of these models, including the `:peft:` long-context variants. The tokenizer
-depends on the model, so always get it from the model name.
+Pass one of `thinkingmachines/Inkling-2-Small`,
+`thinkingmachines/Inkling-2-Mini`, `thinkingmachines/Inkling`, or
+`thinkingmachines/Inkling-Small` as `model_name=` anywhere the cookbook accepts
+a model name. The appropriate renderer and tokenizer are selected automatically
+for each of these models, including the `:peft:` long-context variants. The
+tokenizer depends on the model, so always get it from the model name.
 
 All Inkling models support [controllable reasoning effort](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/thinking-effort/)
 and multimodal [image](https://tinker-docs.thinkingmachines.ai/cookbook/inkling/images/)
@@ -151,7 +151,7 @@ Then install the **tinker** plugin from the Discover tab (`/plugin` → Discover
 | `/tinker:research` | Plan and run post-training experiments — SFT, RL, DPO, distillation, evaluation, hyperparameters, model selection, and more |
 | `/tinker:debug` | Diagnose slow training, hangs, output mismatches, renderer issues, and errors |
 | `/tinker:rollout-ui` | Build rollout viewers with messages, tool calls, provenance, aligned comparisons, and accessible diffs; link to W&B for metrics |
-| `/tinker:inkling` | Work with Inkling models, including Inkling 2 Small — thinking effort, rendering, post-training, evaluation, and multimodal input |
+| `/tinker:inkling` | Work with all Inkling models — thinking effort, rendering, post-training, evaluation, and multimodal input |
 
 Skills also trigger automatically based on context — ask Claude to "set up SFT training" and it will load the right skill without a slash command. Skills update automatically when the repo is updated.
 

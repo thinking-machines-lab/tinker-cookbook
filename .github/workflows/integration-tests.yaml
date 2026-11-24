@@ -50,8 +50,6 @@ jobs:
           - test_quantized
           - test_quantized_equivalence
           - test_lifecycle
-          - test_publish
-          - test_adapter_publish
 
     name: ${{ matrix.test }}
 
@@ -72,3 +70,31 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}
+
+  # The publish tests share one HF repo, so they run in one job, one run at a time.
+  publish:
+    if: github.repository == 'thinking-machines-lab/tinker-cookbook'
+    runs-on: ubuntu-latest
+    # Holds HF_TOKEN, which can write to the test repo; the environment admits only main.
+    environment: hf-integration-tests
+    timeout-minutes: 20
+    concurrency:
+      group: hf-publish-tests
+      cancel-in-progress: false
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install-uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+
+      - name: venv
+        run: uv venv && uv sync --all-extras
+
+      - name: run tests
+        run: uv run pytest tests/weights/test_publish.py tests/weights/test_adapter_publish.py -v --timeout=120
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}

@@ -1,7 +1,7 @@
 # Inkling scripts
 
-Minimal scripts for sampling Inkling 2 Small, Inkling, and Inkling-Small with reasoning-effort,
-audio, and image inputs. Inkling support is included in the default installation.
+Minimal scripts for sampling Inkling models with reasoning effort and image inputs, plus audio
+inputs for Inkling and Inkling-Small. Inkling support is included in the default installation.
 
 Every script defaults to `thinkingmachines/Inkling`; pass `model_name` to target
 another model in the family:

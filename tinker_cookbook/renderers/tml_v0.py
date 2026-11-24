@@ -1,4 +1,4 @@
-"""Cookbook renderer backed by the public ``tml_renderers.v0`` renderer."""
+"""Cookbook renderer backed by the public ``tml_renderers`` Inkling renderers."""
 
 from __future__ import annotations
 
@@ -17,11 +17,10 @@ from tinker_cookbook.renderers.tml_renderers_adapter import (
     _messages_to_render_input,
     _native_sft_messages,
 )
-from tinker_cookbook.tokenizer_utils import TmlTokenizer
+from tinker_cookbook.tokenizer_utils import TmlTokenizer, Tokenizer
 
 if TYPE_CHECKING:
-    from tml_renderers import chat as tml_chat  # pyright: ignore[reportMissingImports]
-    from tml_renderers import v0 as tml_v0  # pyright: ignore[reportMissingImports]
+    from tml_renderers import renderers as tml_renderers  # pyright: ignore[reportMissingImports]
 
 # Effort values must be in [0.0, 1.0).
 DEFAULT_EFFORT: float = 0.9
@@ -32,43 +31,50 @@ def _validate_effort(effort: float) -> None:
         raise ValueError(f"thinking effort must be a finite number in [0, 1), got {effort}")
 
 
-def _prepare_sft_input(messages: TmlRenderInput, effort: float) -> list[tml_chat.Message]:
-    """Normalize SFT input to native messages ready for ``render_for_sft``.
-
-    Expands ``OpenAIMessage`` inputs, terminates model turns with
-    ``ModelEndSampling``, and inserts the same effort message used by
-    completion rendering.
-    """
-    _validate_effort(effort)
-    chat = import_module("tml_renderers.chat")
-    native_messages = _native_sft_messages(messages)
-
-    # ThinkingEffort stores thousandths; tml-renderers owns its display rounding.
-    effort_message = chat.Message(
-        content=chat.ThinkingEffort(round(effort * 1000)),
-        author=chat.Author(chat.AuthorKind.System),
-    )
-    insertion_index = 0
-    while (
-        insertion_index < len(native_messages)
-        and native_messages[insertion_index].author.kind == chat.AuthorKind.System
-    ):
-        insertion_index += 1
-    native_messages.insert(insertion_index, effort_message)
-    return native_messages
-
-
 class TmlV0Renderer(TmlRenderersRenderer):
     """Renderer adapter for Inkling models."""
 
     renderer_name = "tml_v0"
-    _tml_renderer: tml_v0.Renderer
+    _tml_renderer: tml_renderers.Inkling | tml_renderers.Inkling2
 
-    def _build_tml_renderer(self, tml_tokenizer: TmlTokenizer) -> tml_v0.Renderer:
-        return import_module("tml_renderers.v0").Renderer(tml_tokenizer)
+    def __init__(self, tokenizer: Tokenizer):
+        super().__init__(tokenizer)
+        self._renderers_by_effort: dict[float, tml_renderers.Inkling | tml_renderers.Inkling2] = {
+            DEFAULT_EFFORT: self._tml_renderer
+        }
+
+    def _build_tml_renderer(
+        self, tml_tokenizer: TmlTokenizer
+    ) -> tml_renderers.Inkling | tml_renderers.Inkling2:
+        return self._build_inkling(tml_tokenizer, DEFAULT_EFFORT)
+
+    @staticmethod
+    def _build_inkling(
+        tml_tokenizer: TmlTokenizer, effort: float
+    ) -> tml_renderers.Inkling | tml_renderers.Inkling2:
+        # Each Inkling generation counts image tokens differently, so build the model's own
+        # wheel renderer. The tokenizer was chosen per model (`_tml_tokenizer_family`).
+        renderers = import_module("tml_renderers.renderers")
+        tokenizers = import_module("tml_renderers.tokenizers")
+        if isinstance(tml_tokenizer, tokenizers.O200kBaseChatTokenizer):
+            return renderers.Inkling(effort)
+        if isinstance(tml_tokenizer, tokenizers.H200kBaseChatTokenizer):
+            return renderers.Inkling2(effort)
+        raise TypeError(
+            f"tml_v0 needs an Inkling tokenizer, got {type(tml_tokenizer).__name__}. "
+            "Use get_tokenizer('thinkingmachines/Inkling') or another Inkling model."
+        )
+
+    def _renderer_for_effort(self, effort: float) -> tml_renderers.Inkling | tml_renderers.Inkling2:
+        _validate_effort(effort)
+        renderer = self._renderers_by_effort.get(effort)
+        if renderer is None:
+            renderer = self._build_inkling(self._tml_tokenizer, effort)
+            self._renderers_by_effort[effort] = renderer
+        return renderer
 
     def _parse_error_types(self) -> tuple[type[Exception], ...]:
-        return (import_module("tml_renderers.v0").ParseError,)
+        return (ValueError,)
 
     @property
     def has_extension_property(self) -> bool:
@@ -91,9 +97,8 @@ class TmlV0Renderer(TmlRenderersRenderer):
         ``tml-renderers``.
         """
         self._validate_generation_options(role, prefill)
-        _validate_effort(effort)
-        render_input = _messages_to_render_input(messages)
-        spans, _parser = self._tml_renderer.render_for_completion_with_effort(render_input, effort)
+        renderer = self._renderer_for_effort(effort)
+        spans, _parser = renderer.render_for_completion(_messages_to_render_input(messages))
         return self._token_spans_to_model_input(spans)
 
     def build_supervised_examples(
@@ -104,8 +109,8 @@ class TmlV0Renderer(TmlRenderersRenderer):
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         """Build SFT examples with the same effort conditioning used for generation.
 
-        The inserted effort message is token-identical to the one
-        ``build_generation_prompt`` renders, so supervised data matches sampling.
+        Both methods render with the same wheel renderer for ``effort``, so the
+        effort message in supervised data matches the one used for sampling.
 
         Generic supervised dataset builders currently use the default effort
         (``0.9``). We plan to expose per-example effort through those builders;
@@ -113,7 +118,8 @@ class TmlV0Renderer(TmlRenderersRenderer):
         specific effort level.
         """
         render_input = _cookbook_messages_to_sft_input(messages, train_on_what, self.renderer_name)
-        return self._render_sft_examples(_prepare_sft_input(render_input, effort))
+        renderer = self._renderer_for_effort(effort)
+        return self._render_sft_examples(_native_sft_messages(render_input), renderer)
 
     def build_supervised_example(
         self,
