@@ -2647,6 +2647,13 @@ async def do_sync_training(
                         if id(group) not in kept_ids:
                             count_discarded_rollout(cost_tracker, group)
                             discarded_log.discarded(i_batch)
+                    # Drop the same builders: the train step pairs builders with
+                    # groups by position to attribute per-tag metrics.
+                    env_group_builders_P = [
+                        builder
+                        for builder, group in safezip(env_group_builders_P, trajectory_groups_P)
+                        if id(group) in kept_ids
+                    ]
                     trajectory_groups_P = kept_groups_P
 
                 # Train step
