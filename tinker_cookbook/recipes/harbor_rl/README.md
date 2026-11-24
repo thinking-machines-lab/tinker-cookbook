@@ -4,7 +4,7 @@ RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed 
 
 ## Train through a Harbor server
 
-Run these commands from the cookbook root with Python 3.12+. The trainer and Harbor server can share a virtual environment. If you run them separately, the server needs access to the tasks at the same absolute paths as the trainer. Claude Code runs in Daytona.
+Run these commands from the cookbook root with Python 3.12+. The trainer and Harbor server can share a virtual environment. If you run them separately, the server needs access to the tasks at the same absolute paths as the trainer. Claude Code runs in a Modal sandbox.
 
 **Trainer setup**
 
@@ -26,8 +26,8 @@ ngrok http 127.0.0.1:8390
 
 ```bash
 source .venv/bin/activate
-uv pip install 'harbor[daytona]>=0.26.0'
-export DAYTONA_API_KEY="<your-daytona-api-key>"
+uv pip install 'harbor[modal]>=0.26.0'
+modal token new  # Skip if a Modal profile or MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are configured
 export HARBOR_API_KEY="<your-harbor-key>"
 harbor serve --relay-url "https://<your-ngrok-domain>"
 ```
@@ -55,7 +55,7 @@ by rollout ID. Captures are stored under `<log_path>/capture`.
 sequenceDiagram
     participant L as Trainer
     participant H as Harbor server and relay
-    participant A as Agent in Daytona
+    participant A as Agent in Modal
     participant C as Connector
     participant P as Capture proxy
     participant T as Tinker

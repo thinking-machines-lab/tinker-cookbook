@@ -349,7 +349,7 @@ async def _run_job(
                     "kwargs": {"max_turns": group.max_turns},
                 }
             ],
-            "environment": {"type": "daytona", "delete": True},
+            "environment": {"type": "modal", "delete": True},
             "n_attempts": group.group_size,
             "n_concurrent_trials": group.group_size,
             "retry": {"max_retries": 0},
