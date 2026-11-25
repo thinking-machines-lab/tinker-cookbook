@@ -784,6 +784,8 @@ def reliability_guard(maximum_memory_bytes=None):
 
 TEST_CODE = """
 import json
+import os
+import shutil
 import sys
 
 from testing_util import run_test
@@ -792,6 +794,21 @@ with open('test_cases.txt', 'r') as fin:
     sample = json.load(fin)
 with open('code.py', 'r') as fin:
     code = fin.read()
+
+# Remove the answer key and the grader module before the submission runs, so
+# it cannot read the expected outputs or import testing_util to patch it.
+# Only an already-absent file is ignored; any other failure aborts grading.
+# This is not process isolation: the submission still runs in this process.
+for _artifact in ('test_cases.txt', 'testing_util.py'):
+    try:
+        os.unlink(_artifact)
+    except FileNotFoundError:
+        pass
+    except OSError as _err:
+        print({'error_code': -6, 'error_message': f'Could not remove {_artifact}: {_err!r}'})
+        sys.exit(-1)
+shutil.rmtree('__pycache__', ignore_errors=True)
+sys.modules.pop('testing_util', None)
 
 result, metadata = run_test(sample, code, debug=False, timeout=%(timeout)s)
 if any(x != True for x in result):
