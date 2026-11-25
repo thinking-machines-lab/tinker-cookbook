@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 from collections import defaultdict
 from collections.abc import Sequence
@@ -27,6 +28,7 @@ from tinker_cookbook.rl.types import (
 )
 from tinker_cookbook.stores.training_store import TrainingRunStore
 from tinker_cookbook.tokenizer_utils import get_tokenizer
+from tinker_cookbook.tool_use import AgentToolMessageEnv
 
 from .data import (
     DEFAULT_CACHE_DIR,
@@ -39,8 +41,13 @@ from .data import (
     load_prophet_arena_split,
     parse_utc_datetime,
 )
+from .search import RewindSearchTool, SearchSettings
 
 logger = logging.getLogger(__name__)
+
+FORECAST_SEARCH_INSTRUCTIONS = """You forecast prediction markets. You can call the search tool for news and background before answering. Search only returns pages that existed before the forecast snapshot, so it cannot reveal how the market resolved.
+
+Search when the reference material leaves out something that matters. When you are ready, reply without calling the tool and end your reply with the probability of YES on its own line."""
 
 _FINAL_FORECAST_RE = re.compile(
     r"""
@@ -147,6 +154,67 @@ class ForecastEnv(MessageEnv):
         )
 
 
+class ForecastSearchEnv(MessageEnv):
+    """A binary forecast where the model may first search the web as of the snapshot.
+
+    Logs the same per-question fields as ForecastEnv on the final turn, so group
+    metrics and the AUC evaluator work unchanged.
+    """
+
+    def __init__(
+        self,
+        example: ForecastExample,
+        renderer: renderers.Renderer,
+        search_tool: RewindSearchTool,
+        max_turns: int,
+    ):
+        self.example = example
+        self.example_id = f"{example.submission_id}:{example.market}"
+        prefix = renderer.create_conversation_prefix_with_tools(
+            tools=[search_tool.search.to_spec()],
+            system_prompt=FORECAST_SEARCH_INSTRUCTIONS,
+        )
+        self.tool_env = AgentToolMessageEnv(
+            tools=[search_tool.search],
+            initial_messages=[*prefix, {"role": "user", "content": render_prompt(example)}],
+            max_turns=max_turns,
+            reward_fn=self._grade,
+            failed_parse_reward=0.0,
+        )
+
+    async def initial_observation(self) -> list[renderers.Message]:
+        return await self.tool_env.initial_observation()
+
+    @staticmethod
+    def _final_forecast(message: renderers.Message | None) -> float | None:
+        # A turn that still calls the tool (e.g. at max_turns) is not an answer.
+        if message is None or message.get("tool_calls"):
+            return None
+        return parse_forecast(get_text_content(message))
+
+    async def _grade(self, history: list[renderers.Message]) -> tuple[float, dict[str, float]]:
+        final = next((m for m in reversed(history) if m.get("role") == "assistant"), None)
+        return _score(self._final_forecast(final), self.example.outcome)["brier_reward"], {}
+
+    async def step(self, message: renderers.Message) -> MessageStepResult:
+        result = await self.tool_env.step(message)
+        if result.episode_done:
+            # A parse error skips grading, so it must not count as a valid forecast.
+            probability = (
+                None if result.metrics.get("parse_error") else self._final_forecast(message)
+            )
+            scores = _score(probability, self.example.outcome)
+            result.logs.update(
+                {
+                    "question_id": self.example_id,
+                    "forecast": "invalid" if probability is None else f"{probability:.6f}",
+                    "outcome": self.example.outcome,
+                    **scores,
+                }
+            )
+        return result
+
+
 @dataclass(frozen=True)
 class ForecastGroupBuilder(EnvGroupBuilder):
     """Create one policy-gradient group from repeated forecasts of one market."""
@@ -154,12 +222,23 @@ class ForecastGroupBuilder(EnvGroupBuilder):
     example: ForecastExample
     renderer: renderers.Renderer
     group_size: int
+    search: SearchSettings | None = None
+
+    def _message_env(self) -> MessageEnv:
+        if self.search is None:
+            return ForecastEnv(self.example)
+        return ForecastSearchEnv(
+            self.example,
+            self.renderer,
+            self.search.tool_for(self.example.snapshot_time),
+            self.search.max_turns,
+        )
 
     async def make_envs(self) -> Sequence[Env]:
         return [
             EnvFromMessageEnv(
                 renderer=self.renderer,
-                message_env=ForecastEnv(self.example),
+                message_env=self._message_env(),
                 failed_parse_reward=0.0,
                 context_overflow_reward=0.0,
             )
@@ -281,6 +360,7 @@ class ForecastRLDataset(RLDataset):
         group_size: int,
         renderer: renderers.Renderer,
         epochs: int = 1,
+        search: SearchSettings | None = None,
     ):
         if batch_size <= 0 or group_size <= 0 or epochs <= 0:
             raise ValueError("batch_size, group_size, and epochs must be positive")
@@ -289,6 +369,7 @@ class ForecastRLDataset(RLDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.epochs = epochs
+        self.search = search
 
     def __len__(self) -> int:
         return self.epochs * math.ceil(len(self.examples) / self.batch_size)
@@ -303,6 +384,7 @@ class ForecastRLDataset(RLDataset):
                 example=example,
                 renderer=self.renderer,
                 group_size=self.group_size,
+                search=self.search,
             )
             for example in self.examples[start : start + self.batch_size]
         ]
@@ -325,6 +407,10 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
     max_train_questions: int | None = DEFAULT_MAX_TRAIN_QUESTIONS
     max_validation_questions: int | None = DEFAULT_MAX_VALIDATION_QUESTIONS
     seed: int = 0
+    # Optional web search as of each snapshot, via Linkup Rewind (LINKUP_API_KEY optional).
+    search: bool = False
+    search_max_turns: int = 4
+    search_num_results: int = 5
     # The training loop adds its own plain evaluator whenever a validation dataset
     # is returned; the recipe supplies ForecastEvaluator instead, so it asks for
     # training data only and builds the validation dataset separately.
@@ -343,6 +429,13 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
             max_validation_questions=self.max_validation_questions,
             seed=self.seed,
         )
+        search = None
+        if self.search:
+            search = SearchSettings(
+                api_key=os.environ.get("LINKUP_API_KEY") or None,
+                max_turns=self.search_max_turns,
+                num_results=self.search_num_results,
+            )
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
         renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
         logger.info(
@@ -358,12 +451,14 @@ class ProphetArenaRLDatasetBuilder(RLDatasetBuilder):
                 group_size=self.group_size,
                 renderer=renderer,
                 epochs=self.train_epochs,
+                search=search,
             ),
             ForecastRLDataset(
                 split.validation,
                 batch_size=self.groups_per_batch,
                 group_size=self.validation_group_size,
                 renderer=renderer,
+                search=search,
             )
             if self.include_validation
             else None,
