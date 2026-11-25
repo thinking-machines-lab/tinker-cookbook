@@ -146,6 +146,11 @@ class Config:
 
     # Model parameters
     lora_rank: int = 32
+    # Which weight groups a fresh adapter trains. Ignored when loading a
+    # checkpoint, which keeps its own adapter configuration.
+    train_mlp: bool = True
+    train_attn: bool = True
+    train_unembed: bool = True
 
     # Infrastructure parameters
     base_url: str | None = None
@@ -382,6 +387,9 @@ async def main(config: Config):
             training_client = await service_client.create_lora_training_client(
                 base_model=config.model_name,
                 rank=config.lora_rank,
+                train_mlp=config.train_mlp,
+                train_attn=config.train_attn,
+                train_unembed=config.train_unembed,
                 user_metadata=user_metadata,
             )
 

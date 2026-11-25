@@ -51,6 +51,9 @@ class Config:
         dpo_beta (float): KL-penalty coefficient in the DPO loss.  Higher
             values penalize deviations from the reference model more strongly.
         lora_rank (int): LoRA adapter rank.
+        train_mlp (bool): Train the MLP weights of a fresh adapter.
+        train_attn (bool): Train the attention weights of a fresh adapter.
+        train_unembed (bool): Train the unembedding weights of a fresh adapter.
         num_replicas (int): Number of GPU replicas to use.
         base_url (str | None): Override for the Tinker service URL.
         evaluator_builders (list[EvaluatorBuilder]): Evaluators run every
@@ -109,6 +112,9 @@ class Config:
 
     # Model parameters
     lora_rank: int = 32
+    train_mlp: bool = True
+    train_attn: bool = True
+    train_unembed: bool = True
 
     # Infrastructure parameters
     num_replicas: int = 8
@@ -202,7 +208,12 @@ def create_dpo_clients(
         logger.info(f"Loaded weights from {config.load_checkpoint_path}")
     else:
         training_client = service_client.create_lora_training_client(
-            base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+            base_model=config.model_name,
+            rank=config.lora_rank,
+            train_mlp=config.train_mlp,
+            train_attn=config.train_attn,
+            train_unembed=config.train_unembed,
+            user_metadata=user_metadata,
         ).result()
     # Create a sampling client for the reference model from the training client
     reference_client = training_client.save_weights_and_get_sampling_client().result()
