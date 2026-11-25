@@ -93,8 +93,10 @@ def quantize_blockwise(
     pr, pc = padded.shape
     blocks = padded.reshape(pr // rb, rb, pc // cb, cb).permute(0, 2, 1, 3)
 
-    # Per-block max for scale computation
-    block_max = blocks.abs().reshape(blocks.shape[0], blocks.shape[1], -1).max(dim=-1).values
+    # Compute scales in float32 so small FP16 blocks do not overflow the reciprocal.
+    block_max = (
+        blocks.abs().reshape(blocks.shape[0], blocks.shape[1], -1).max(dim=-1).values.float()
+    )
     # Avoid division by zero
     block_max = block_max.clamp(min=1e-12)
 
