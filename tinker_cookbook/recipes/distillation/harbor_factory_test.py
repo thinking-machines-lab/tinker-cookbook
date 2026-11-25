@@ -74,7 +74,7 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> _Boundary:
     monkeypatch.setattr(harbor_env, "load_harbor_tasks", mocked.task_loader)
     monkeypatch.setattr(tinker, "ServiceClient", _forbidden)
     monkeypatch.setattr(tokenizer_utils, "get_tokenizer", _forbidden)
-    monkeypatch.setattr(harbor_env.ModalSandbox, "create", _forbidden)
+    monkeypatch.setattr("tinker_cookbook.sandbox.modal_sandbox.ModalSandbox.create", _forbidden)
     return mocked
 
 
