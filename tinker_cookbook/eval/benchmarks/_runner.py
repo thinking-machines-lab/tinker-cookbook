@@ -6,6 +6,7 @@ Key design decisions:
 - Resumability via idx-based deduplication
 - Coroutine-safe saving via asyncio.Lock
 - Multi-turn benchmarks get lower concurrency (agent_concurrency)
+- Per-tag breakdowns (``{name}/{tag}/accuracy``) computed from ``Env.tags``
 
 All file I/O goes through the ``Storage`` protocol (``tinker_cookbook.stores``).
 When ``BenchmarkConfig.save_dir`` is set, a ``Storage`` backend is created
@@ -82,6 +83,40 @@ def _get_example_id(env: Env, idx: int, benchmark_name: str = "") -> str:
     return str(idx)
 
 
+def _get_tags(env: Env) -> list[str]:
+    """Categorical labels for an env's example, from its ``tags`` attribute.
+
+    Read off the env rather than ``step()`` output so examples that time out,
+    error, or never reach the grader are still attributed to their bucket.
+    ``EnvFromMessageEnv`` forwards ``tags`` from the inner ``MessageEnv``, the
+    same way it forwards ``example_id``.
+    """
+    tags = getattr(env, "tags", None)
+    if not isinstance(tags, (list, tuple)):
+        return []
+    return [t for t in tags if isinstance(t, str)]
+
+
+def _compute_tag_breakdown(
+    benchmark_name: str, rewards: list[float], tags_list: list[list[str]]
+) -> dict[str, float]:
+    """Accuracy (fraction with reward > 0) per tag, keyed ``{name}/{tag}/accuracy``.
+
+    Uses the same denominator as the headline score: every example carrying
+    the tag counts once, including timeouts, errors, and truncations (reward 0).
+    Merged into ``BenchmarkResult.metrics`` via ``setdefault`` so keys a
+    benchmark's own ``aggregate()`` emits take precedence.
+    """
+    by_tag: dict[str, list[float]] = {}
+    for reward, tags in zip(rewards, tags_list, strict=True):
+        for tag in set(tags):
+            by_tag.setdefault(tag, []).append(reward)
+    return {
+        f"{benchmark_name}/{tag}/accuracy": sum(1 for r in rs if r > 0) / len(rs)
+        for tag, rs in sorted(by_tag.items())
+    }
+
+
 def _trajectory_to_stored(
     idx: int,
     trajectory: Trajectory,
@@ -89,6 +124,7 @@ def _trajectory_to_stored(
     tokenizer,
     time_seconds: float,
     example_id: str,
+    tags: list[str],
 ) -> StoredTrajectory:
     """Convert a Trajectory to a StoredTrajectory with decoded text."""
     turns: list[StoredTurn] = []
@@ -133,6 +169,7 @@ def _trajectory_to_stored(
         idx=idx,
         benchmark=benchmark_name,
         example_id=example_id,
+        tags=tags,
         turns=turns,
         reward=total_reward,
         metrics=all_metrics,
@@ -549,6 +586,7 @@ async def run_benchmark(
                 num_errors += 1
 
     total_to_run = sum(1 for eid in env_example_ids if eid not in completed)
+    env_tags = [_get_tags(env) for env in envs]
 
     tokenizer = renderer.tokenizer
 
@@ -609,6 +647,7 @@ async def run_benchmark(
                         tokenizer,
                         elapsed,
                         example_id=_get_example_id(env, idx),
+                        tags=_get_tags(env),
                     )
                     stored.metrics.update(step_metrics)
                     if config.grade_fn is not None:
@@ -636,6 +675,7 @@ async def run_benchmark(
                             error=f"timeout ({config.timeout_seconds}s)",
                             time_seconds=elapsed,
                             example_id=_get_example_id(env, idx),
+                            tags=_get_tags(env),
                         ),
                     )
 
@@ -657,6 +697,7 @@ async def run_benchmark(
                             error=str(e),
                             time_seconds=elapsed,
                             example_id=_get_example_id(env, idx),
+                            tags=_get_tags(env),
                         ),
                     )
 
@@ -699,6 +740,10 @@ async def run_benchmark(
         result.num_truncated = num_truncated
         result.time_seconds = time.monotonic() - t0
 
+        valid_tags = [t for r, t in zip(rewards, env_tags) if r is not None]
+        for k, v in _compute_tag_breakdown(benchmark.name, valid_rewards, valid_tags).items():
+            result.metrics.setdefault(k, v)
+
         if valid_metrics:
             for k, v in _compute_token_turn_summary(valid_metrics).items():
                 result.metrics.setdefault(k, v)
@@ -729,6 +774,7 @@ async def run_benchmark(
     per_example_rewards: dict[str, list[float]] = {}
     all_rewards: list[float] = []
     all_metrics: list[Metrics] = []
+    all_tags: list[list[str]] = []
     total_errors = 0
 
     for sample_idx in range(num_samples):
@@ -747,6 +793,7 @@ async def run_benchmark(
         num_completed = 0
         completed = {}  # No resumability in pass@k mode
         env_example_ids = [_get_example_id(e, i) for i, e in enumerate(sample_envs)]
+        env_tags = [_get_tags(e) for e in sample_envs]
         total_to_run = len(sample_envs)
 
         await asyncio.gather(*[run_one(i, env) for i, env in enumerate(sample_envs)])
@@ -760,6 +807,7 @@ async def run_benchmark(
             per_example_rewards.setdefault(env_example_ids[idx], []).append(r)
             all_rewards.append(r)
             all_metrics.append(m)
+            all_tags.append(env_tags[idx])
 
     # Compute pass@k
     k_values = _choose_k_values(num_samples)
@@ -779,6 +827,9 @@ async def run_benchmark(
     result.num_truncated = total_truncated
     result.time_seconds = time.monotonic() - t0
     result.pass_at_k = pass_at_k
+
+    for k, v in _compute_tag_breakdown(benchmark.name, all_rewards, all_tags).items():
+        result.metrics.setdefault(k, v)
 
     if all_metrics:
         for k, v in _compute_token_turn_summary(all_metrics).items():
@@ -1010,6 +1061,13 @@ def regrade_trajectories(
     re-aggregates the results — **without re-running the model**. This is
     useful for iterating on answer extraction logic after a costly eval run.
 
+    Per-tag breakdowns come only from the stored ``tags``, so files with rows
+    written before that field existed can disagree with a resumed run, which
+    labels every example from its freshly built env. An untagged row still counts
+    in the overall score but in no tag's bucket; its label is not guessed. For
+    example, an old untagged failure plus a new success on the same tag gives
+    resume 0.5 and regrade 1.0 for that tag, with overall accuracy 0.5 for both.
+
     Args:
         save_dir: Directory containing saved benchmark results.
         benchmark_name: Name of the benchmark (e.g. ``"gsm8k"``).
@@ -1017,7 +1075,8 @@ def regrade_trajectories(
             assistant turn (thinking already stripped in stored trajectories).
             ``logs`` contains benchmark-specific fields (``expected``, etc.).
         aggregate_fn: Optional custom aggregation. If ``None``, computes
-            simple accuracy (fraction with reward > 0).
+            simple accuracy (fraction with reward > 0). Per-tag breakdowns
+            are added from the stored ``tags`` either way.
 
     Returns:
         New BenchmarkResult with re-graded scores.
@@ -1054,15 +1113,20 @@ def regrade_trajectories(
         regraded_metrics.append(traj.metrics)
 
     if aggregate_fn is not None:
-        return aggregate_fn(rewards, regraded_metrics)
+        result = aggregate_fn(rewards, regraded_metrics)
+    else:
+        # Default: simple accuracy
+        num_correct = sum(1 for r in rewards if r > 0)
+        num_errors = sum(1 for t in trajectories if t.error)
+        result = BenchmarkResult(
+            name=benchmark_name,
+            score=num_correct / len(rewards) if rewards else 0.0,
+            num_examples=len(rewards),
+            num_correct=num_correct,
+            num_errors=num_errors,
+        )
 
-    # Default: simple accuracy
-    num_correct = sum(1 for r in rewards if r > 0)
-    num_errors = sum(1 for t in trajectories if t.error)
-    return BenchmarkResult(
-        name=benchmark_name,
-        score=num_correct / len(rewards) if rewards else 0.0,
-        num_examples=len(rewards),
-        num_correct=num_correct,
-        num_errors=num_errors,
-    )
+    tags_list = [traj.tags for traj in trajectories]
+    for k, v in _compute_tag_breakdown(benchmark_name, rewards, tags_list).items():
+        result.metrics.setdefault(k, v)
+    return result
