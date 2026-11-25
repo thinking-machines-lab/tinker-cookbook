@@ -19,7 +19,7 @@ class FakeSandbox:
     """In-memory sandbox for testing."""
 
     def __init__(self) -> None:
-        self.files: dict[str, str] = {}
+        self.files: dict[str, str | bytes] = {}
         self.executable_files: set[str] = set()
         self.commands_run: list[str] = []
         self._command_results: dict[str, SandboxResult] = {}
@@ -51,13 +51,15 @@ class FakeSandbox:
         self, path: str, max_bytes: int | None = None, timeout: int = 60
     ) -> SandboxResult:
         if path in self.files:
-            return SandboxResult(stdout=self.files[path], stderr="", exit_code=0)
+            content = self.files[path]
+            stdout = content.decode() if isinstance(content, bytes) else content
+            return SandboxResult(stdout=stdout, stderr="", exit_code=0)
         return SandboxResult(stdout="", stderr=f"No such file: {path}", exit_code=1)
 
     async def write_file(
         self, path: str, content: str | bytes, executable: bool = False, timeout: int = 60
     ) -> SandboxResult:
-        self.files[path] = content if isinstance(content, str) else content.decode()
+        self.files[path] = content
         if executable:
             self.executable_files.add(path)
         return SandboxResult(stdout="", stderr="", exit_code=0)
@@ -152,6 +154,22 @@ class TestHarborReward:
         assert "/tests/test.sh" in sandbox.executable_files
         assert "/tests/helper.py" not in sandbox.executable_files
         assert "/tests/fixtures/expected.txt" not in sandbox.executable_files
+
+    def test_upload_tests_binary_fixture(self, tmp_path: Path) -> None:
+        """Binary fixtures such as a reference PNG are uploaded byte-for-byte."""
+        png = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+        (tmp_path / "test.sh").write_text("#!/bin/bash\necho ok")
+        (tmp_path / "reference.png").write_bytes(png)
+
+        sandbox = FakeSandbox()
+        sandbox.files["/logs/verifier/reward.txt"] = "1.0"
+        reward_fn = self._make_reward(tmp_path, sandbox)
+
+        reward, info = asyncio.run(reward_fn([]))
+
+        assert sandbox.files["/tests/reference.png"] == png
+        assert reward == 1.0
+        assert "grading_error" not in info
 
 
 # ---------------------------------------------------------------------------
