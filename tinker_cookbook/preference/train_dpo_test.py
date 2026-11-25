@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import cast
+from unittest.mock import patch
 
+import pytest
 import tinker
 
 from tinker_cookbook import checkpoint_utils
@@ -48,7 +50,10 @@ class _ServiceClient:
 
 
 def _clients(
-    load_checkpoint_path: str | None, resume_from: str | None
+    load_checkpoint_path: str | None,
+    resume_from: str | None,
+    *,
+    reference_model_name: str | None = None,
 ) -> tuple[_TrainingClient, object]:
     config = Config(
         log_path="/tmp/unused",
@@ -56,6 +61,7 @@ def _clients(
         recipe_name="test",
         dataset_builder=cast(ChatDatasetBuilder, None),
         load_checkpoint_path=load_checkpoint_path,
+        reference_model_name=reference_model_name,
     )
     resume_info = (
         checkpoint_utils.CheckpointRecord(name="000020", batch=20, state_path=resume_from)
@@ -88,3 +94,27 @@ def test_a_resumed_run_keeps_the_reference_it_started_with() -> None:
     training_client, reference = _clients("tinker://sft/weights/final", resumed)
     assert training_client.weights == resumed
     assert reference == "sampler of tinker://sft/weights/final"
+
+
+@pytest.mark.parametrize("load_checkpoint_path", [None, "tinker://sft/weights/final"])
+@pytest.mark.parametrize("resume_from", [None, "tinker://dpo/weights/000020"])
+def test_explicit_reference_model_is_used_as_the_reference(
+    load_checkpoint_path: str | None, resume_from: str | None
+) -> None:
+    with (
+        patch.object(_ServiceClient, "create_sampling_client") as create_sampler,
+        patch.object(_TrainingClient, "save_weights_and_get_sampling_client") as snapshot,
+    ):
+        _, reference = _clients(load_checkpoint_path, resume_from, reference_model_name="some/ref")
+
+    create_sampler.assert_called_once_with(base_model="some/ref")
+    assert reference is create_sampler.return_value.result.return_value
+    snapshot.assert_not_called()
+
+
+def test_reference_defaults_to_the_initial_training_weights() -> None:
+    with patch.object(_ServiceClient, "create_sampling_client") as create_sampler:
+        training_client, reference = _clients(None, None)
+
+    assert reference == f"sampler of {training_client.weights}"
+    create_sampler.assert_not_called()

@@ -174,11 +174,9 @@ def create_dpo_clients(
 
     Returns:
         tuple[tinker.TrainingClient, tinker.SamplingClient]: A pair of
-            (training client, reference sampling client).  The reference
-            client is a frozen snapshot of the initial weights used to
-            compute reference log-probabilities for the DPO loss.  A resumed
-            run gets the weights the run first started from, not the resumed
-            ones.
+            (training client, reference sampling client). The reference uses
+            ``config.reference_model_name`` when set. Otherwise it uses the
+            weights the run started from, even when resuming from a checkpoint.
     """
     if resume_info:
         # Resuming interrupted DPO training - load weights + optimizer state
@@ -190,7 +188,6 @@ def create_dpo_clients(
             resume_info.state_path, user_metadata=user_metadata
         ).result()
         logger.info(f"Resumed DPO training from {resume_info.state_path}")
-        return training_client, create_initial_reference_client(config, service_client)
     elif config.load_checkpoint_path:
         # Starting fresh DPO from checkpoint - load weights only (fresh optimizer)
         checkpoint_utils.check_renderer_name_for_checkpoint(
@@ -204,8 +201,14 @@ def create_dpo_clients(
         training_client = service_client.create_lora_training_client(
             base_model=config.model_name, rank=config.lora_rank, user_metadata=user_metadata
         ).result()
-    # Create a sampling client for the reference model from the training client
-    reference_client = training_client.save_weights_and_get_sampling_client().result()
+    if config.reference_model_name is not None:
+        reference_client = service_client.create_sampling_client(
+            base_model=config.reference_model_name
+        ).result()
+    elif resume_info:
+        reference_client = create_initial_reference_client(config, service_client)
+    else:
+        reference_client = training_client.save_weights_and_get_sampling_client().result()
     return training_client, reference_client
 
 
