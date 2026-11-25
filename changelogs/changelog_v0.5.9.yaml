@@ -1,0 +1,51 @@
+New:
+  - >-
+    Set `rl.train.Config.num_epochs` to train for multiple passes over an RL dataset. `EpochCycledRLDataset`
+    supports deterministic epoch cycling while checkpoints and resume retain global step numbering.
+  - >-
+    Set `sandbox_factory` on the Harbor distillation CLI config, directly or through an import string,
+    to use a custom sandbox backend.
+  - >-
+    Set `session_name` in recipe CLIs and in the DPO and distillation configs to name the Tinker
+    session. By default, a recipe uses its run name or a supplied `wandb_name`. Recipes without a
+    run name use `cookbook-<recipe>`, and multi-stage recipes append their stage.
+Changes:
+  - >-
+    SL and RL trainers now finish their Tinker sessions when training ends, including successful,
+    failed, and interrupted runs.
+  - >-
+    RL and SL training now log a warning when `max_steps` exceeds `num_epochs` times the dataset
+    length. Training still stops after the last epoch.
+Fixed:
+  - >-
+    Finishes rolling checkpoint saves before recording the final checkpoint, preventing resume from
+    pointing to a deleted checkpoint.
+  - >-
+    Splits held-out source rows before interleaved-dataset oversampling, preventing duplicate holdouts
+    and leakage into training. This changes which rows are held out, and a `test_size` larger than
+    the sources allow now raises `ValueError`.
+  - >-
+    Smaller evaluation fixes: AIME grading rejects fractional and out-of-range answers instead of
+    truncating them, which can lower AIME scores. Resumed evaluations keep their token and turn
+    counts. Deleting an evaluation run also removes unfinished transcripts. Importing the
+    custom-evaluator example no longer loads a tokenizer or calls the service.
+  - Skips `None` metric values in `dict_mean` instead of crashing.
+  - Consumes the final queued batches in streaming-minibatch async training before shutdown completes.
+  - Prevents "Already borrowed" tokenizer errors during concurrent Qwen rendering.
+  - Evaluates the final trained weights in synchronous RL loops when evaluation is enabled.
+Deprecations: []
+Breaking changes:
+  - >-
+    [`weights.download()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/weights/download/)
+    no longer accepts `sampler_weights/` checkpoints after removal of the SDK archive API. Export
+    from a training client with `save_weights_external()` and download the resulting `external_weights/`
+    path instead.
+  - >-
+    The standalone `recipes.rl_loop` now defaults to [StableReinforce (alpha)](https://tinker-docs.thinkingmachines.ai/tinker/losses/stable-reinforce/)
+    instead of `importance_sampling`. Pass `loss_fn=importance_sampling` to retain the previous
+    objective; `loss_fn` also supports `cispo` and `gspo`.
+Dependencies:
+  - tinker `>=0.34.0` → `>=0.35.0`
+  - litellm (`litellm` and `all` extras) `>=1.80.0,!=1.82.7,!=1.82.8` → `==1.105.1`
+  - >-
+    transformers `>=4.57.6,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3,<=5.5.4` → `>=4.57.6,!=5.3.0,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3,!=5.6.*`

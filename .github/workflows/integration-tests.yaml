@@ -98,3 +98,4 @@ jobs:
         run: uv run pytest tests/weights/test_publish.py tests/weights/test_adapter_publish.py -v --timeout=120
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TINKER_API_KEY: ${{ secrets.TINKER_API_KEY }}

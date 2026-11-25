@@ -141,6 +141,15 @@ Defaults to follow when launching training runs for a user. Deviating from any o
 
 6. **Be explicit about initialization and continuity.** State whether a run starts from the base model or a checkpoint, and whether optimizer state is fresh. When stopping, resuming, or restarting, say what training and optimizer state carries over. Don't call a run healthy from a heartbeat alone; check that steps and metrics are advancing.
 
+### Resuming an interrupted run
+
+Prefer the latest usable **training-state checkpoint** to restarting from base. Two records matter: the checkpoint tells you which optimizer updates the model contains; the training loop tells you which data those updates used.
+
+- **Save the data position alongside the checkpoint.** Record the number of completed updates and enough information to recover the remaining batches in order: for example, a pinned dataset revision and deterministic loader cursor, or ordered row IDs per batch. For async or filtered training, record which batches actually contributed to each update. A prompt issued to a sampler, a returned rollout, or even a submitted backward pass is not proof of an applied optimizer step.
+- **Restore both weights and optimizer state.** Pass the checkpoint's `state_path` to `create_training_client_from_state_with_optimizer`; a `sampler_path` is for inference, not training recovery. Restore the loop's step counter, LR schedule and data position at the same boundary. If the old trainer has an unresolved update, resume on a separate trainer and log path rather than resubmitting it on the old trainer.
+- **Run the remaining batches, not a new sample of rows.** For example, if zero-based batches 0–15 each produced one update and the checkpoint contains 16 completed updates, resume at batch 16; the next completed update is 17. In a pipelined run, use the recorded mapping, not arithmetic on the number of requests sent. Keep the original endpoint and gates. Regenerating RL rollouts for the same prompts preserves the input batches, not necessarily the sampled replies or gradients.
+- **Verify continuity.** Log the parent checkpoint, restored update count, first resumed batch IDs and first completed update. If the training state or data position cannot be recovered, say which is missing; don't describe a weights-only warm start or a newly shuffled run as a resume.
+
 ---
 
 ## Testing

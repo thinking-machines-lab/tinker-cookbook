@@ -29,7 +29,6 @@ from tinker_cookbook.tokenizer_utils import ensure_tml_renderers_importable, get
 def _require_tml_renderers() -> None:
     ensure_tml_renderers_importable()
     chat = tml_v0.import_module("tml_renderers.chat")
-    __import__("tml_renderers.v0")
     __import__("tml_renderers.tinker")
     assert hasattr(chat, "OpenAIMessage")
 
@@ -317,10 +316,9 @@ def test_tool_calls_are_accepted_through_oss_messages(model_name: str) -> None:
 def test_parsed_tml_tool_call_returns_cookbook_tool_call_object(model_name: str) -> None:
     _require_tml_renderers()
     chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
-    tml_v0_module = cast(Any, tml_v0.import_module("tml_renderers.v0"))
 
     renderer = _renderer(model_name)
-    tml_renderer = tml_v0_module.Renderer(renderer.tokenizer.tml_tokenizer)
+    tml_renderer = renderer._tml_renderer
     tool_message = chat.Message(
         content=chat.InvokeTool(
             chat.StructuredToolCall(

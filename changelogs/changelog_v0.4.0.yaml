@@ -1,0 +1,40 @@
+New:
+  - >-
+    Use Kimi K2.6 and Qwen3.6 models in Cookbook recipes. Kimi K2.6 includes thinking, non-thinking,
+    and reasoning-history-preserving renderers; Nemotron 3 Super adds the `nemotron3_low_thinking`
+    renderer.
+  - >-
+    Pass `submit_ahead` to `supervised.train.Config` to control how many training steps are submitted
+    ahead, and `async_periodic_saves=True` to save periodic checkpoints in the background.
+  - >-
+    Use `reverse=True` with `topk>0` in the SDFT recipe to train with analytical reverse KL over
+    the teacher’s top-K tokens.
+  - >-
+    Use `python -m tinker_cookbook.scripts.copy_checkpoint` to copy a training checkpoint into your
+    account. Pass `--source-path` and `--source-access-token`; set `--output-kind training` to keep
+    training from the copy.
+  - >-
+    Use `recipes.multiplayer_rl.text_arena.play` to play against a trained tic-tac-toe model or
+    evaluate it against random and optimal opponents.
+Changes:
+  - >-
+    `conversation_to_datum()` now normalizes loss weights per example after truncation, so examples
+    with more trainable tokens no longer receive more total weight. Pass `reduction="none"` to retain
+    unnormalized token weights.
+Fixed:
+  - >-
+    Handles sandbox creation failures during Harbor evaluation and uploads nested fixture directories
+    without flattening their paths.
+Deprecations: []
+Breaking changes:
+  - >-
+    `Renderer.parse_response()` returns a `ParseTermination` value instead of a success boolean.
+    Unpack `message, termination = renderer.parse_response(tokens)` and check `termination.is_clean`,
+    or `termination.is_stop_sequence` for strict stop-sequence validation. All enum values are truthy,
+    including `MALFORMED`; a best-effort message is still returned for malformed responses.
+  - >-
+    Replace `RollingCheckpointManager` with `CheckpointManager` and pass scheduling options by keyword.
+    The manager handles periodic and rolling saves; use `save_final_async(loop_state)` to write
+    a permanent final checkpoint and clean up rolling checkpoints.
+Dependencies:
+  - '`transformers` `>=4.57.6,<=5.3.0` → `>=4.57.6,<=5.5.3`.'

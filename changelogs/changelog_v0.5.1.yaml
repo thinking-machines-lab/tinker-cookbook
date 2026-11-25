@@ -1,0 +1,9 @@
+New: []
+Changes: []
+Fixed:
+  - >-
+    Uses the selected model’s renderer and tokenizer when `model_name=...` overrides the defaults
+    in `sl_basic` or `rl_basic`.
+Deprecations: []
+Breaking changes: []
+Dependencies: []

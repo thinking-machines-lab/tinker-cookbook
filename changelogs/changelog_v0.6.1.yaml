@@ -1,0 +1,23 @@
+New:
+  - >-
+    Use `moonshotai/Kimi-K3.1-Pro`, with text, image, and tool-call support, through
+    [`get_tokenizer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/tokenizer_utils/get_tokenizer/)
+    and [`get_renderer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/renderers/get_renderer/).
+    The renderers are `kimi_k31_pro_max_reasoning` (the default), `kimi_k31_pro_high_reasoning`,
+    `kimi_k31_pro_low_reasoning`, `kimi_k31_pro_disable_thinking`, and `kimi_k31_pro_no_reasoning_effort`.
+    `get_lr()` has no calibrated learning rate for it, so set one explicitly.
+  - >-
+    Pass `TrainOnWhat.LAST_ASSISTANT_TURN` to the `tml_v0` renderer and to
+    `tinker_messages_to_sft_message_list()` to weight the assistant messages after the last user
+    message. Before, both raised `NotImplementedError`.
+Changes: []
+Fixed: []
+Deprecations: []
+Breaking changes:
+  - >-
+    Direct callers of `TmlRenderersTokenizerAdapter(name_or_path)` must now supply a `tml_tokenizer`
+    argument. Prefer [`get_tokenizer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/tokenizer_utils/get_tokenizer/),
+    for example `get_tokenizer("thinkingmachines/Inkling-Small")`, to select and construct the correct
+    adapter.
+Dependencies:
+  - tml-renderers `>=0.4.0` → `>=0.4.1`

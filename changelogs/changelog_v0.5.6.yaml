@@ -1,0 +1,18 @@
+New:
+  - >-
+    Use GLM-5.3 with the `glm5_3_low_reasoning`, `glm5_3_high_reasoning`, and `glm5_3_max_reasoning`
+    renderers through [`get_renderer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/renderers/get_renderer/), including tool calling.
+    `get_lr()` has no calibrated learning rate for it, so set one explicitly.
+  - >-
+    Run the [forecasting recipe](https://tinker-docs.thinkingmachines.ai/cookbook/recipes/forecasting/)
+    to train on Prophet Arena binary prediction markets, with a chronological train/validation split
+    and a Brier-score reward.
+  - "`get_lora_param_count()` now supports Inkling-Small."
+Changes: []
+Fixed:
+  - >-
+    Accepts model names with a variant suffix, such as `:peft:262144`, in `get_lr()`,
+    `get_lora_param_count()`, and `get_full_finetune_param_count()`. Before, these names raised an error.
+Deprecations: []
+Breaking changes: []
+Dependencies: []
