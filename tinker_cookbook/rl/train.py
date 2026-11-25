@@ -654,6 +654,11 @@ class Config:
     num_substeps: int = 1
     # LoRA rank for the training adapter.
     lora_rank: int = 32
+    # Which weight groups a fresh adapter trains. Ignored when loading a
+    # checkpoint, which keeps its own adapter configuration.
+    train_mlp: bool = True
+    train_attn: bool = True
+    train_unembed: bool = True
 
     # -------------------------------------------------------------------------
     # Sampling and diagnostics (advanced)
@@ -2862,7 +2867,12 @@ async def main(
             logger.info(f"Loaded weights from {config.load_checkpoint_path}")
         else:
             training_client = await service_client.create_lora_training_client(
-                config.model_name, rank=config.lora_rank, user_metadata=user_metadata
+                config.model_name,
+                rank=config.lora_rank,
+                train_mlp=config.train_mlp,
+                train_attn=config.train_attn,
+                train_unembed=config.train_unembed,
+                user_metadata=user_metadata,
             )
 
         # Get tokenizer.

@@ -29,7 +29,13 @@ class _TrainingClient:
 
 class _ServiceClient:
     def create_lora_training_client(
-        self, base_model: str, rank: int, user_metadata: dict[str, str] | None = None
+        self,
+        base_model: str,
+        rank: int,
+        train_mlp: bool = True,
+        train_attn: bool = True,
+        train_unembed: bool = True,
+        user_metadata: dict[str, str] | None = None,
     ) -> _Future:
         return _Future(_TrainingClient(f"new adapter on {base_model}"))
 
