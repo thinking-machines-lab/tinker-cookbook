@@ -1,12 +1,85 @@
 # Harbor RL
 
-## Installation
+RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed code execution. An agent gets a bash tool inside a sandboxed container, attempts a task, and receives reward based on test results.
+
+## Train through a Harbor server
+
+Run these commands from the cookbook root with Python 3.12+. The trainer and Harbor server can share a virtual environment. If you run them separately, the server needs access to the tasks at the same absolute paths as the trainer. Claude Code runs in a Modal sandbox.
+
+**Trainer setup**
 
 ```bash
-uv pip install 'tinker-cookbook[modal] @ git+https://github.com/thinking-machines-lab/tinker-cookbook.git@nightly'
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -e '.[harbor]'
+harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/terminal-bench-2.0/
 ```
 
-RL training on Harbor formatted tasks (e.g., Terminal Bench 2.0) with sandboxed code execution. An agent gets a bash tool inside a sandboxed container, attempts a task, and receives reward based on test results.
+**Terminal 1 — Start ngrok** and copy its HTTPS forwarding URL.
+
+```bash
+export NGROK_AUTHTOKEN="<your-ngrok-authtoken>"
+ngrok http 127.0.0.1:8390
+```
+
+**Terminal 2 — Start Harbor** with the URL from terminal 1.
+
+```bash
+source .venv/bin/activate
+uv pip install 'harbor[modal]>=0.26.0'
+modal token new  # Skip if a Modal profile or MODAL_TOKEN_ID and MODAL_TOKEN_SECRET are configured
+export HARBOR_API_KEY="<your-harbor-key>"
+harbor serve --relay-url "https://<your-ngrok-domain>"
+```
+
+**Terminal 3 — Run the trainer.** Keep terminals 1 and 2 running. The trainer starts the proxy and connector.
+
+```bash
+source .venv/bin/activate
+export TINKER_API_KEY="<your-tinker-api-key>"
+export HARBOR_API_KEY="<your-harbor-key>"  # Same value as terminal 2
+python -m tinker_cookbook.recipes.harbor_rl.scripts.train_terminal_bench \
+  harbor_server_url=http://127.0.0.1:8390 \
+  model_name=Qwen/Qwen3.5-4B \
+  groups_per_batch=1 group_size=1 max_steps=2 eval_every=0
+```
+
+This tests the relay with one rollout per round, two rollouts total. For a
+reward-driven update, use `group_size=2` or larger: rewards must differ within a group.
+To see two concurrent jobs share a relay session, set `groups_per_batch=2`.
+
+The trainer joins Harbor rewards to Tinker's sampled tokens and log probabilities
+by rollout ID. Captures are stored under `<log_path>/capture`.
+
+```mermaid
+sequenceDiagram
+    participant L as Trainer
+    participant H as Harbor server and relay
+    participant A as Agent in Modal
+    participant C as Connector
+    participant P as Capture proxy
+    participant T as Tinker
+    C->>H: Open session WebSocket
+    L->>H: Submit job with session ID
+    H->>A: Start rollouts
+    par Each model turn
+        A->>H: Send chat request
+        H->>C: Forward request with rollout and request IDs
+        C->>P: Send tagged chat request
+        P->>T: Sample from prompt tokens
+        T-->>P: Sampled tokens and logprobs
+        P->>P: Store the turn under its rollout ID
+        P-->>C: Decoded response
+        C-->>H: Relay response
+        H-->>A: Return response
+    and While the job runs
+        L->>H: Poll job status
+    end
+    L->>H: Fetch rollout summaries
+    H-->>L: Rollout IDs and rewards
+    L->>L: Match rewards to captured turns by rollout ID
+    L->>T: Run training update
+```
 
 ## HarborTask
 Harbor offers a standardized format for SWE/Terminal-Bench style task.
@@ -85,7 +158,13 @@ The first argument is the task's `environment/` directory (containing a Dockerfi
 
 `cli_main()` accepts an optional `sandbox_factory` parameter. When `None`, it falls back to `default_sandbox_factory` (Modal). The factory flows through: `cli_main` -> `HarborDatasetBuilder` -> `HarborEnvGroupBuilder.make_envs()`.
 
-## Running
+## Run without a Harbor server
+
+The trainer creates Modal sandboxes directly. You can also supply a [custom sandbox factory](#sandboxfactory-and-injection).
+
+```bash
+uv pip install -e '.[modal]'
+```
 
 First, download the Terminal-Bench tasks:
 
@@ -96,7 +175,7 @@ uvx harbor datasets download terminal-bench@2.0 -o ~/.cache/harbor/tasks/termina
 Then launch training:
 
 ```bash
-uv run python tinker_cookbook/recipes/harbor_rl/scripts/train_terminal_bench.py \
+python -m tinker_cookbook.recipes.harbor_rl.scripts.train_terminal_bench \
     model_name=moonshotai/Kimi-K2.6 \
     max_tokens=8192 \
     group_size=4 \

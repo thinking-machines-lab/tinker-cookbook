@@ -23,6 +23,7 @@ from tinker_cookbook.recipes.distillation.harbor_multiturn import (
 )
 from tinker_cookbook.recipes.harbor_rl import harbor_env
 from tinker_cookbook.sandbox import SandboxInterface
+from tinker_cookbook.sandbox.modal_sandbox import ModalSandbox
 
 NON_CALLABLE_FACTORY = 17
 TASKS = [harbor_env.HarborTask("synthetic", "complete the task", Path("synthetic-task"))]
@@ -74,7 +75,7 @@ def boundary(monkeypatch: pytest.MonkeyPatch) -> _Boundary:
     monkeypatch.setattr(harbor_env, "load_harbor_tasks", mocked.task_loader)
     monkeypatch.setattr(tinker, "ServiceClient", _forbidden)
     monkeypatch.setattr(tokenizer_utils, "get_tokenizer", _forbidden)
-    monkeypatch.setattr(harbor_env.ModalSandbox, "create", _forbidden)
+    monkeypatch.setattr(ModalSandbox, "create", _forbidden)
     return mocked
 
 
