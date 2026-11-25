@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -14,6 +15,7 @@ from tinker_cookbook.renderers.base import (
     UnparsedToolCall,
     format_content_as_string,
     get_text_content,
+    message_to_jsonable,
 )
 from tinker_cookbook.rl import types
 from tinker_cookbook.rl.message_env import EnvFromMessageEnv, MessageEnv, MessageStepResult
@@ -262,6 +264,9 @@ class AgentToolMessageEnv(MessageEnv):
         if done:
             reward, reward_metrics = await self._grade()
             metrics.update(reward_metrics)
+            logs["conversation_history"] = json.dumps(
+                [message_to_jsonable(m) for m in self.history]
+            )
 
         return MessageStepResult(
             reward=reward,
