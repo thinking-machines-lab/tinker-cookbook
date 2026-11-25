@@ -1,0 +1,72 @@
+New:
+  - >-
+    Adds `supervised.nll_evaluator.SamplerNLLEvaluator` for held-out NLL evaluation through a sampling
+    client. Use `.from_dataset(...)` and supply a tokenizer to also report bits per byte.
+  - >-
+    Adds [decision-model helpers](https://tinker-docs.thinkingmachines.ai/cookbook/recipes/decisions/)
+    for scoring labeled choices and training on either a chosen label or a target probability distribution.
+    Use `DecisionRenderer`, `sample_decision`, and the datum helpers in `recipes.decisions`.
+  - >-
+    Adds a long-context, many-turn counting recipe for checking RL numerics with a paginated document-reading
+    tool.
+  - >-
+    Use `qwen3_5_preserve_thinking` with [`get_renderer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/renderers/get_renderer/)
+    to retain reasoning across Qwen3.5/Qwen3.6 tool-use turns.
+  - >-
+    Use GLM-5.3-Flash with the `glm5_3_max_reasoning` (default), `glm5_3_high_reasoning`, and
+    `glm5_3_low_reasoning` renderers. Use DeepSeek-V4.1-Flash and DeepSeek-V4.1-Flash-1017 with the
+    new `deepseekv4_1`, `deepseekv4_1_low_reasoning`, `deepseekv4_1_max_reasoning`,
+    `deepseekv4_1_disable_thinking`, and `deepseekv4_1_preserve_thinking` renderers. Use
+    Nemotron-3.5-Super-VL, including image input, with the `nemotron3_ultra` renderers. GLM-5.3-Flash
+    and DeepSeek-V4.1-Flash take text only. LoRA parameter counts are included. `get_lr()` has no
+    calibrated learning rate for these models, so set one explicitly.
+  - >-
+    Set `session_name` on SL and RL training configs to name the Tinker session. When unset, `wandb_name`
+    is used if provided.
+  - >-
+    Pass `tinker://<run_id>/external_weights/<name>` or `tinker://<run_id>/weights/<name>` paths to
+    [`weights.download()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/weights/download/).
+    A training checkpoint downloads through a temporary encrypted export that is decrypted locally;
+    this starts a training session on the checkpoint's base model. Files are installed only after
+    the complete download succeeds.
+Changes:
+  - >-
+    The forecasting recipe adds a GLM-5.3 example and updates defaults to learning rate `1e-4`,
+    128 steps, evaluation every 16 steps, and checkpoints every 64 steps.
+  - SFT and DPO held-out NLL evaluation now uses sampling clients.
+  - >-
+    Training traces now include external weight exports through `TrainingClient.save_weights_external_async`.
+Fixed:
+  - Honors `save_every` in the guess-number and twenty-questions recipes.
+  - >-
+    Trims leading and trailing whitespace from list-shaped Qwen3.5 and Qwen3.6 content, as string
+    content already was, so sampled tool-use turns re-render consistently. This changes rendered
+    tokens for such content.
+  - >-
+    Omits empty header chunks from generation prompts after consecutive tool responses, preventing
+    HTTP 400 errors, including with Nemotron parallel tool calls.
+  - >-
+    Handles Modal-side sandbox cancellation as `SandboxTerminatedError` without canceling the entire
+    training step or discarding healthy rollouts. Cancellation of the caller still propagates.
+Deprecations:
+  - >-
+    `supervised.nll_evaluator.NLLEvaluator` is deprecated. Create a sampling client with `TrainingClient.save_weights_and_get_sampling_client()`
+    and use `SamplerNLLEvaluator` instead. No removal version or date is announced.
+  - >-
+    The [checkpoint-copy script](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/scripts/copy_checkpoint/)
+    is deprecated in favor of `ServiceClient.copy_weights()`. The script retains its behavior; removal
+    is planned for a future release without a specified version or date.
+Breaking changes:
+  - >-
+    Recipe outputs now default to `~/tinker-runs` instead of `/tmp`, and re-downloadable caches use
+    `~/.cache/tinker-cookbook`. Set `TINKER_COOKBOOK_RUNS_DIR` to choose another root, or use
+    `cli_utils.runs_path()` to build a path under it. Explicit output paths work as before. Existing
+    outputs are not moved: re-run data-preparation steps, or pass the old paths, for data created
+    by an earlier release.
+  - >-
+    W&B logging now also accepts credentials saved by `wandb login`. A run that sets `wandb_project`
+    without W&B credentials now raises `ConfigurationError` instead of continuing without W&B. Run
+    `wandb login` or set `WANDB_API_KEY`, set `WANDB_MODE=offline`, or leave `wandb_project` unset.
+Dependencies:
+  - tinker `>=0.23.0` → `>=0.34.0`
+  - pyrage `>=1.4.0`

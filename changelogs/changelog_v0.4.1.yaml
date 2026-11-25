@@ -1,0 +1,14 @@
+New: []
+Changes: []
+Fixed:
+  - >-
+    Loads the Kimi K2.6 tokenizer with its required vocabulary files and model-specific tool-call
+    chat template.
+Deprecations: []
+Breaking changes:
+  - >-
+    `get_lora_param_count()` now returns a single parameter count that accounts for the selected
+    training components. Replace `detailed`, `include_experts`, and `shared_expert_outer_loras`
+    with `train_mlp`, `train_attn`, and `train_unembed` flags matching your training client; dictionary
+    results are no longer available.
+Dependencies: []

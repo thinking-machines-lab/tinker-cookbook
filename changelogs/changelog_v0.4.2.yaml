@@ -1,0 +1,31 @@
+New:
+  - >-
+    Use Nemotron 3 Ultra with the `nemotron3_ultra`, `nemotron3_ultra_medium_thinking`, or `nemotron3_ultra_disable_thinking`
+    renderer. The model registry also adds Qwen3.5-9B, Qwen3.5-9B-Base, and Qwen3.5-35B-A3B-Base.
+  - >-
+    Pass `save_every_tokens` or `save_every_seconds` to `supervised.train.Config` to schedule checkpoints
+    by processed tokens or elapsed time. Custom loops using `CheckpointManager` can pass `elapsed_tokens`
+    to `maybe_save_async()`.
+  - >-
+    Use `python -m tinker_cookbook.scripts.save_audit_log` to archive audit logs as daily JSONL
+    files. Pass `--once` for a single fetch or `--backfill-days` to include earlier days; your account
+    must have permission to read audit logs.
+  - >-
+    Pass `--destination-project-id` to `scripts.copy_checkpoint` to choose the project receiving
+    a copied checkpoint. Copies within your organization can use your current credentials without
+    a separate `--source-access-token`.
+Changes:
+  - >-
+    Updates recipe default models from Llama and Qwen models to Qwen3.5, and from Kimi K2 Thinking
+    to Kimi K2.6. Pass `model_name` to choose a different supported model.
+Fixed:
+  - >-
+    Preserves tool calls and tool results in the Inspect AI integration and honors required or named
+    `tool_choice` settings.
+Deprecations: []
+Breaking changes: []
+Dependencies:
+  - '`tinker` `>=0.9.0` → `>=0.22.3`.'
+  - >-
+    Adds the `tutorials` extra with `marimo` `>=0.23.8`, `matplotlib` `>=3.7.0`, `math-verify` `>=0.5.0`,
+    `pylatexenc` `>=2.0`, and `sympy` `>=1.12.0`.

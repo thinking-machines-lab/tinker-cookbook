@@ -1,0 +1,20 @@
+New:
+  - >-
+    Use `Qwen/Qwen3.8-27B` with the `qwen3_8_xhigh_reasoning`, `qwen3_8_medium_reasoning`,
+    `qwen3_8_low_reasoning`, or `qwen3_8_disable_thinking` renderers through [`get_renderer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/renderers/get_renderer/).
+Changes: []
+Fixed:
+  - >-
+    Groups consecutive tool responses into one user turn in the Qwen3.5, Qwen3.6, and Nemotron
+    renderers. Qwen3.5 and Qwen3.6 also omit the blank line before `<tool_call>` when an assistant
+    message has no text. This changes rendered tokens for conversations with tool calls.
+  - >-
+    Treats Qwen3 turn markers in user-provided message text as content rather than conversation
+    boundaries. This changes rendered tokens for such text.
+Deprecations: []
+Breaking changes:
+  - >-
+    When using a reasoning-disabled Qwen, Kimi K2.5 and K2.6, or Nemotron renderer, remove reasoning
+    from affected supervised targets or select a thinking-enabled renderer. Inputs previously accepted
+    with a mismatched prompt can now raise `RendererError`.
+Dependencies: []

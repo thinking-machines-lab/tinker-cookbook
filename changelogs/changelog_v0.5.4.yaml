@@ -1,0 +1,47 @@
+New:
+  - >-
+    Use `nemotron3_preserve_thinking` or `nemotron3_ultra_preserve_thinking` with [`get_renderer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/renderers/get_renderer/)
+    to keep historical reasoning in multi-turn contexts.
+  - >-
+    Use `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` with the `nemotron3_ultra`,
+    `nemotron3_ultra_disable_thinking`, and `nemotron3_ultra_preserve_thinking` renderers. `get_lr()`
+    has no calibrated learning rate for it, so set one explicitly.
+  - >-
+    Call [`Renderer.build_supervised_examples()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/renderers/renderer/)
+    on renderers without the sequence-extension property to train on every assistant turn. Before,
+    these renderers raised `NotImplementedError`.
+Changes:
+  - >-
+    Inkling rendering is now part of the base installation, and the `[inkling]` extra is removed.
+    Installing `tinker-cookbook[inkling]` still works but prints a warning, so remove the extra from
+    install commands and requirement files.
+Fixed:
+  - >-
+    Corrects the final Qwen3 assistant turn: reasoning gets its own lines inside the thinking block,
+    a reply without reasoning gets an empty block, and a tool-only reply has no newline before
+    `<tool_call>`. This changes rendered tokens and parsed reasoning.
+  - >-
+    Trims leading and trailing whitespace from string content in the Qwen3.5, Qwen3.6, and Nemotron
+    renderers. This changes rendered tokens for such content.
+  - Preserves content whitespace when the `role_colon` renderer parses its rendered output.
+  - >-
+    Excludes prompt-supplied reasoning-prefill tokens from supervised loss. Qwen3.5 also preserves
+    the prompt boundary when adjacent newlines would otherwise merge into one token. This changes
+    training weights for the reasoning modes of the Qwen3.5, Nemotron, DeepSeek, and Kimi K2.5 and
+    K2.6 renderers.
+  - >-
+    Includes sampling-compatible thinking delimiters in DeepSeek thinking-mode supervised examples
+    without reasoning.
+  - >-
+    Preserves the required opening thinking token when a custom prefill is supplied to the Kimi
+    K2.5 and K2.6 renderers, placing the prefill after it.
+Deprecations: []
+Breaking changes:
+  - >-
+    Qwen3 with thinking disabled now rejects a nonempty supervised assistant target when the conversation
+    contains no user message. Add a user message or use a thinking-enabled renderer instead of relying
+    on the previous mismatched training prompt.
+Dependencies:
+  - tinker `>=0.22.3` → `>=0.23.0`
+  - torch `>=2.0` → `>=2.10`
+  - tml-renderers `>=0.0.1`

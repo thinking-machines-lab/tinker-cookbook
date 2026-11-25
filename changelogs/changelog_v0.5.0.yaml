@@ -1,0 +1,34 @@
+New:
+  - >-
+    Use Thinking Machines’ Inkling model with the `tml_v0` renderer. Pass `effort` from `0` up to
+    but excluding `1` to `build_generation_prompt()` or `build_supervised_examples()` to control
+    reasoning effort.
+  - >-
+    Use the `recipes.audio` speech transcription and emotion recognition recipes for supervised
+    and reinforcement learning. The `scripts.inkling` sampling examples cover reasoning, images,
+    and audio.
+  - >-
+    Pass a `RolloutConfig` to `rl.rollout_runner.run_rollout()` to set turn, token, tool-call, and
+    time limits and configure parse-error retries. Start with the `agentic()` preset for multi-turn
+    tool use.
+  - >-
+    Pass a tokenizer to `NLLEvaluator` to report bits per byte alongside loss. Supervised training
+    enables this metric for its test dataset and excludes special tokens from the byte-normalized
+    score.
+  - >-
+    Use `inference.modal.prepare` and `inference.modal.serve` to deploy a trained checkpoint as
+    a persistent OpenAI-compatible SGLang endpoint on Modal.
+Changes: []
+Fixed:
+  - >-
+    Treats turns containing only malformed tool calls as parse failures in `AgentToolMessageEnv`,
+    applying `failed_parse_reward` instead of grading them as completed answers. This changes rewards
+    for those rollouts.
+Deprecations: []
+Breaking changes: []
+Dependencies:
+  - Adds the `inkling` extra with `tinker` `>=0.23.0`, `tml-renderers` `>=0.0.1`, and `torch` `>=2.10`.
+  - Adds the `audio` extra with `jiwer` `>=3.0.0` and `soundfile` `>=0.12.0`.
+  - >-
+    `modal` `>=1.0.0` → `>=1.5.1` in the `modal`, `eval`, `eval-livecodebench`, `eval-mbpp`, `eval-swe-bench`,
+    `eval-terminal-bench`, and `all` extras.

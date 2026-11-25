@@ -1,0 +1,10 @@
+New: []
+Changes: []
+Fixed:
+  - >-
+    Trains the `<|observation|>` or `<|user|>` terminator on every GLM-5.3 assistant turn, rather
+    than only the final turn. Prompt-supplied thinking-prefill tokens carry no loss. This changes
+    loss weights for multi-turn supervised examples.
+Deprecations: []
+Breaking changes: []
+Dependencies: []

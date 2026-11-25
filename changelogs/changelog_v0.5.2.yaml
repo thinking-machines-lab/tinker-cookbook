@@ -1,0 +1,10 @@
+New: []
+Changes:
+  - >-
+    The `inkling.sample_reasoning` script now chooses a generation budget of 4096, 8192, or 16384
+    tokens according to reasoning effort. Set `max_tokens` to use one budget for every effort; the
+    script also reports when a response reaches the limit.
+Fixed: []
+Deprecations: []
+Breaking changes: []
+Dependencies: []

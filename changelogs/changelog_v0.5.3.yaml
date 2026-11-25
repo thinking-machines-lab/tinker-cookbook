@@ -1,0 +1,31 @@
+New:
+  - >-
+    Use `tinker_cookbook.capture` to record training and sampling tokens, log probabilities, and
+    run coordinates. Call `capture_to_store(...)` for a local SQLite store with HTTP queries and
+    live SSE updates, or pass your own capture sink. For agent harnesses that do not call the SDK,
+    run the Anthropic- and OpenAI-compatible proxy with `python -m tinker_cookbook.capture.proxy.serve`.
+  - >-
+    Use `thinkingmachines/Inkling-Small` with the model registry and the `tml_v0` renderer. It gets
+    the same agentic rollout defaults as Inkling, and [`get_tokenizer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/tokenizer_utils/get_tokenizer/)
+    returns the Inkling tokenizer for it.
+Changes:
+  - >-
+    The `inkling.sample_reasoning` script now maps `minimal`, `low`, and `medium` to 0.1, 0.2, and
+    0.7. Its smallest default generation budget applies below effort 0.2.
+Fixed:
+  - >-
+    Uses a default `max_tokens` of 2048 for Inspect evaluations, avoiding response truncation at
+    128 tokens when no limit is specified. This changes scores for such evaluations.
+  - >-
+    Keeps the Search-R1 worked example within its one-to-five-word answer instruction. This changes
+    the recipe's prompt tokens.
+Deprecations: []
+Breaking changes:
+  - >-
+    `set_rollout_executor()` and the `rollout_executor` argument of `rl.train` now raise `ValueError`
+    for a process pool that uses `fork`, because such workers could hang after inheriting a Tinker
+    client. On Linux before Python 3.14, `fork` is the default, so create the pool with
+    `ProcessPoolExecutor(mp_context=multiprocessing.get_context("spawn"))`. The cookbook's own sweep
+    pools now use `spawn`, so put parallel `sweep.run()` calls inside `if __name__ == "__main__":`.
+    An unguarded call now raises `RuntimeError`.
+Dependencies: []

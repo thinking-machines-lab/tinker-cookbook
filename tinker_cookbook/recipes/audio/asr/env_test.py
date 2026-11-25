@@ -16,7 +16,6 @@ from tinker_cookbook.recipes.audio.data import Clip
 
 def _require_tml_renderers() -> Any:
     pytest.importorskip("tml_renderers")
-    pytest.importorskip("tml_renderers.v0")
     pytest.importorskip("tml_renderers.tinker")
     return pytest.importorskip("tml_renderers.chat")
 

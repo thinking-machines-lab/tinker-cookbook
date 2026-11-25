@@ -1,0 +1,13 @@
+New: []
+Changes:
+  - >-
+    Updates distillation recipe defaults to Qwen3.5 students and teachers, and Kimi K2.6 for multi-turn
+    Harbor distillation. Override `model_name` and `teacher_model` to choose other supported models.
+Fixed:
+  - >-
+    Loads Kimi K2 tokenizers with their model-specific chat template, avoiding the Transformers
+    fallback that breaks tool formatting.
+Deprecations: []
+Breaking changes: []
+Dependencies:
+  - '`transformers` `>=4.57.6,<=5.5.3` → `>=4.57.6,<=5.5.4,!=5.4.*,!=5.5.0,!=5.5.1,!=5.5.2,!=5.5.3`.'

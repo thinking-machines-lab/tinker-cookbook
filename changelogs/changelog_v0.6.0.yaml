@@ -1,0 +1,75 @@
+New:
+  - >-
+    RL and SL trainers report per-step and cumulative token usage and estimated USD cost. Rates
+    are fetched once per process from published pricing; if unavailable, token counts remain available.
+    RL totals include discarded constant-reward groups and KL scoring, but do not represent complete
+    billed usage.
+  - >-
+    Call `tinker_messages_to_openai(...)` in `third_party.openai_compat` to build OpenAI chat inputs
+    from cookbook messages, including tool calls and declarations, reasoning, images, and audio.
+    `openai_messages_to_tinker(...)` now also converts reasoning, images, and audio.
+  - >-
+    Convert cookbook messages to and from `tml-renderers` message lists through `third_party.tml_renderers_compat`,
+    including supervised weighting and multimodal content.
+  - >-
+    Use `thinkingmachines/Inkling-2-Small` with [`get_tokenizer()`](https://tinker-docs.thinkingmachines.ai/cookbook/api-reference/tokenizer_utils/get_tokenizer/)
+    and the `tml_v0` renderer. LoRA parameter counts are included. `get_lr()` has no calibrated
+    learning rate for it, so set one explicitly.
+  - >-
+    `BenchmarkConfig.for_model()` now returns evaluation defaults for every Inkling model, including
+    the 256K `:peft:262144` variants. Before, it raised `ValueError` for them.
+  - >-
+    Call `tokenizer_utils.encode_without_special_tokens(tokenizer, text)` to encode raw text with
+    Hugging Face and `tml-renderers` tokenizers alike.
+Changes:
+  - >-
+    Async RL skips sampler-only weight exports after all training rollout workers finish, while
+    still refreshing weights needed for evaluation, checkpoints, and KL measurements.
+Fixed:
+  - >-
+    Preserves original SDFT teacher token positions across masked gaps so teacher and student tokens
+    remain correctly aligned.
+  - >-
+    Backs up the metrics file and removes rows at or beyond the resumed step before logging again,
+    preventing duplicate or out-of-order rows when resuming an earlier checkpoint.
+  - Completes partial training steps, final evaluation, and environment cleanup during async shutdown.
+  - >-
+    Returns `ParseTermination.MALFORMED` with decoded text when the `tml_v0` renderer parses an
+    unsupported text-form tool call, instead of failing or producing an empty tool name.
+Deprecations: []
+Breaking changes:
+  - >-
+    Async RL now trains completed rollouts regardless of age instead of discarding stale rollouts
+    and retrying their problems. `max_steps_off_policy` limits sampling ahead to `groups_per_batch
+    * (max_steps_off_policy + 1)` groups, increasing possible sandbox concurrency. Size environment
+    pools accordingly; use `max_steps_off_policy=0` when on-policy execution is required. Observed
+    staleness is reported in `async/staleness_min`, `async/staleness_max`, and `async/staleness_mean`.
+  - >-
+    Async RL and the `math_rl`, `rubric`, and `prometheus_experimental` recipes now default to [StableReinforce (alpha)](https://tinker-docs.thinkingmachines.ai/tinker/losses/stable-reinforce/),
+    including its default sampler KL coefficient of `0.01`. Set `AsyncConfig.loss_fn="importance_sampling"`,
+    or pass `loss_fn=importance_sampling` in those recipes, to retain the former objective. Conflicting
+    nondefault `Config.loss_fn` values in async runs now raise `ConfigurationError`. Other synchronous
+    RL configs retain their existing `importance_sampling` default.
+  - >-
+    StableReinforce requires sampled-token provenance: custom completers must populate `TokensWithLogprobs.sequence_id`,
+    or callers must choose a different loss. With an active KL penalty, set `kl_discount_factor=0`
+    or use another loss; discounted prompt-token advantages are not supported by StableReinforce.
+  - >-
+    Async RL now keeps evaluation metrics that finish after newer training steps. To do this, async
+    training and late evaluations log independent metric events, so W&B internal steps count metric
+    arrivals rather than training updates. For charts and consumers, use `training/step`
+    and `eval/snapshot/training_step` as the model-version axes. Evaluation rows also carry the
+    cost and elapsed-time coordinates of the weights they evaluated.
+  - >-
+    The cookbook now calls the unified `APIFuture` methods of tinker `0.38` (`sample`, `forward`,
+    and others) instead of the `*_async` methods. Objects that stand in for a Tinker client must
+    provide these methods; for example, the capture proxy's `SamplingClientLike` now requires `sample`.
+    See the [migration guide](https://tinker-docs.thinkingmachines.ai/tinker/howto/concurrency_async/).
+  - >-
+    `rl.metrics.incorporate_kl_penalty()`, `rl.metrics.compute_post_kl()`, and
+    `rl.train.prepare_minibatch()` now also return token usage. Unpack the extra value:
+    `metrics, usage = await incorporate_kl_penalty(...)`, `metrics, usage = await compute_post_kl(...)`,
+    and `data_D, metrics, usage = await prepare_minibatch(...)`.
+Dependencies:
+  - tinker `>=0.35.0` → `>=0.38.0`
+  - tml-renderers `>=0.0.1` → `>=0.4.0`
