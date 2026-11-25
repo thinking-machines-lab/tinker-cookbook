@@ -256,6 +256,10 @@ class TestInkling:
         assert attrs.is_audio_in is True
         assert get_recommended_renderer_names("thinkingmachines/Inkling") == [
             "tml_v0",
+            "tml_v0_xhigh_reasoning",
+            "tml_v0_high_reasoning",
+            "tml_v0_medium_reasoning",
+            "tml_v0_low_reasoning",
         ]
 
     def test_inkling_small_uses_tml_v0_renderer(self):
@@ -276,6 +280,10 @@ class TestInkling:
         assert attrs.is_audio_in is True
         assert get_recommended_renderer_names("thinkingmachines/Inkling-Small") == [
             "tml_v0",
+            "tml_v0_xhigh_reasoning",
+            "tml_v0_high_reasoning",
+            "tml_v0_medium_reasoning",
+            "tml_v0_low_reasoning",
         ]
 
     @pytest.mark.parametrize("suffix", ["", ":peft:262144"])
@@ -305,6 +313,10 @@ class TestInkling:
         assert attrs.is_audio_in is True
         assert get_recommended_renderer_names("thinkingmachines/Inkling-Untabled") == [
             "tml_v0",
+            "tml_v0_xhigh_reasoning",
+            "tml_v0_high_reasoning",
+            "tml_v0_medium_reasoning",
+            "tml_v0_low_reasoning",
         ]
 
 
