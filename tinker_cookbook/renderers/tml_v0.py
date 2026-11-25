@@ -25,6 +25,14 @@ if TYPE_CHECKING:
 # Effort values must be in [0.0, 1.0).
 DEFAULT_EFFORT: float = 0.9
 
+# Named reasoning-effort presets matching scripts/inkling/sample_reasoning.py.
+EFFORT_PRESETS: dict[str, float] = {
+    "xhigh": 0.99,
+    "high": 0.9,
+    "medium": 0.7,
+    "low": 0.2,
+}
+
 
 def _validate_effort(effort: float) -> None:
     if not math.isfinite(effort) or not 0.0 <= effort < 1.0:
@@ -37,16 +45,18 @@ class TmlV0Renderer(TmlRenderersRenderer):
     renderer_name = "tml_v0"
     _tml_renderer: tml_renderers.Inkling | tml_renderers.Inkling2
 
-    def __init__(self, tokenizer: Tokenizer):
+    def __init__(self, tokenizer: Tokenizer, default_effort: float = DEFAULT_EFFORT):
+        _validate_effort(default_effort)
+        self.default_effort = default_effort
         super().__init__(tokenizer)
         self._renderers_by_effort: dict[float, tml_renderers.Inkling | tml_renderers.Inkling2] = {
-            DEFAULT_EFFORT: self._tml_renderer
+            self.default_effort: self._tml_renderer
         }
 
     def _build_tml_renderer(
         self, tml_tokenizer: TmlTokenizer
     ) -> tml_renderers.Inkling | tml_renderers.Inkling2:
-        return self._build_inkling(tml_tokenizer, DEFAULT_EFFORT)
+        return self._build_inkling(tml_tokenizer, self.default_effort)
 
     @staticmethod
     def _build_inkling(
@@ -88,16 +98,17 @@ class TmlV0Renderer(TmlRenderersRenderer):
         messages: list[Message] | TmlRenderInput,
         role: Role = "assistant",
         prefill: str | None = None,
-        effort: float = DEFAULT_EFFORT,
+        effort: float | None = None,
     ) -> tinker.ModelInput:
         """Build a generation prompt with reasoning-effort conditioning.
 
-        ``effort`` must be a finite value in ``[0.0, 1.0)`` and defaults to
-        high. Insertion of the system-level effort directive is delegated to
-        ``tml-renderers``.
+        ``effort`` must be a finite value in ``[0.0, 1.0)``; when omitted,
+        falls back to ``self.default_effort`` (default ``0.9``). Insertion of
+        the system-level effort directive is delegated to ``tml-renderers``.
         """
         self._validate_generation_options(role, prefill)
-        renderer = self._renderer_for_effort(effort)
+        resolved_effort = self.default_effort if effort is None else effort
+        renderer = self._renderer_for_effort(resolved_effort)
         spans, _parser = renderer.render_for_completion(_messages_to_render_input(messages))
         return self._token_spans_to_model_input(spans)
 
@@ -105,27 +116,24 @@ class TmlV0Renderer(TmlRenderersRenderer):
         self,
         messages: list[Message] | TmlRenderInput,
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
-        effort: float = DEFAULT_EFFORT,
+        effort: float | None = None,
     ) -> list[tuple[tinker.ModelInput, torch.Tensor]]:
         """Build SFT examples with the same effort conditioning used for generation.
 
-        Both methods render with the same wheel renderer for ``effort``, so the
-        effort message in supervised data matches the one used for sampling.
-
-        Generic supervised dataset builders currently use the default effort
-        (``0.9``). We plan to expose per-example effort through those builders;
-        until then, call this method directly to render a conversation at a
-        specific effort level.
+        Both methods render with the same wheel renderer for ``effort`` (or
+        ``self.default_effort`` when omitted), so the effort message in
+        supervised data matches the one used for sampling.
         """
         render_input = _cookbook_messages_to_sft_input(messages, train_on_what, self.renderer_name)
-        renderer = self._renderer_for_effort(effort)
+        resolved_effort = self.default_effort if effort is None else effort
+        renderer = self._renderer_for_effort(resolved_effort)
         return self._render_sft_examples(_native_sft_messages(render_input), renderer)
 
     def build_supervised_example(
         self,
         messages: list[Message] | TmlRenderInput,
         train_on_what: TrainOnWhat = TrainOnWhat.ALL_ASSISTANT_MESSAGES,
-        effort: float = DEFAULT_EFFORT,
+        effort: float | None = None,
     ) -> tuple[tinker.ModelInput, torch.Tensor]:
         examples = self.build_supervised_examples(messages, train_on_what, effort=effort)
         return self._single_example(examples)

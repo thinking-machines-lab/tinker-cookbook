@@ -176,6 +176,11 @@ def get_renderer(
             - ``"gpt_oss_low_reasoning"``: GPT-OSS with low reasoning
             - ``"gpt_oss_medium_reasoning"``: GPT-OSS with medium reasoning
             - ``"gpt_oss_high_reasoning"``: GPT-OSS with high reasoning
+            - ``"tml_v0"``: Inkling models with default high reasoning effort (``0.9``)
+            - ``"tml_v0_xhigh_reasoning"``: Inkling models with xhigh reasoning effort (``0.99``)
+            - ``"tml_v0_high_reasoning"``: Inkling models with high reasoning effort (``0.9``)
+            - ``"tml_v0_medium_reasoning"``: Inkling models with medium reasoning effort (``0.7``)
+            - ``"tml_v0_low_reasoning"``: Inkling models with low reasoning effort (``0.2``)
             - Custom renderers registered via ``register_renderer()``
         tokenizer (Tokenizer): The tokenizer to use.
         image_processor (ImageProcessor | None): Required for VL renderers.
@@ -256,7 +261,7 @@ def get_renderer(
     from tinker_cookbook.renderers.qwen3_5 import Qwen3_5DisableThinkingRenderer, Qwen3_5Renderer
     from tinker_cookbook.renderers.qwen3_8 import Qwen3_8DisableThinkingRenderer, Qwen3_8Renderer
     from tinker_cookbook.renderers.role_colon import RoleColonRenderer
-    from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
+    from tinker_cookbook.renderers.tml_v0 import EFFORT_PRESETS, TmlV0Renderer
 
     renderer: Renderer
     if name == "role_colon":
@@ -367,6 +372,14 @@ def get_renderer(
         renderer = GptOssRenderer(tokenizer, use_system_prompt=True, reasoning_effort="high")
     elif name == "tml_v0":
         renderer = TmlV0Renderer(tokenizer)
+    elif name == "tml_v0_xhigh_reasoning":
+        renderer = TmlV0Renderer(tokenizer, default_effort=EFFORT_PRESETS["xhigh"])
+    elif name == "tml_v0_high_reasoning":
+        renderer = TmlV0Renderer(tokenizer, default_effort=EFFORT_PRESETS["high"])
+    elif name == "tml_v0_medium_reasoning":
+        renderer = TmlV0Renderer(tokenizer, default_effort=EFFORT_PRESETS["medium"])
+    elif name == "tml_v0_low_reasoning":
+        renderer = TmlV0Renderer(tokenizer, default_effort=EFFORT_PRESETS["low"])
     else:
         raise RendererError(
             f"Unknown renderer: {name}. If this is a custom renderer, please register it via register_renderer()."

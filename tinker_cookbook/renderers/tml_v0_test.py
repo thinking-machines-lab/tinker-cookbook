@@ -587,3 +587,63 @@ def test_explicit_effort_preserves_sampling_sft_and_pickle_parity(
     default_prompt = renderer.build_generation_prompt(_messages()[:-1]).to_ints()
     assert "Thinking effort level: 0.9" in tokenizer.decode(default_prompt)
     assert default_prompt != prompt
+
+
+@pytest.mark.parametrize("bad_effort", [-0.1, 1.0, float("nan"), float("inf")])
+def test_default_effort_validates_range_on_init(bad_effort: float) -> None:
+    ensure_tml_renderers_importable()
+    tokenizer = get_tokenizer("thinkingmachines/Inkling-2-Mini")
+    with pytest.raises(ValueError, match=r"thinking effort must be.*\[0, 1\)"):
+        tml_v0.TmlV0Renderer(tokenizer, default_effort=bad_effort)
+
+
+def test_constructor_default_effort_applies_to_sampling_and_sft_with_override() -> None:
+    ensure_tml_renderers_importable()
+    tokenizer = get_tokenizer("thinkingmachines/Inkling-2-Mini")
+    renderer = tml_v0.TmlV0Renderer(tokenizer, default_effort=0.2)
+    assert renderer.default_effort == 0.2
+
+    prompt = renderer.build_generation_prompt(_messages()[:-1]).to_ints()
+    assert "Thinking effort level: 0.2" in tokenizer.decode(prompt)
+
+    model_input, weights = renderer.build_supervised_example(_messages())
+    assert model_input.to_ints()[: len(prompt)] == prompt
+    assert not weights[: len(prompt)].any()
+    assert weights[len(prompt) :].sum() > 0
+
+    override_prompt = renderer.build_generation_prompt(_messages()[:-1], effort=0.7).to_ints()
+    assert "Thinking effort level: 0.7" in tokenizer.decode(override_prompt)
+    assert override_prompt != prompt
+
+
+@pytest.mark.parametrize(
+    ("renderer_name", "expected_effort"),
+    [
+        ("tml_v0_xhigh_reasoning", 0.99),
+        ("tml_v0_high_reasoning", 0.9),
+        ("tml_v0_medium_reasoning", 0.7),
+        ("tml_v0_low_reasoning", 0.2),
+    ],
+)
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_effort_preset_renderers_parity_and_pickle(
+    model_name: str, renderer_name: str, expected_effort: float
+) -> None:
+    ensure_tml_renderers_importable()
+    tokenizer = get_tokenizer(model_name)
+    renderer = get_renderer(renderer_name, tokenizer)
+    assert isinstance(renderer, tml_v0.TmlV0Renderer)
+    assert renderer.default_effort == expected_effort
+
+    prompt = renderer.build_generation_prompt(_messages()[:-1]).to_ints()
+    assert f"Thinking effort level: {expected_effort:g}" in tokenizer.decode(prompt)
+
+    model_input, weights = renderer.build_supervised_example(_messages())
+    assert model_input.to_ints()[: len(prompt)] == prompt
+    assert not weights[: len(prompt)].any()
+    assert weights[len(prompt) :].sum() > 0
+
+    restored = pickle.loads(pickle.dumps(renderer))
+    assert isinstance(restored, tml_v0.TmlV0Renderer)
+    assert restored.default_effort == expected_effort
+    assert restored.build_generation_prompt(_messages()[:-1]).to_ints() == prompt

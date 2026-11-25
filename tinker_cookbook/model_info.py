@@ -61,7 +61,13 @@ _NEMOTRON3_LIGHTNING = (
     "nemotron3_ultra_disable_thinking",
     "nemotron3_ultra_preserve_thinking",
 )
-_TML_V0 = ("tml_v0",)
+_TML_V0 = (
+    "tml_v0",
+    "tml_v0_xhigh_reasoning",
+    "tml_v0_high_reasoning",
+    "tml_v0_medium_reasoning",
+    "tml_v0_low_reasoning",
+)
 
 
 @dataclass
