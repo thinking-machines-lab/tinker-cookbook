@@ -174,6 +174,11 @@ def taco_to_lcb_format(tests: dict[str, Any]) -> list[dict[str, Any]]:
             "metadata": {},
         }
         if "fn_name" in tests:
+            # The grader decodes each line of a call-based input as one JSON positional
+            # argument, and the expected output as JSON.
+            args = inp if isinstance(inp, list) else [inp]
+            case["input"] = "\n".join(json.dumps(arg) for arg in args)
+            case["output"] = json.dumps(out)
             case["testtype"] = "functional"
             case["metadata"]["func_name"] = tests["fn_name"]
         else:
