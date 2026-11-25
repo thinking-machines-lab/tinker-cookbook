@@ -19,8 +19,21 @@ logger = logging.getLogger(__name__)
 
 
 def _relation_check(count: int, relation: str, target: int) -> bool:
-    checks = {"at least": count >= target, "at most": count <= target, "exactly": count == target}
-    return checks.get(relation, True)
+    # "at least" and "less than" are the only two relations google/IFEval uses;
+    # "at most" and "exactly" are here for datasets that use them.
+    checks = {
+        "at least": count >= target,
+        "less than": count < target,
+        "at most": count <= target,
+        "exactly": count == target,
+    }
+    if relation not in checks:
+        # An unrecognized relation cannot be verified. Defaulting it to satisfied
+        # would silently inflate scores -- the same failure the "less than" case
+        # exhibited -- so fail the check and surface the gap for a maintainer.
+        logger.warning("Unrecognized IFEval relation %r; scoring as unsatisfied", relation)
+        return False
+    return checks[relation]
 
 
 def _count_words(text: str) -> int:
