@@ -231,7 +231,9 @@ class FunctionTool:
 
         # Execute function
         try:
-            kwargs = validated.model_dump()
+            # dict() keeps each validated value; model_dump() would turn nested
+            # models and dataclasses back into dicts.
+            kwargs = dict(validated)
             args = (self._instance,) if self._instance is not None else ()
             if asyncio.iscoroutinefunction(self._fn):
                 result = await self._fn(*args, **kwargs)
