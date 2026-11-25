@@ -105,6 +105,7 @@ def main(config: Config):
     # Shuffle dataset
     train_dataset = train_dataset.shuffle(seed=0)
 
+    next_batch = start_batch
     for batch_idx in range(start_batch, n_train_batches):
         if config.max_steps is not None and batch_idx >= config.max_steps:
             break
@@ -173,6 +174,7 @@ def main(config: Config):
             time_total=time.time() - start_time,
         )
         ml_logger.log_metrics(metrics=metrics, step=step)
+        next_batch = batch_idx + 1
 
     # Save final checkpoint
     checkpoint_utils.save_checkpoint(
@@ -180,7 +182,7 @@ def main(config: Config):
         name="final",
         log_path=config.log_path,
         kind="both",
-        loop_state={"batch": n_train_batches},
+        loop_state={"batch": next_batch},
         ttl_seconds=None,
     )
 
