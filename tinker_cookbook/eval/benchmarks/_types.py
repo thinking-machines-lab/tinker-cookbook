@@ -267,6 +267,12 @@ _MODEL_EVAL_DEFAULTS: dict[str, dict[str, int | float]] = {
         "context_window": 262144,
         "timeout_seconds": 1800,
     },
+    # The free-tier id of Inkling-2-Mini, 64K context
+    "thinkingmachines/Inkling-2-Mini:peft:65536:free": {
+        "max_tokens": 65536,
+        "context_window": 65536,
+        "timeout_seconds": 1800,
+    },
 }
 
 
