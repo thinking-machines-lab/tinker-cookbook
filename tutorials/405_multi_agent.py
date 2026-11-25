@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -120,10 +127,12 @@ def _(mo):
 
 
 @app.cell
-def _(EnvFromMessageEnv, NamingGameEnv, get_tokenizer, renderers):
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+def _(EnvFromMessageEnv, NamingGameEnv, get_tokenizer, model_info, renderers):
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
     tokenizer = get_tokenizer(MODEL_NAME)
-    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
+    renderer = renderers.get_renderer(
+        model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer
+    )
 
     # Wrap a MessageEnv into a token-level Env
     message_env = NamingGameEnv(topic="coffee shop")

@@ -94,45 +94,55 @@ def _(mo):
     mo.md(r"""
     ## Sampling from a model
 
-    Let's create a **SamplingClient** to generate text. We will use `Qwen/Qwen3.5-9B-Base`, a base (non-chat-tuned) model, so we can feed it raw tokens and get a plain text completion -- no chat template required.
+    Let's create a **SamplingClient** to generate text with **Inkling 2 Mini** (`thinkingmachines/Inkling-2-Mini`). This is a chat model, so we use its recommended renderer to format messages and set thinking effort.
 
     The sampling workflow is:
     1. Create a `SamplingClient` with a base model name
-    2. Encode your prompt into tokens using the model's tokenizer
+    2. Render your messages into prompt tokens
     3. Call `sample()` with the prompt and sampling parameters
-    4. Decode the returned tokens back into text
+    4. Parse the returned tokens into an assistant message
     """)
     return
 
 
 @app.cell
 async def _(service_client):
-    MODEL_NAME = "Qwen/Qwen3.5-9B-Base"
+    from tinker_cookbook import model_info
+    from tinker_cookbook.renderers import get_renderer, get_text_content
+    from tinker_cookbook.tokenizer_utils import get_tokenizer
+
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
 
     # Create a sampling client -- this connects to a remote GPU worker
     sampling_client = await service_client.create_sampling_client(base_model=MODEL_NAME)
 
-    # Get the tokenizer for encoding/decoding text
-    tokenizer = sampling_client.get_tokenizer()
-    return sampling_client, tokenizer
+    tokenizer = get_tokenizer(MODEL_NAME)
+    renderer = get_renderer(model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer)
+    return get_text_content, renderer, sampling_client
 
 
 @app.cell
-async def _(sampling_client, tokenizer, types):
-    # Encode a prompt into tokens
-    prompt_text = "The three largest cities in the world by population are"
-    print("Prompt tokens:", tokenizer.encode(prompt_text))
-    prompt = types.ModelInput.from_ints(tokenizer.encode(prompt_text))
+async def _(get_text_content, renderer, sampling_client, types):
+    # Let the renderer add the chat format and thinking-effort directive.
+    prompt_text = "Name three of the world's largest cities by population."
+    prompt = renderer.build_generation_prompt(
+        [{"role": "user", "content": prompt_text}], effort=0.9
+    )
+    print("Prompt tokens:", prompt.to_ints())
 
     # Sample a completion
-    params = types.SamplingParams(max_tokens=50, temperature=0.5)
+    params = types.SamplingParams(
+        max_tokens=4096, temperature=1.0, stop=renderer.get_stop_sequences()
+    )
     result = await sampling_client.sample(prompt=prompt, sampling_params=params, num_samples=1)
 
     # Decode and print
     completion_tokens = result.sequences[0].tokens
     print("Completion tokens:", completion_tokens)
-    print(prompt_text + tokenizer.decode(completion_tokens))
-    return prompt, prompt_text, result
+    message, termination = renderer.parse_response(completion_tokens)
+    print(get_text_content(message))
+    print("Parse termination:", termination)
+    return prompt, result
 
 
 @app.cell(hide_code=True)
@@ -167,15 +177,17 @@ def _(mo):
 
 
 @app.cell
-async def _(prompt, prompt_text, sampling_client, tokenizer, types):
+async def _(get_text_content, prompt, renderer, sampling_client, types):
     result_1 = await sampling_client.sample(
         prompt=prompt,
-        sampling_params=types.SamplingParams(max_tokens=50, temperature=0.7),
+        sampling_params=types.SamplingParams(
+            max_tokens=4096, temperature=1.0, stop=renderer.get_stop_sequences()
+        ),
         num_samples=3,
     )
     for i, _seq in enumerate(result_1.sequences):
-        text = tokenizer.decode(_seq.tokens)
-        print(f"Sample {i}: {prompt_text}{text}")
+        _message, _termination = renderer.parse_response(_seq.tokens)
+        print(f"Sample {i}: {get_text_content(_message)} ({_termination})")
     return
 
 

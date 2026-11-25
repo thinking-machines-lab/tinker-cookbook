@@ -11,6 +11,20 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
+@app.cell
+def _():
+    from tinker_cookbook import tokenizer_utils
+
+    return (tokenizer_utils,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -94,7 +108,7 @@ def _(mo):
 
 
 @app.cell
-def _(api_key, get_renderer, mo, tinker):
+def _(api_key, get_renderer, mo, model_info, tinker, tokenizer_utils):
     import os
 
     mo.stop(
@@ -105,12 +119,12 @@ def _(api_key, get_renderer, mo, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     sampling_client = service_client.create_sampling_client(base_model=MODEL_NAME).result()
-    tokenizer = sampling_client.get_tokenizer()
-    renderer = get_renderer("qwen3_5_disable_thinking", tokenizer)
+    tokenizer = tokenizer_utils.get_tokenizer(MODEL_NAME)
+    renderer = get_renderer(model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer)
 
     print(f"Sampling client ready for {MODEL_NAME}")
     return renderer, sampling_client, tokenizer
@@ -130,8 +144,8 @@ def _(mo):
 def _(TinkerTokenCompleter, sampling_client):
     token_completer = TinkerTokenCompleter(
         sampling_client=sampling_client,
-        max_tokens=128,
-        temperature=0.7,
+        max_tokens=4096,
+        temperature=1.0,
     )
     print(
         f"TokenCompleter: max_tokens={token_completer.max_tokens}, temp={token_completer.temperature}"
@@ -155,7 +169,7 @@ async def _(renderer, token_completer, tokenizer):
     messages_for_tokens = [
         {"role": "user", "content": "What is 7 * 8?"},
     ]
-    model_input = renderer.build_generation_prompt(messages_for_tokens)
+    model_input = renderer.build_generation_prompt(messages_for_tokens, effort=0.9)
     stop_sequences = renderer.get_stop_sequences()
 
     # Generate tokens
@@ -197,8 +211,8 @@ def _(TinkerMessageCompleter, renderer, sampling_client):
     message_completer = TinkerMessageCompleter(
         sampling_client=sampling_client,
         renderer=renderer,
-        max_tokens=256,
-        temperature=0.7,
+        max_tokens=4096,
+        temperature=1.0,
     )
     print("MessageCompleter ready")
     return (message_completer,)
@@ -268,10 +282,10 @@ async def _(get_text_content, message_completer):
     # Step 2: Ask the judge to score it
     judge_prompt = f"""Rate the following answer on a scale of 1-5 for accuracy and clarity.
 
-Question: {question}
-Answer: {candidate_text}
+    Question: {question}
+    Answer: {candidate_text}
 
-Respond with ONLY a number from 1 to 5."""
+    Respond with ONLY a number from 1 to 5."""
 
     judge_response = await message_completer([{"role": "user", "content": judge_prompt}])
     judge_text = get_text_content(judge_response)

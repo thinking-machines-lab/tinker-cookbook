@@ -16,7 +16,7 @@ def _(mo):
     mo.md(r"""
     # Tutorial 404: Sequence Extension in Multi-Turn RL
 
-    Manage conversation history and masks across turns.
+    Manage conversation history and masks across turns. The examples use synthetic token IDs to explain the bookkeeping; for real Inkling 2 Mini rollouts, obtain tokens from its recommended renderer as in tutorial 201.
 
     In single-turn RL, each episode has one prompt and one completion. In **multi-turn RL**, the model generates multiple responses across turns, and the training data must correctly track which tokens get gradients.
 

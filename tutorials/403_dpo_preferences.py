@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -94,13 +101,15 @@ def _(mo):
 
 
 @app.cell
-def _(ComparisonRendererFromChatRenderer, comparison):
+def _(ComparisonRendererFromChatRenderer, comparison, model_info):
     from tinker_cookbook import renderers
     from tinker_cookbook.tokenizer_utils import get_tokenizer
 
-    MODEL_NAME = "Qwen/Qwen3.5-4B"
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
     tokenizer = get_tokenizer(MODEL_NAME)
-    renderer = renderers.get_renderer("qwen3_5_disable_thinking", tokenizer)
+    renderer = renderers.get_renderer(
+        model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer
+    )
 
     comparison_renderer = ComparisonRendererFromChatRenderer(renderer)
 
@@ -114,7 +123,7 @@ def _(ComparisonRendererFromChatRenderer, comparison):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    *Note: the empty <think></think> blocks are Qwen3.5's non-thinking markers (part of the chat template, not content) — the judge model reads them as "answer directly," so you can ignore them here.*
+    *The Inkling renderer adds chat formatting and thinking-effort conditioning. The comparison renderer uses its default effort of `0.9`, matching the training examples.*
     """)
     return
 

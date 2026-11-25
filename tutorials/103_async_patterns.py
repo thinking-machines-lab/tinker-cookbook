@@ -11,6 +11,20 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
+@app.cell
+def _():
+    from tinker_cookbook import tokenizer_utils
+
+    return (tokenizer_utils,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -44,7 +58,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We create a `SamplingClient` for the base Qwen3.5-4B model (no fine-tuning needed for this tutorial). We also set up a renderer to handle the chat template and a list of diverse prompts to sample from.
+    We create a `SamplingClient` for the Inkling 2 Mini model (no fine-tuning needed for this tutorial). We also set up a renderer to handle the chat template and a list of diverse prompts to sample from.
     """)
     return
 
@@ -57,7 +71,15 @@ def _(mo):
 
 
 @app.cell
-async def _(api_key, get_renderer, mo, os, tinker):
+async def _(
+    api_key,
+    get_renderer,
+    mo,
+    model_info,
+    os,
+    tinker,
+    tokenizer_utils,
+):
     mo.stop(
         "TINKER_API_KEY" not in os.environ and not api_key.value,
         "Paste your API key above",
@@ -66,15 +88,15 @@ async def _(api_key, get_renderer, mo, os, tinker):
     if api_key.value:
         os.environ["TINKER_API_KEY"] = api_key.value
 
-    BASE_MODEL = "Qwen/Qwen3.5-4B"
+    BASE_MODEL = "thinkingmachines/Inkling-2-Mini"
 
     service_client = tinker.ServiceClient()
     sampling_client = await service_client.create_sampling_client(base_model=BASE_MODEL)
-    tokenizer = sampling_client.get_tokenizer()
-    renderer = get_renderer("qwen3_5", tokenizer)
+    tokenizer = tokenizer_utils.get_tokenizer(BASE_MODEL)
+    renderer = get_renderer(model_info.get_recommended_renderer_name(BASE_MODEL), tokenizer)
 
     stop_sequences = renderer.get_stop_sequences()
-    params = tinker.SamplingParams(max_tokens=150, temperature=0.7, stop=stop_sequences)
+    params = tinker.SamplingParams(max_tokens=4096, temperature=1.0, stop=stop_sequences)
 
     # A diverse set of prompts to sample from
     prompts = [
@@ -116,7 +138,7 @@ async def _(
     sequential_results = []
     for _prompt_text in prompts:
         _messages = [{"role": "user", "content": _prompt_text}]
-        _model_input = renderer.build_generation_prompt(_messages)
+        _model_input = renderer.build_generation_prompt(_messages, effort=0.9)
         _result = await sampling_client.sample(
             prompt=_model_input, num_samples=1, sampling_params=params
         )
@@ -160,7 +182,7 @@ async def _(
     # Step 1: Submit ALL requests concurrently using asyncio.gather
     async def _sample_one(_prompt_text):
         _messages = [{"role": "user", "content": _prompt_text}]
-        _model_input = renderer.build_generation_prompt(_messages)
+        _model_input = renderer.build_generation_prompt(_messages, effort=0.9)
         return await sampling_client.sample(
             prompt=_model_input, num_samples=1, sampling_params=params
         )
@@ -196,7 +218,7 @@ async def _(get_text_content, params, renderer, sampling_client, time):
     _GROUP_SIZE = 4
     test_prompt = "Name a famous scientist and explain their key contribution in one sentence."
     _messages = [{"role": "user", "content": test_prompt}]
-    _model_input = renderer.build_generation_prompt(_messages)
+    _model_input = renderer.build_generation_prompt(_messages, effort=0.9)
     _start = time.time()
     _result = await sampling_client.sample(
         prompt=_model_input, num_samples=_GROUP_SIZE, sampling_params=params
@@ -248,7 +270,7 @@ async def _(
     # Submit all requests concurrently using asyncio.gather, each with num_samples=GROUP_SIZE
     async def _sample_group(_prompt_text):
         _messages = [{"role": "user", "content": _prompt_text}]
-        _model_input = renderer.build_generation_prompt(_messages)
+        _model_input = renderer.build_generation_prompt(_messages, effort=0.9)
         _result = await sampling_client.sample(
             prompt=_model_input, num_samples=_GROUP_SIZE, sampling_params=params
         )

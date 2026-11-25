@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import model_info
+
+    return (model_info,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -34,17 +41,20 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We need a tokenizer (to map between text and token IDs) and a renderer (to apply the model's chat format). Note for this example that both Qwen3.5 and Qwen3.6 models use the same `qwen3_5` renderer.
+    We need a tokenizer (to map between text and token IDs) and a renderer (to apply the model's chat format). We use Inkling 2 Mini and select its renderer with `model_info.get_recommended_renderer_name()`. The cookbook uses `tml-renderers` for Inkling tokenization and message formatting.
     """)
     return
 
 
 @app.cell
-def _():
+def _(model_info):
     from tinker_cookbook import renderers, tokenizer_utils
 
-    tokenizer = tokenizer_utils.get_tokenizer("Qwen/Qwen3.6-35B-A3B")
-    renderer = renderers.get_renderer("qwen3_5", tokenizer)
+    MODEL_NAME = "thinkingmachines/Inkling-2-Mini"
+    tokenizer = tokenizer_utils.get_tokenizer(MODEL_NAME)
+    renderer = renderers.get_renderer(
+        model_info.get_recommended_renderer_name(MODEL_NAME), tokenizer
+    )
     renderer  # noqa: B018
     return renderer, renderers, tokenizer, tokenizer_utils
 
@@ -89,7 +99,7 @@ def _(mo):
 @app.cell
 def _(messages, renderer, tokenizer):
     # Remove the last assistant message so the model can generate one
-    prompt = renderer.build_generation_prompt(messages[:-1])
+    prompt = renderer.build_generation_prompt(messages[:-1], effort=0.9)
     print("ModelInput:", prompt)
     print()
     print("Decoded tokens:")
@@ -100,9 +110,9 @@ def _(messages, renderer, tokenizer):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    The output is a `ModelInput` object containing the tokenized chat template. Notice how each message is wrapped in special tokens like `<|im_start|>` and `<|im_end|>`, and the final `<|im_start|>assistant` is left open for the model to fill in.
+    The output is a `ModelInput` containing Inkling's message boundaries and the start of a new assistant turn. Always let the renderer produce this structure rather than encoding a raw prompt or appending an assistant prefill.
 
-    Because `qwen3_5` is a thinking renderer, the prompt also ends with an open `<think>` tag that primes the model to reason before answering. If you'd prefer non-thinking mode instead, the `qwen3_5_disable_thinking` variant inserts a closed `<think></think>` so the model replies directly.
+    We explicitly use thinking effort `0.9`, also the default used by cookbook dataset and environment helpers. The renderer adds the effort directive. Use the same effort when rendering training data and sampling; larger efforts can need larger generation budgets.
     """)
     return
 
@@ -122,7 +132,7 @@ def _(renderer, tokenizer):
     stop_sequences = renderer.get_stop_sequences()
     print(f"Stop sequences: {stop_sequences}")
 
-    # For Qwen3.5/3.6, this is the <|im_end|> token
+    # Use the stop tokens supplied by the Inkling renderer.
     for tok in stop_sequences:
         if isinstance(tok, int):
             print(f"  Token {tok} decodes to: {tokenizer.decode([tok])!r}")
@@ -146,13 +156,24 @@ def _(mo):
 
 
 @app.cell
-def _(renderer, tokenizer):
-    # Simulate what the model emits during sampling: the assistant's reply text
-    # followed by the <|im_end|> stop token. (In practice these come from the
-    # sampler -- here we build them by hand so the example is reproducible.)
-    fake_tokens = tokenizer.encode(
-        "They have efficient DNA repair and cancer-resistant cells.<|im_end|>"
+def _(renderer):
+    # Render a complete assistant turn, then remove the generation prompt.
+    # This gives the parser a correctly framed response without an API call.
+    _messages = [{"role": "user", "content": "How do naked mole rats live so long?"}]
+    _prompt = renderer.build_generation_prompt(_messages, effort=0.9)
+    _full, _weights = renderer.build_supervised_example(
+        [
+            *_messages,
+            {
+                "role": "assistant",
+                "content": "They have efficient DNA repair and cancer-resistant cells.",
+            },
+        ],
+        effort=0.9,
     )
+    _full_ids = _full.to_ints()
+    assert _full_ids[: _prompt.length] == _prompt.to_ints()
+    fake_tokens = _full_ids[_prompt.length :]
     parsed_message, termination = renderer.parse_response(fake_tokens)
 
     print(f"Fake tokens: {fake_tokens}")
@@ -173,11 +194,11 @@ def _(mo):
     from tinker.types import SamplingParams
 
     service_client = tinker.ServiceClient()
-    sampling_client = service_client.create_sampling_client(base_model="Qwen/Qwen3.6-35B-A3B").result()
+    sampling_client = service_client.create_sampling_client(base_model="thinkingmachines/Inkling-2-Mini").result()
 
-    prompt = renderer.build_generation_prompt(messages[:-1])
+    prompt = renderer.build_generation_prompt(messages[:-1], effort=0.9)
     stop_sequences = renderer.get_stop_sequences()
-    sampling_params = SamplingParams(max_tokens=100, temperature=0.5, stop=stop_sequences)
+    sampling_params = SamplingParams(max_tokens=4096, temperature=1.0, stop=stop_sequences)
 
     output = sampling_client.sample(prompt, sampling_params=sampling_params, num_samples=1).result()
     sampled_message, success = renderer.parse_response(output.sequences[0].tokens)
@@ -201,8 +222,10 @@ def _(mo):
 
 
 @app.cell
-def _(messages, renderer, tokenizer):
-    model_input, weights = renderer.build_supervised_example(messages)
+def _(messages, renderer, renderers, tokenizer):
+    model_input, weights = renderer.build_supervised_example(
+        messages, train_on_what=renderers.TrainOnWhat.LAST_ASSISTANT_MESSAGE, effort=0.9
+    )
 
     # Show which tokens are prompt vs completion
     token_ids = model_input.to_ints()
@@ -225,13 +248,13 @@ def _(mo):
     mo.md(r"""
     ## `TrainOnWhat` -- controlling loss targets
 
-    By default, `build_supervised_example` trains on the last assistant message. The `TrainOnWhat` enum gives you more control:
+    Inkling defaults to `ALL_ASSISTANT_MESSAGES`. Above we explicitly selected `LAST_ASSISTANT_MESSAGE`. The `TrainOnWhat` enum gives you more control:
 
     | Value | Trains on |
     |---|---|
-    | `LAST_ASSISTANT_MESSAGE` | Only the final assistant reply (default) |
+    | `LAST_ASSISTANT_MESSAGE` | Only the final assistant reply |
     | `LAST_ASSISTANT_TURN` | Final assistant turn including tool calls/responses |
-    | `ALL_ASSISTANT_MESSAGES` | Every assistant message in the conversation |
+    | `ALL_ASSISTANT_MESSAGES` | Every assistant message (Inkling default) |
     | `ALL_MESSAGES` | All messages regardless of role |
     | `ALL_TOKENS` | Every token including special tokens |
     | `CUSTOMIZED` | Per-message `train` flags from the dataset |
@@ -241,16 +264,19 @@ def _(mo):
 
 @app.cell
 def _(messages, renderer, renderers):
-    # Train on ALL assistant messages instead of just the last one
-    _, weights_all = renderer.build_supervised_example(
+    # Whole-conversation rendering can produce more than one SFT example.
+    _examples_all = renderer.build_supervised_examples(
         messages,
         train_on_what=renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES,
+        effort=0.9,
     )
-    print(f"Tokens with weight > 0: {(weights_all > 0).sum().item()}")
+    _all_count = sum((_weights > 0).sum().item() for _, _weights in _examples_all)
+    print(f"Tokens with weight > 0 (all assistant messages): {_all_count}")
 
-    # Compare with default (last assistant message only)
-    _, weights_last = renderer.build_supervised_example(messages)
-    print(f"Tokens with weight > 0 (default): {(weights_last > 0).sum().item()}")
+    _, weights_last = renderer.build_supervised_example(
+        messages, train_on_what=renderers.TrainOnWhat.LAST_ASSISTANT_MESSAGE, effort=0.9
+    )
+    print(f"Tokens with weight > 0 (last assistant message): {(weights_last > 0).sum().item()}")
     return
 
 
@@ -263,6 +289,7 @@ def _(mo):
 
     | Name | Model family | Notes |
     |---|---|---|
+    | `tml_v0` | Inkling, including Inkling 2 Mini | Thinking effort via `effort` |
     | `qwen3_5` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled (default) |
     | `qwen3_5_disable_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking disabled |
     | `qwen3_5_preserve_thinking` | Qwen3.5 / Qwen3.6 (incl. VL) | Thinking enabled, earlier reasoning kept in history (multi-turn RL) |
@@ -282,24 +309,22 @@ def _(mo):
     | `kimi_k31_pro_max_reasoning` | Kimi K3.1-Pro | Thinking enabled, reasoning effort max (default) |
     | `kimi_k31_pro_disable_thinking` | Kimi K3.1-Pro | Thinking disabled |
 
-    Each renderer produces the correct special tokens for its model family. The default renderers match HuggingFace's `apply_chat_template` output, so models trained with Tinker work with the OpenAI-compatible endpoint.
+    Each renderer produces the correct special tokens for its model family. Inkling uses `tml-renderers`; other families use their corresponding chat templates. Select the recommended renderer for the model rather than reusing another family's format.
     """)
     return
 
 
 @app.cell
-def _(renderers, tokenizer_utils):
+def _(model_info, renderers, tokenizer_utils):
     # Example: switching between renderers
     # Each model family needs its own tokenizer + matching renderer
     _test_messages = [{"role": "user", "content": "Hello!"}]
 
-    for _model_name, _renderer_name in [
-        ("Qwen/Qwen3.6-35B-A3B", "qwen3_5"),
-        ("moonshotai/Kimi-K2.6", "kimi_k26"),
-    ]:
+    for _model_name in ["thinkingmachines/Inkling-2-Mini", "thinkingmachines/Inkling-2-Small"]:
+        _renderer_name = model_info.get_recommended_renderer_name(_model_name)
         _tokenizer = tokenizer_utils.get_tokenizer(_model_name)
         _renderer = renderers.get_renderer(_renderer_name, _tokenizer)
-        _prompt_tokens = _renderer.build_generation_prompt(_test_messages)
+        _prompt_tokens = _renderer.build_generation_prompt(_test_messages, effort=0.9)
         print(f"--- {_model_name} ({_renderer_name}) ---")
         print(_tokenizer.decode(_prompt_tokens.to_ints()))
         print()
@@ -311,20 +336,22 @@ def _(mo):
     mo.md(r"""
     ## Vision inputs with `ImagePart`
 
-    For vision-language models (Qwen3.5 and Qwen3.6 models are all vision-capable), message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
+    For vision-language models such as Inkling 2 Mini, message content can include images alongside text. Use `ImagePart` for images and `TextPart` for text within the same message.
     """)
     return
 
 
 @app.cell
 def _():
+    from PIL import Image
+
     from tinker_cookbook.renderers import ImagePart, Message, TextPart
 
     # A multimodal message with an image and text
     multimodal_message = Message(
         role="user",
         content=[
-            ImagePart(type="image", image="https://example.com/photo.png"),
+            ImagePart(type="image", image=Image.new("RGB", (64, 64), color="blue")),
             TextPart(type="text", text="What is in this image?"),
         ],
     )
@@ -339,16 +366,13 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    The Qwen3.5 and Qwen3.6 models are natively vision-capable -- the same `qwen3_5` renderer you set up above also handles images. You just additionally load an image processor and pass it in:
+    The same Inkling renderer handles images through `tml-renderers`; no HuggingFace image processor is needed. Use an in-memory image, local file, or data URI rather than a remote URL.
 
     ```python
-    from tinker_cookbook.image_processing_utils import get_image_processor
-
-    image_processor = get_image_processor("Qwen/Qwen3.6-35B-A3B")
-    renderer = renderers.get_renderer("qwen3_5", tokenizer, image_processor=image_processor)
+    image_prompt = renderer.build_generation_prompt([multimodal_message], effort=0.9)
     ```
 
-    With an image processor attached, the renderer handles the vision special tokens (`<|vision_start|>`, `<|vision_end|>`) and image preprocessing automatically.
+    The result can contain image chunks as well as text tokens, so do not call `to_ints()` on a multimodal prompt.
     """)
     return
 
@@ -368,10 +392,10 @@ def _(renderers):
     # Define a factory function that creates your renderer
     def my_renderer_factory(tokenizer, image_processor=None):
         # In practice, you would return a custom Renderer subclass here.
-        # For demonstration, we just return the Qwen3.5 renderer.
-        from tinker_cookbook.renderers.qwen3_5 import Qwen3_5Renderer
+        # For demonstration, we delegate to the Inkling renderer.
+        from tinker_cookbook.renderers.tml_v0 import TmlV0Renderer
 
-        return Qwen3_5Renderer(tokenizer)
+        return TmlV0Renderer(tokenizer)
 
     # Register it under a namespaced name
     renderers.register_renderer("MyOrg/custom_format", my_renderer_factory)

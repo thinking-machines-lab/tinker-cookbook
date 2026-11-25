@@ -11,6 +11,13 @@ def _():
     return (mo,)
 
 
+@app.cell
+def _():
+    from tinker_cookbook import tokenizer_utils
+
+    return (tokenizer_utils,)
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -29,7 +36,7 @@ def _(mo):
 
     Each stage builds on the previous one. The SFT policy initializes the RL agent, and the preference model provides the reward signal.
 
-    **Expected runtime: ~1.5 hours end-to-end** -- about 20 minutes for Stages 1-2 (SFT + preference model) and ~1 hour for Stage 3 (RL, capped at 40 steps). This is the longest tutorial in the series, so leave it running and check back. Raising `max_steps` in the Stage 3 config trains longer (the win rate plateaus around 98% after ~200 steps; a full epoch over HHH is ~630 steps, ~15 hours).
+    This is the longest tutorial in the series. Runtime and win-rate improvements depend on the model, data, and service load. The tutorial caps RL at 40 steps; inspect evaluation metrics before increasing the budget. The original tutorial's timings and win rates were measured on a different model and are not Inkling 2 Mini benchmarks.
     """)
     return
 
@@ -39,7 +46,7 @@ def _(mo):
     mo.md(r"""
     ## Setup
 
-    We use `Qwen3.5-9B-Base` as the base model. All three stages use LoRA for parameter-efficient training.
+    We use `thinkingmachines/Inkling-2-Mini` as the starting checkpoint for further post-training. All three stages use LoRA for parameter-efficient training.
     """)
     return
 
@@ -55,7 +62,7 @@ def _():
     from tinker_cookbook import checkpoint_utils, cli_utils, model_info
     from tinker_cookbook.renderers import TrainOnWhat
 
-    BASE_MODEL = "Qwen/Qwen3.5-9B-Base"
+    BASE_MODEL = "thinkingmachines/Inkling-2-Mini"
     LORA_RANK = 64
     MAX_LENGTH = 16384
     BATCH_SIZE = 256
@@ -88,9 +95,9 @@ def _(mo):
     Key choices:
     - **Dataset**: NoRobots -- clean, human-written instruction data
     - **Loss**: standard next-token prediction on assistant messages only (`TrainOnWhat.ALL_ASSISTANT_MESSAGES`)
-    - **Learning rate**: 2e-4 (standard SFT rate)
+    - **Learning rate**: 2e-4 (an illustrative starting point to sweep)
 
-    Expected: `test/nll` decreases from ~1.99 to ~1.92 in 20 steps.
+    Monitor held-out `test/nll` to check whether SFT improves prediction on your data.
     """)
     return
 
@@ -181,7 +188,7 @@ def _(mo):
     - **Dataset**: HHH -- Anthropic's helpful/harmless/honest pairwise preference data
     - **Learning rate**: 3e-4 (slightly higher than SFT, since the task is simpler)
 
-    Expected: `test/nll` drops from ~7 to ~0.7 in 40 steps, converging to ~0.55 by step 600.
+    Monitor held-out `test/nll` to check whether the preference model learns to predict human choices.
     """)
     return
 
@@ -264,9 +271,9 @@ def _(mo):
     - **Group size**: 4 completions per prompt
     - **Tournament**: `ALL_PAIRS_BOTH_WAYS` -- every pair is evaluated in both orderings
 
-    Expected: `test/win_rate` climbs from ~45% to ~75-80% in 40 steps.
+    Track `test/win_rate` to measure improvement over the initial policy.
 
-    Most of the learning happens early: in a full run the win rate reaches ~93% by step 60 and plateaus around 98% after ~200 steps, so we cap training at `max_steps=40` (~1 hour) to capture the steep part of the curve. A full epoch over the HHH prompts is ~630 steps (~15 hours); raise `max_steps` (or set it to `None`) to train longer.
+    We cap training at `max_steps=40` to limit the tutorial run. Raise `max_steps` after checking held-out win rate, reward variance, and KL; these hyperparameters have not been calibrated for Inkling 2 Mini.
     """)
     return
 
@@ -344,7 +351,7 @@ async def _(
         dataset_builder=rl_dataset_builder,
         load_checkpoint_path=sft_ckpt.state_path,
         learning_rate=1e-5,
-        max_tokens=1024,
+        max_tokens=4096,
         log_path=rl_log_path,
         evaluator_builders=[make_evaluator],
         wandb_project=None,
@@ -353,8 +360,7 @@ async def _(
         save_every=100,
         eval_every=10,
         num_groups_to_log=4,
-        # Most of the win-rate gain lands in the first 40 steps (~1 hour); a
-        # full epoch is ~630 steps (~15 hours) and plateaus around 98%. A final
+        # Limit the tutorial to 40 steps; use held-out metrics to set the budget. A final
         # checkpoint is saved at the end of training either way. Raise this
         # (or set to None) to train longer.
         max_steps=40,
@@ -376,7 +382,14 @@ def _(mo):
 
 
 @app.cell
-async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
+async def _(
+    BASE_MODEL,
+    checkpoint_utils,
+    renderer_name,
+    rl_log_path,
+    tinker,
+    tokenizer_utils,
+):
     from tinker import types
 
     from tinker_cookbook import renderers
@@ -395,7 +408,7 @@ async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
         base_model=BASE_MODEL,
     )
 
-    tokenizer_eval = base_sampler.get_tokenizer()
+    tokenizer_eval = tokenizer_utils.get_tokenizer(BASE_MODEL)
     renderer_eval = renderers.get_renderer(renderer_name, tokenizer_eval)
 
     # Sample from both models on the same prompt
@@ -403,10 +416,10 @@ async def _(BASE_MODEL, checkpoint_utils, renderer_name, rl_log_path, tinker):
         "What is the most important thing to consider when learning a new programming language?"
     )
     prompt_tokens = renderer_eval.build_generation_prompt(
-        [{"role": "user", "content": test_prompt}]
+        [{"role": "user", "content": test_prompt}], effort=0.9
     )
     params = types.SamplingParams(
-        max_tokens=200, temperature=0.7, stop=renderer_eval.get_stop_sequences()
+        max_tokens=4096, temperature=1.0, stop=renderer_eval.get_stop_sequences()
     )
 
     base_result = await base_sampler.sample(
@@ -433,12 +446,12 @@ def _(mo):
 
     | Stage | Goal | Dataset | Key Metric |
     |-------|------|---------|------------|
-    | SFT | Initialize policy on instructions | no_robots | NLL: 1.99 -> 1.92 |
-    | Preference Model | Learn human preferences | HHH (Anthropic) | NLL: 7 -> 0.55 |
-    | RL | Optimize policy against PM | HHH prompts | Win rate: ~45% -> ~78% |
+    | SFT | Initialize policy on instructions | no_robots | Track held-out NLL |
+    | Preference Model | Learn human preferences | HHH (Anthropic) | Track held-out NLL |
+    | RL | Optimize policy against PM | HHH prompts | Track held-out win rate |
 
     Key takeaways:
-    - **SFT** gives the model basic instruction-following ability
+    - **SFT** adapts the instruction-tuned model to the target dataset
     - **Preference Model** provides a learned reward signal, replacing expensive human feedback at RL time
     - **RL** uses self-play with tournament scoring -- sample multiple completions, grade all pairs, reward winners
     - Learning rates: 2e-4 (SFT), 3e-4 (PM), 1e-5 (RL) -- RL needs much smaller steps due to noisy gradients

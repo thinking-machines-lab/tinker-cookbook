@@ -56,7 +56,7 @@ def _(mo):
     ```bash
     python -m tinker_cookbook.recipes.chat_sl.sweep \
         recipe=sft \
-        base.model_name=Qwen/Qwen3.5-4B \
+        base.model_name=thinkingmachines/Inkling-2-Mini \
         base.dataset=tulu3 \
         'learning_rates=[1e-4, 3e-4, 1e-3]' \
         'lora_ranks=[32, 128]'
@@ -74,7 +74,7 @@ def _(mo):
 
     results = sweep.run(
         cli_main,
-        CLIConfig(model_name="Qwen/Qwen3.5-4B", dataset="tulu3"),
+        CLIConfig(model_name="thinkingmachines/Inkling-2-Mini", dataset="tulu3"),
         learning_rate=[1e-4, 3e-4, 1e-3],
         lora_rank=[32, 128],
     )
@@ -89,7 +89,7 @@ def _(mo):
     ```python
     results = sweep.run(
         cli_main,
-        CLIConfig(model_name="Qwen/Qwen3.5-4B", dataset="tulu3"),
+        CLIConfig(model_name="thinkingmachines/Inkling-2-Mini", dataset="tulu3"),
         max_parallel=4,
         learning_rate=[1e-4, 3e-4, 1e-3],
         lora_rank=[32, 128],
@@ -145,7 +145,7 @@ def _(mo):
     mo.md(r"""
     ## Reference results
 
-    Here are pre-computed sweep results across several models and configurations. Use these as starting points for your own experiments.
+    These historical sweeps illustrate how learning rate and rank interact on other models. They are not Inkling 2 Mini measurements. Run the sweep above to select hyperparameters for Inkling 2 Mini; use `get_lr("thinkingmachines/Inkling-2-Mini")` for a calibrated sweep starting point.
 
     ### DeepSeek V3.1 Base
 
@@ -227,7 +227,7 @@ def _(mo):
 def _():
     from tinker_cookbook.hyperparam_utils import get_lora_param_count
 
-    _model = "Qwen/Qwen3.5-4B"
+    _model = "thinkingmachines/Inkling-2-Mini"
     _ranks = [8, 32, 128]
 
     print(f"Model: {_model}")
