@@ -63,6 +63,34 @@ class TestBenchmarkConfig:
         assert c.judge_sampling_client is None
 
 
+class TestBenchmarkConfigForModel:
+    @pytest.mark.parametrize(
+        ("model_name", "context"),
+        [
+            ("thinkingmachines/Inkling-2-Mini", 65536),
+            ("thinkingmachines/Inkling-2-Mini:peft:262144", 262144),
+            ("thinkingmachines/Inkling-2-Mini:peft:65536:free", 65536),
+        ],
+    )
+    def test_inkling_2_mini_ids(self, model_name: str, context: int):
+        c = BenchmarkConfig.for_model(model_name)
+        assert c.max_tokens == context
+        assert c.context_window == context
+        assert c.timeout_seconds == 1800
+
+    def test_keyword_arguments_override_the_table(self):
+        c = BenchmarkConfig.for_model(
+            "thinkingmachines/Inkling-2-Mini:peft:65536:free", max_tokens=1024, concurrency=4
+        )
+        assert c.max_tokens == 1024
+        assert c.context_window == 65536
+        assert c.concurrency == 4
+
+    def test_unknown_model_raises(self):
+        with pytest.raises(ValueError, match="Unknown model"):
+            BenchmarkConfig.for_model("thinkingmachines/Not-A-Model")
+
+
 class TestGSM8KImport:
     def test_gsm8k_registered(self):
         # Importing the module triggers registration
