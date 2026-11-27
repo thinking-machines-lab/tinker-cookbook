@@ -120,6 +120,71 @@ def compute_kl_sample_train(
     }
 
 
+def compute_prob_change_by_advantage(
+    data_D: list[tinker.Datum], post_logprobs_D: list[torch.Tensor]
+) -> dict[str, float]:
+    """Compare how an update moved positive-advantage and negative-advantage action tokens.
+
+    For an action token sampled with probability ``q`` and scored ``p`` by the
+    post-update model, ``p / q - 1`` is its relative change in probability. Over
+    the sampling of the token, its expectation is zero whatever the post-update
+    model is (``E_q[p / q] = 1``), so its mean over many tokens stays near zero
+    unless the update moved the policy toward or away from what was sampled.
+    The mean logprob change that ``kl_pre_post_v1`` reports does not have this
+    property: it is negative for any difference between the two models, including
+    numerical noise between two scorings, by an amount that depends on the text.
+
+    Action tokens (where mask > 0) are split by the sign of their advantage and
+    the relative change is averaged over the tokens of each side. An update that
+    follows its advantages raises the positive-advantage tokens and lowers the
+    negative-advantage ones.
+
+    The expectation is exactly zero only when the recorded sampling logprobs are
+    those of the distribution the tokens were drawn from. Truncated sampling
+    (top-k, top-p) leaves both sides slightly negative; the difference between
+    the sides cancels what they share.
+
+    Args:
+        data_D (list[tinker.Datum]): List of datums, each containing ``logprobs``,
+            ``advantages`` and ``mask`` tensors in ``loss_fn_inputs``.
+        post_logprobs_D (list[torch.Tensor]): Per-token logprobs from the
+            post-update model, one tensor per datum.
+
+    Returns:
+        dict[str, float]: Empty unless the batch has action tokens of both
+            advantage signs. Otherwise a dictionary with keys:
+            - ``prob_change_pre_post_pos_adv``: Mean relative probability change
+              of the positive-advantage action tokens.
+            - ``prob_change_pre_post_neg_adv``: Mean relative probability change
+              of the negative-advantage action tokens.
+            - ``prob_change_pre_post_adv_gap``: The first minus the second.
+              Positive when the update moved the policy the way its advantages asked.
+    """
+    prob_changes: list[torch.Tensor] = []
+    advantages: list[torch.Tensor] = []
+
+    for datum, post_logprobs in safezip(data_D, post_logprobs_D):
+        action_mask = datum.loss_fn_inputs["mask"].to_torch() > 0
+        sampling_logprobs = datum.loss_fn_inputs["logprobs"].to_torch()
+        logprob_change = (post_logprobs - sampling_logprobs)[action_mask].double()
+        prob_changes.append(torch.expm1(logprob_change))
+        advantages.append(datum.loss_fn_inputs["advantages"].to_torch()[action_mask].double())
+
+    prob_change = torch.cat(prob_changes)
+    advantage = torch.cat(advantages)
+    positive = advantage > 0
+    negative = advantage < 0
+    if not positive.any() or not negative.any():
+        return {}
+    positive_change = prob_change[positive].mean().item()
+    negative_change = prob_change[negative].mean().item()
+    return {
+        "prob_change_pre_post_pos_adv": positive_change,
+        "prob_change_pre_post_neg_adv": negative_change,
+        "prob_change_pre_post_adv_gap": positive_change - negative_change,
+    }
+
+
 @trace.scope
 async def compute_post_kl(
     data_D: list[tinker.Datum], post_sampling_client: tinker.SamplingClient
@@ -130,11 +195,12 @@ async def compute_post_kl(
     logprobs on the same sequences using a post-update sampling client and
     comparing them against the original sampling logprobs. Reconstructs the
     full token sequence from the shifted inputs and targets before computing
-    logprobs.
+    logprobs. Also reports whether the change followed the advantages, from
+    :func:`compute_prob_change_by_advantage`.
 
     Args:
         data_D (list[tinker.Datum]): List of datums containing the original
-            sampling logprobs, target tokens, and action masks in
+            sampling logprobs, target tokens, advantages, and action masks in
             ``loss_fn_inputs``.
         post_sampling_client (tinker.SamplingClient): A sampling client loaded
             with the post-update model weights.
@@ -143,6 +209,9 @@ async def compute_post_kl(
         tuple[dict[str, float], TokenUsage]: Dictionary with keys:
             - ``kl_pre_post_v1``: Mean logprob difference (first-order KL estimate).
             - ``kl_pre_post_v2``: Half mean squared logprob difference (second-order KL).
+            - The ``prob_change_pre_post_*`` keys of
+              :func:`compute_prob_change_by_advantage`, when the batch has action
+              tokens of both advantage signs.
 
             and the usage of the scoring calls, from :func:`score_sequences`.
     """
@@ -153,19 +222,24 @@ async def compute_post_kl(
         post_sampling_client, _full_sequence_inputs(data_D)
     )
 
+    # The first token has no logprob; the rest line up with each datum's targets.
+    post_logprobs_D = [torch.tensor(new_logprobs[1:]) for new_logprobs in new_logprobs_D]
+
     prev_logprobs_D = [datum.loss_fn_inputs["logprobs"].to_torch() for datum in data_D]
     action_masks = [datum.loss_fn_inputs["mask"].to_torch() > 0 for datum in data_D]
     flat_diffs = [
-        (prev_logprobs - torch.tensor(new_logprobs[1:]))[action_mask]
-        for new_logprobs, prev_logprobs, action_mask in safezip(
-            new_logprobs_D, prev_logprobs_D, action_masks
+        (prev_logprobs - post_logprobs)[action_mask]
+        for post_logprobs, prev_logprobs, action_mask in safezip(
+            post_logprobs_D, prev_logprobs_D, action_masks
         )
     ]
     flat_diffs = torch.cat(flat_diffs)
     kl_post_v1 = flat_diffs.mean().item()
     kl_post_v2 = 0.5 * (flat_diffs**2).mean().item()
 
-    return {"kl_pre_post_v1": kl_post_v1, "kl_pre_post_v2": kl_post_v2}, usage
+    metrics = {"kl_pre_post_v1": kl_post_v1, "kl_pre_post_v2": kl_post_v2}
+    metrics.update(compute_prob_change_by_advantage(data_D, post_logprobs_D))
+    return metrics, usage
 
 
 @trace.scope
