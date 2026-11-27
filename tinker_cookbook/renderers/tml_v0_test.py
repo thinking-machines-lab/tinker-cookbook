@@ -16,12 +16,14 @@ from tinker_cookbook.renderers import (
     Message,
     TextPart,
     ToolCall,
+    ToolSpec,
     TrainOnWhat,
     get_renderer,
     tml_renderers_adapter,
     tml_v0,
 )
 from tinker_cookbook.supervised.data import conversation_to_datum
+from tinker_cookbook.third_party.openai_compat import tool_specs_to_openai_tools
 from tinker_cookbook.third_party.tml_renderers_compat import tinker_messages_to_message_list
 from tinker_cookbook.tokenizer_utils import ensure_tml_renderers_importable, get_tokenizer
 
@@ -369,16 +371,50 @@ def test_tool_declarations_emit_tool_declare_prefix(model_name: str) -> None:
         system_prompt="Use tools when needed.",
     )
 
-    assert [message["role"] for message in prefix] == ["system", "tool_declare"]
-    assert prefix[0]["content"] == "Use tools when needed."
-    assert '"name":"get_weather"' in prefix[1]["content"]
-    assert '"type":"function"' in prefix[1]["content"]
+    assert [message["role"] for message in prefix] == ["tool_declare", "system"]
+    assert '"name":"get_weather"' in prefix[0]["content"]
+    assert '"type":"function"' in prefix[0]["content"]
+    assert prefix[1]["content"] == "Use tools when needed."
 
     model_input = renderer.build_generation_prompt(
         prefix + [Message(role="user", content="What's the weather in SF?")]
     )
 
     assert _input_len(model_input) > 0
+
+
+@pytest.mark.parametrize("model_name", _INKLING_MODELS)
+def test_tools_prefix_renders_like_openai_chat_tools(model_name: str) -> None:
+    chat = cast(Any, tml_v0.import_module("tml_renderers.chat"))
+    renderer = _renderer(model_name)
+    tool = ToolSpec(
+        name="get_weather",
+        description="Get weather.",
+        parameters={
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    )
+    system_prompt = "Use tools when needed."
+    user = Message(role="user", content="What's the weather in SF?")
+    assistant = Message(role="assistant", content="Let me check.")
+    prefix = renderer.create_conversation_prefix_with_tools([tool], system_prompt)
+
+    def openai_chat(turns: list[Message]) -> Any:
+        return chat.MessageList.from_openai_chat_dicts(
+            [{"role": "system", "content": system_prompt}, *turns],
+            tool_specs_to_openai_tools([tool]),
+        )
+
+    prompt = renderer.build_generation_prompt(prefix + [user])
+    openai_prompt = renderer.build_generation_prompt(openai_chat([user]))
+    assert prompt.to_ints() == openai_prompt.to_ints()
+
+    model_input, weights = renderer.build_supervised_example(prefix + [user, assistant])
+    openai_input, openai_weights = renderer.build_supervised_example(openai_chat([user, assistant]))
+    assert model_input.to_ints() == openai_input.to_ints()
+    assert weights.tolist() == openai_weights.tolist()
 
 
 def test_native_tml_renderers_messages_are_accepted_directly() -> None:

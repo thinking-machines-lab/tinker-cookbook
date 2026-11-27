@@ -274,9 +274,13 @@ class TmlRenderersRenderer(Renderer, abc.ABC):
     def create_conversation_prefix_with_tools(
         self, tools: list[ToolSpec], system_prompt: str = ""
     ) -> list[Message]:
+        """Create the tool declaration and system messages to prepend to a conversation.
+
+        The tool declaration comes first, as in ``tml_renderers``'
+        ``chat.MessageList.from_openai_chat_dicts`` and the Inkling Hugging Face chat templates.
+        The Inkling renderers keep the order they are given, so it sets the prompt tokens.
+        """
         prefix: list[Message] = []
-        if system_prompt:
-            prefix.append(Message(role="system", content=system_prompt))
         if tools:
             prefix.append(
                 Message(
@@ -287,6 +291,8 @@ class TmlRenderersRenderer(Renderer, abc.ABC):
                     ),
                 )
             )
+        if system_prompt:
+            prefix.append(Message(role="system", content=system_prompt))
         return prefix
 
     def _decode_or_empty(self, response: list[int]) -> str:
