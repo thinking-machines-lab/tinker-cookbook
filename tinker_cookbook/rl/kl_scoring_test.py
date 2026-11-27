@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from concurrent.futures import Future
 from typing import Any, cast
 
@@ -71,7 +72,7 @@ class _ScoringClient:
         return AwaitableConcurrentFuture(future)
 
 
-def _datum(n_tokens: int, sampled_logprob: float) -> tinker.Datum:
+def _datum(n_tokens: int, sampled_logprob: float, advantage: float = 0.0) -> tinker.Datum:
     tokens = list(range(n_tokens + 1))
     return tinker.Datum(
         model_input=tinker.ModelInput.from_ints(tokens[:-1]),
@@ -79,7 +80,7 @@ def _datum(n_tokens: int, sampled_logprob: float) -> tinker.Datum:
             "target_tokens": tinker.TensorData.from_torch(torch.tensor(tokens[1:])),
             "logprobs": tinker.TensorData.from_torch(torch.full((n_tokens,), sampled_logprob)),
             "mask": tinker.TensorData.from_torch(torch.ones(n_tokens)),
-            "advantages": tinker.TensorData.from_torch(torch.zeros(n_tokens)),
+            "advantages": tinker.TensorData.from_torch(torch.full((n_tokens,), advantage)),
         },
     )
 
@@ -118,6 +119,22 @@ def test_compute_post_kl_matches_compute_logprobs_and_reports_usage():
     assert out["kl_pre_post_v2"] == pytest.approx(0.5 * (diffs**2).mean().item())
     # Full sequences are 4 and 3 tokens; each response reports 2 cache hits.
     assert usage == TokenUsage(sampled=2, prefill_cached=4, prefill_uncached=3)
+
+
+def test_compute_post_kl_reports_prob_change_by_advantage_sign():
+    data_D = [
+        _datum(3, sampled_logprob=-1.0, advantage=1.0),
+        _datum(2, sampled_logprob=-2.0, advantage=-1.0),
+    ]
+    client = _ScoringClient(-1.5)
+
+    out, _ = asyncio.run(rl_metrics.compute_post_kl(data_D, cast(Any, client)))
+
+    # The post-update logprob is -1.5 everywhere: the positive-advantage tokens fell by 0.5
+    # and the negative-advantage ones rose by 0.5, so this update went against its advantages.
+    assert out["prob_change_pre_post_pos_adv"] == pytest.approx(math.exp(-0.5) - 1)
+    assert out["prob_change_pre_post_neg_adv"] == pytest.approx(math.exp(0.5) - 1)
+    assert out["prob_change_pre_post_adv_gap"] == pytest.approx(math.exp(-0.5) - math.exp(0.5))
 
 
 def test_incorporate_kl_penalty_matches_compute_logprobs_and_reports_usage():
