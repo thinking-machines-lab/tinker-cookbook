@@ -877,6 +877,91 @@ def test_gantt_chart_sync_rl_layout():
         path.unlink(missing_ok=True)
 
 
+def test_iteration_window_span_attributes_and_scope_context():
+    """Verify optional span attributes propagate from update_scope_context and scope_span."""
+
+    @scope
+    async def tagged_rollout(group_idx: int) -> int:
+        update_scope_context({"group_idx": group_idx})
+        await asyncio.sleep(0.005)
+        return group_idx
+
+    @scope
+    def tagged_sync(tag: str) -> str:
+        update_scope_context({"tag": tag})
+        return tag
+
+    async def _run():
+        with trace_iteration(step=0) as window:
+            await asyncio.gather(tagged_rollout(0), tagged_rollout(3))
+            tagged_sync("sync_ok")
+            async with scope_span("worker_span", attributes={"group_idx": 7}):
+                update_scope_context({"extra": "yes"})
+            with scope_span_sync("sync_span", attributes={"slot": 2}):
+                pass
+            async with scope_span("plain_span"):
+                pass
+        return window
+
+    window = asyncio.run(_run())
+    dicts = window.get_span_dicts()
+
+    by_name: dict[str, list[dict]] = {}
+    for d in dicts:
+        by_name.setdefault(d["name"], []).append(d)
+
+    rollout_gids = sorted(d["attributes"]["group_idx"] for d in by_name["tagged_rollout"])
+    assert rollout_gids == [0, 3]
+    assert by_name["tagged_sync"][0]["attributes"] == {"tag": "sync_ok"}
+    assert by_name["worker_span"][0]["attributes"] == {"group_idx": 7, "extra": "yes"}
+    assert by_name["sync_span"][0]["attributes"] == {"slot": 2}
+    # Spans without attributes omit the key for full backward compatibility.
+    assert "attributes" not in by_name["plain_span"][0]
+
+
+def test_do_group_rollout_attaches_group_idx_span_attribute():
+    """Verify do_group_rollout_and_filter_constant_reward records group_idx on its timing span."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tinker_cookbook.rl import rollouts
+
+    async def _run():
+        with (
+            patch.object(
+                rollouts,
+                "_do_group_rollout_and_filter_constant_reward_impl",
+                new=AsyncMock(return_value=None),
+            ),
+            trace_iteration(step=0) as window,
+        ):
+            await rollouts.do_group_rollout_and_filter_constant_reward(
+                sampling_client=MagicMock(),
+                env_group_builder=MagicMock(),
+                max_tokens=16,
+                temperature=1.0,
+                do_remove_constant_reward_groups=False,
+                group_idx=5,
+            )
+            await rollouts.do_group_rollout_and_filter_constant_reward(
+                sampling_client=MagicMock(),
+                env_group_builder=MagicMock(),
+                max_tokens=16,
+                temperature=1.0,
+                do_remove_constant_reward_groups=False,
+            )
+        return window
+
+    window = asyncio.run(_run())
+    rollout_spans = [
+        d
+        for d in window.get_span_dicts()
+        if d["name"] == "do_group_rollout_and_filter_constant_reward"
+    ]
+    assert len(rollout_spans) == 2
+    assert rollout_spans[0]["attributes"] == {"group_idx": 5}
+    assert "attributes" not in rollout_spans[1]
+
+
 if __name__ == "__main__":
     trace_init()
     asyncio.run(example_program())
