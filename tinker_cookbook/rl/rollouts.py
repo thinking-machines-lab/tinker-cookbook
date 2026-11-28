@@ -463,6 +463,7 @@ async def do_group_rollout_and_filter_constant_reward(
     enable_logging: bool = True,
     strategy: RolloutStrategy | None = None,
     termination: TerminationRewardPolicy | None = None,
+    group_idx: int | None = None,
 ) -> TrajectoryGroup | None:
     """Run a group rollout, optionally dispatching to an external executor.
 
@@ -493,6 +494,10 @@ async def do_group_rollout_and_filter_constant_reward(
         termination (TerminationRewardPolicy | None): Stop-reason-keyed
             reward semantics (see :func:`do_group_rollout`).  ``None``
             (default) leaves rewards untouched.
+        group_idx (int | None): Optional batch group index attached to the
+            span's trace context attributes (and persisted in
+            ``timing_spans.jsonl``) so stragglers can be matched to groups in
+            ``train_rollout_summaries.jsonl``.
 
     Returns:
         TrajectoryGroup | None: The completed trajectory group, or ``None``
@@ -511,6 +516,8 @@ async def do_group_rollout_and_filter_constant_reward(
         if result is not None:
             rewards = result.get_total_rewards()
     """
+    if group_idx is not None:
+        trace.update_scope_context({"group_idx": group_idx})
     if strategy is None:
         strategy = FailFast()
 

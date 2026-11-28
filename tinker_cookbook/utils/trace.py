@@ -111,6 +111,7 @@ class SpanRecord:
     end_time: float  # seconds (perf_counter, process-local)
     wall_start: float  # seconds since epoch (time.time, cross-process comparable)
     wall_end: float  # seconds since epoch (time.time, cross-process comparable)
+    attributes: dict[str, Any] | None = None
 
 
 class IterationWindow:
@@ -147,7 +148,14 @@ class IterationWindow:
         self._lock = threading.Lock()
         self._total_time: float | None = None
 
-    def record_span(self, name: str, start_time: float, end_time: float) -> None:
+    def record_span(
+        self,
+        name: str,
+        start_time: float,
+        end_time: float,
+        *,
+        attributes: dict[str, Any] | None = None,
+    ) -> None:
         """Record a completed span into this window.
 
         Thread-safe. Wall-clock timestamps are derived from the monotonic
@@ -158,7 +166,10 @@ class IterationWindow:
             name (str): Span name (typically the function or block label).
             start_time (float): ``time.perf_counter()`` value at span start.
             end_time (float): ``time.perf_counter()`` value at span end.
+            attributes (dict[str, Any] | None): Optional JSON-serializable span
+                metadata (e.g. ``{"group_idx": 0}``).
         """
+        attrs = dict(attributes) if attributes else None
         with self._lock:
             self.spans.append(
                 SpanRecord(
@@ -167,6 +178,7 @@ class IterationWindow:
                     end_time=end_time,
                     wall_start=time.time() - (time.perf_counter() - start_time),
                     wall_end=time.time() - (time.perf_counter() - end_time),
+                    attributes=attrs,
                 )
             )
 
@@ -273,15 +285,18 @@ class IterationWindow:
             return []
 
         t0 = min(s.wall_start for s in spans)
-        return [
-            {
+        out: list[dict[str, Any]] = []
+        for s in spans:
+            entry: dict[str, Any] = {
                 "name": s.name,
                 "duration": s.end_time - s.start_time,
                 "wall_start": s.wall_start - t0,
                 "wall_end": s.wall_end - t0,
             }
-            for s in spans
-        ]
+            if s.attributes:
+                entry["attributes"] = dict(s.attributes)
+            out.append(entry)
+        return out
 
     def write_spans_jsonl(self, path: Path | str, step: int) -> None:
         """Append span records for this iteration as one JSON line to the given file.
@@ -715,11 +730,19 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                 # Still record into iteration window even without Perfetto tracing
                 window = _iteration_window.get(None)
                 if window is not None:
+                    scope_ctx = ScopeContext()
+                    token = trace_context.set(scope_ctx)
                     t_start = time.perf_counter()
                     try:
                         return await func(*args, **kwargs)
                     finally:
-                        window.record_span(name, t_start, time.perf_counter())
+                        window.record_span(
+                            name,
+                            t_start,
+                            time.perf_counter(),
+                            attributes=scope_ctx.attributes or None,
+                        )
+                        trace_context.reset(token)
                 return await func(*args, **kwargs)
 
             events_result = _create_trace_events(name)
@@ -744,7 +767,8 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                 # Record into iteration window if active
                 window = _iteration_window.get(None)
                 if window is not None:
-                    window.record_span(name, t_start, time.perf_counter())
+                    attrs = events_result.function_call_context.scope_context.attributes or None
+                    window.record_span(name, t_start, time.perf_counter(), attributes=attrs)
 
                 # Reset context
                 if token is not None:
@@ -760,11 +784,19 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                 # Still record into iteration window even without Perfetto tracing
                 window = _iteration_window.get(None)
                 if window is not None:
+                    scope_ctx = ScopeContext()
+                    token = trace_context.set(scope_ctx)
                     t_start = time.perf_counter()
                     try:
                         return func(*args, **kwargs)
                     finally:
-                        window.record_span(name, t_start, time.perf_counter())
+                        window.record_span(
+                            name,
+                            t_start,
+                            time.perf_counter(),
+                            attributes=scope_ctx.attributes or None,
+                        )
+                        trace_context.reset(token)
                 return func(*args, **kwargs)
 
             events_result = _create_trace_events(name)
@@ -789,7 +821,8 @@ def _make_scope_wrapper(func: Callable[..., Any], name: str) -> Callable[..., An
                 # Record into iteration window if active
                 window = _iteration_window.get(None)
                 if window is not None:
-                    window.record_span(name, t_start, time.perf_counter())
+                    attrs = events_result.function_call_context.scope_context.attributes or None
+                    window.record_span(name, t_start, time.perf_counter(), attributes=attrs)
 
                 # Reset context
                 if token is not None:
@@ -845,7 +878,7 @@ def scope(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 @contextlib.asynccontextmanager
-async def scope_span(name: str):
+async def scope_span(name: str, *, attributes: dict[str, Any] | None = None):
     """Async context manager for inline named spans.
 
     Records to both the Perfetto trace (if active) and the current IterationWindow.
@@ -861,30 +894,40 @@ async def scope_span(name: str):
 
     if _trace_collector is not None:
         events_result = _create_trace_events(name)
+        if attributes:
+            events_result.function_call_context.scope_context.attributes.update(attributes)
         _trace_collector.add_event(events_result.begin_event)
         _trace_collector.add_event(events_result.metadata_coroutine_event)
         _trace_collector.add_event(events_result.metadata_thread_event)
 
         t_start = time.perf_counter()
+        token = trace_context.set(events_result.function_call_context.scope_context)
         try:
             yield
         finally:
             end_event = _create_end_event(name, events_result.function_call_context)
             _trace_collector.add_event(end_event)
             if window is not None:
-                window.record_span(name, t_start, time.perf_counter())
+                attrs = events_result.function_call_context.scope_context.attributes or None
+                window.record_span(name, t_start, time.perf_counter(), attributes=attrs)
+            trace_context.reset(token)
     elif window is not None:
+        scope_ctx = ScopeContext(attributes=dict(attributes) if attributes else {})
+        token = trace_context.set(scope_ctx)
         t_start = time.perf_counter()
         try:
             yield
         finally:
-            window.record_span(name, t_start, time.perf_counter())
+            window.record_span(
+                name, t_start, time.perf_counter(), attributes=scope_ctx.attributes or None
+            )
+            trace_context.reset(token)
     else:
         yield
 
 
 @contextlib.contextmanager
-def scope_span_sync(name: str):
+def scope_span_sync(name: str, *, attributes: dict[str, Any] | None = None):
     """Sync context manager for inline named spans.
 
     Same as ``scope_span`` but for synchronous code.
@@ -898,24 +941,34 @@ def scope_span_sync(name: str):
 
     if _trace_collector is not None:
         events_result = _create_trace_events(name)
+        if attributes:
+            events_result.function_call_context.scope_context.attributes.update(attributes)
         _trace_collector.add_event(events_result.begin_event)
         _trace_collector.add_event(events_result.metadata_coroutine_event)
         _trace_collector.add_event(events_result.metadata_thread_event)
 
         t_start = time.perf_counter()
+        token = trace_context.set(events_result.function_call_context.scope_context)
         try:
             yield
         finally:
             end_event = _create_end_event(name, events_result.function_call_context)
             _trace_collector.add_event(end_event)
             if window is not None:
-                window.record_span(name, t_start, time.perf_counter())
+                attrs = events_result.function_call_context.scope_context.attributes or None
+                window.record_span(name, t_start, time.perf_counter(), attributes=attrs)
+            trace_context.reset(token)
     elif window is not None:
+        scope_ctx = ScopeContext(attributes=dict(attributes) if attributes else {})
+        token = trace_context.set(scope_ctx)
         t_start = time.perf_counter()
         try:
             yield
         finally:
-            window.record_span(name, t_start, time.perf_counter())
+            window.record_span(
+                name, t_start, time.perf_counter(), attributes=scope_ctx.attributes or None
+            )
+            trace_context.reset(token)
     else:
         yield
 
