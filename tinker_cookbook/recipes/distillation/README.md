@@ -143,7 +143,7 @@ For every dataset, we can define a teacher model and batch size (`groups_per_bat
 {
     "dataset_builder": RLDatasetBuilder,
     "teacher_model": {
-        "base_model": str,  # e.g. "Qwen/Qwen3.6-27B"
+        "base_model": str,  # e.g. "Qwen/Qwen3.8-27B"
         "load_checkpoint_path": str | None  # e.g. "tinker://<unique_id>/sampler_weights/final
     },
     "groups_per_batch": int
